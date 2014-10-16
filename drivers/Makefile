@@ -156,3 +156,4 @@ obj-$(CONFIG_VME_BUS)		+= vme/
 obj-$(CONFIG_IPACK_BUS)		+= ipack/
 obj-$(CONFIG_NTB)		+= ntb/
 obj-$(CONFIG_EXTERNAL_DRIVERS)	+= external_drivers/
+obj-$(CONFIG_ANDROID)		+= android/
