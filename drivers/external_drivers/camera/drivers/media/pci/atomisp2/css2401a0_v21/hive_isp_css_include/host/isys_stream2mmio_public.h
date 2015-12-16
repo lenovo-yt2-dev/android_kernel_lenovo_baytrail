@@ -73,6 +73,24 @@ STORAGE_CLASS_STREAM2MMIO_H hrt_data stream2mmio_reg_load(
 	const uint32_t reg_idx);
 
 /**
+ * @brief Dump the SID processor state.
+ * Dump the state of the sid regiester-set.
+ *
+ * @param[in]	state		Pointer to the register-state.
+ */
+STORAGE_CLASS_STREAM2MMIO_H void stream2mmio_print_sid_state(
+		stream2mmio_sid_state_t	*state);
+/**
+ * @brief Dump the stream2mmio state.
+ * Dump the state of the ibuf-controller regiester-set.
+ *
+ * @param[in]	id		The global unique ID of the st2mmio
+ * @param[in]	state		Pointer to the register-state.
+ */
+STORAGE_CLASS_STREAM2MMIO_H void stream2mmio_dump_state(
+		const stream2mmio_ID_t ID,
+		stream2mmio_state_t *state);
+/**
  * @brief Store a value to the register.
  * Store a value to the registe of the stream2mmio-controller.
  *

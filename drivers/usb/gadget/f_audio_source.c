@@ -559,11 +559,13 @@ static int audio_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 static void audio_disable(struct usb_function *f)
 {
 	struct audio_dev	*audio = func_to_audio(f);
+	struct usb_ep	*ep = audio->in_ep;
 
 	pr_debug("audio_disable\n");
-	usb_ep_disable(audio->in_ep);
-
-	audio->in_ep->driver_data = NULL;
+	if (ep->driver_data) {
+		usb_ep_disable(audio->in_ep);
+		ep->driver_data = NULL;
+	}
 }
 
 /*-------------------------------------------------------------------------*/

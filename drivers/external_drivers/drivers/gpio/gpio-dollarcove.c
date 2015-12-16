@@ -103,7 +103,7 @@ static int dollarcove_gpio_probe(struct platform_device *pdev)
 	chip.direction_output = dollarcove_gpio_direction_output;
 	chip.get = dollarcove_gpio_get;
 	chip.set = dollarcove_gpio_set;
-	chip.base = VV_PMIC_GPIO_BASE;
+	chip.base = -1;
 	chip.ngpio = NUM_GPIO;
 	chip.can_sleep = 1;
 	chip.dev = dev;

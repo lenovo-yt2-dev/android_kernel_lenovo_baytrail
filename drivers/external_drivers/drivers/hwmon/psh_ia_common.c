@@ -20,6 +20,7 @@
 #include <linux/ctype.h>
 #include "psh_ia_common.h"
 #include <asm/intel-mid.h>
+#include <linux/hrtimer.h>
 
 #define TOLOWER(x) ((x) | 0x20)
 /* translate string to unsigned long value */
@@ -225,11 +226,45 @@ int ia_circ_dbg_get_data(struct psh_ia_priv *psh_ia_data, char *buf, u32 size)
 	return cnt;
 }
 
+static int ia_sync_timestamp(struct psh_ia_priv *psh_ia_data, u8 check_interval)
+{
+	static u64 tick_old = 0;
+	struct ia_cmd cmd_timestamp = { 0 };
+	struct cmd_ia_notify_param *param = (struct cmd_ia_notify_param *)cmd_timestamp.param;
+	u8 *linux_base_ns = param->extra;
+	timestamp_t base_ns = 0;
+	int ret;
+
+	if (check_interval) {
+		if (!tick_old) {
+			tick_old = jiffies;
+			return 0;
+		} else {
+			if (jiffies - tick_old < (120 * HZ))
+				return 0;
+		}
+	}
+
+	cmd_timestamp.tran_id = 0;
+	cmd_timestamp.cmd_id = CMD_IA_NOTIFY;
+	cmd_timestamp.sensor_id = 0;
+	param->id = IA_NOTIFY_TIMESTAMP_SYNC;
+	base_ns = ktime_to_ns(ktime_get_boottime());
+	tick_old = jiffies;
+	*(timestamp_t *)linux_base_ns = base_ns;
+	ret = process_send_cmd(psh_ia_data, PSH2IA_CHANNEL0,
+			&cmd_timestamp, sizeof(struct ia_cmd) - CMD_PARAM_MAX_SIZE
+		+ sizeof(struct cmd_ia_notify_param) + sizeof(base_ns));
+	return ret;
+}
+
 int ia_send_cmd(struct psh_ia_priv *psh_ia_data,
 			struct ia_cmd *cmd, int len)
 {
 	int ret = 0;
 	static struct resp_cmd_ack cmd_ack;
+
+	ia_sync_timestamp(psh_ia_data, 0);
 
 	mutex_lock(&psh_ia_data->cmd_mutex);
 	if (cmd->cmd_id == CMD_RESET) {
@@ -625,23 +660,23 @@ ssize_t ia_get_version(struct device *dev,
 
 	return snprintf(buf, PAGE_SIZE, "%s\n", psh_ia_data->version_str);
 }
-static SENSOR_DEVICE_ATTR(status_mask, S_IWUSR | S_IRUGO,
+static SENSOR_DEVICE_ATTR(status_mask, S_IRUSR | S_IWUSR,
 				ia_get_status_mask, ia_set_status_mask, 0);
 static SENSOR_DEVICE_ATTR(status_trig, S_IWUSR, NULL, ia_trig_get_status, 1);
-static SENSOR_DEVICE_ATTR(debug, S_IWUSR | S_IRUGO,
+static SENSOR_DEVICE_ATTR(debug, S_IRUSR | S_IWUSR ,
 				ia_get_dbg_mask, ia_set_dbg_mask, 0);
 static SENSOR_DEVICE_ATTR(control, S_IWUSR, NULL, ia_start_control, 1);
-static SENSOR_DEVICE_ATTR(data_size, S_IRUGO, ia_read_data_size, NULL, 2);
-static SENSOR_DEVICE_ATTR(counter, S_IWUSR | S_IRUGO, ia_get_counter,
+static SENSOR_DEVICE_ATTR(data_size, S_IRUSR, ia_read_data_size, NULL, 2);
+static SENSOR_DEVICE_ATTR(counter, S_IWUSR | S_IRUSR, ia_get_counter,
 				ia_clear_counter, 0);
-static SENSOR_DEVICE_ATTR(fw_version, S_IRUGO, ia_get_version, NULL, 0);
+static SENSOR_DEVICE_ATTR(fw_version, S_IRUSR, ia_get_version, NULL, 0);
 
 static struct bin_attribute bin_attr = {
-	.attr = { .name = "data", .mode = S_IRUGO },
+	.attr = { .name = "data", .mode = S_IRUSR },
 	.read = ia_read_data
 };
 static struct bin_attribute dbg_attr = {
-	.attr = { .name = "trace", .mode = S_IRUGO },
+	.attr = { .name = "trace", .mode = S_IRUSR },
 	.read = ia_read_debug_data
 };
 
@@ -742,6 +777,8 @@ int ia_handle_frame(struct psh_ia_priv *psh_ia_data, void *dbuf, int size)
 	struct trace_data *out_data;
 	char msg_str[STR_BUFF_SIZE];
 
+	ia_sync_timestamp(psh_ia_data, 1);
+
 	switch (resp->type) {
 	case RESP_CMD_ACK:
 		cmd_ack = (struct resp_cmd_ack *)resp->buf;
@@ -754,7 +791,7 @@ int ia_handle_frame(struct psh_ia_priv *psh_ia_data, void *dbuf, int size)
 			psh_err("Unmatched CMD_ACK recevied, %d(EXP: %d)\n",
 					cmd_ack->cmd_id,
 					psh_ia_data->cmd_ack->cmd_id);
-		return 0;
+		break;
 	case RESP_BIST_RESULT:
 		break;
 	case RESP_DEBUG_MSG:

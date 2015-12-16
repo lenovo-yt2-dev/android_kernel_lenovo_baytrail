@@ -120,8 +120,10 @@ struct sdhci_host {
 /* BAD sd cd in HOST IC. This will cause system hang when removing SD */
 #define SDHCI_QUIRK2_BAD_SD_CD				(1<<26)
 #define SDHCI_QUIRK2_POWER_PIN_GPIO_MODE		(1<<27)
-#define SDHCI_QUIRK2_NON_STD_CIS   (1<<29)
+#define SDHCI_QUIRK2_BCM_WIFI_WA			(1<<28)
+#define SDHCI_QUIRK2_NON_STD_CIS			(1<<29)
 #define SDHCI_QUIRK2_TUNING_POLL			(1<<30)
+#define SDHCI_QUIRK2_WA_LNP				(1<<31)
 
 	int irq;		/* Device IRQ */
 	void __iomem *ioaddr;	/* Mapped address */
@@ -151,6 +153,7 @@ struct sdhci_host {
 
 	struct regulator *vmmc;		/* Power regulator (vmmc) */
 	struct regulator *vqmmc;	/* Signaling regulator (vccq) */
+	bool		vqmmc_enabled;
 
 	/* Internal data */
 	struct mmc_host *mmc;	/* MMC structure */
@@ -179,6 +182,7 @@ struct sdhci_host {
 #define SDHCI_USING_RETUNING_TIMER (1<<11)	/* Host is using a retuning timer for the card */
 #define SDHCI_POWER_CTRL_DEV	(1<<12) /* ctrl dev power */
 #define SDHCI_EXIT_RPM_RESUME (1<<13)	/* Exit from runtime PM resume */
+#define SDHCI_TUNE_FOR_CMD52	(1<<14)	/* Execute tuning when CMD52 fail */
 
 	unsigned int version;	/* SDHCI spec. version */
 
@@ -231,8 +235,6 @@ struct sdhci_host {
 
 	unsigned int            gpio_pwr_en;
 	unsigned int            gpio_1p8_en;
-
-	unsigned int		timeout_timer_cnt; /* Timeout timer count */
 
 	unsigned long private[0] ____cacheline_aligned;
 };

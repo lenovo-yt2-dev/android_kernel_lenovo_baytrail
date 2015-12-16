@@ -21,6 +21,7 @@ enum tp2e_ev_type {
 
 #define NAME_MAX_LEN 16
 #define DATA_MAX_LEN 128
+#define FILELIST_MAX_LEN 256
 
 #define show_tp2e_ev_type(type)			\
 	__print_symbolic(type,				\
@@ -29,7 +30,7 @@ enum tp2e_ev_type {
 			 { TP2E_EV_ERROR, "ERROR" },	\
 			 { TP2E_EV_CRASH, "CRASH" })
 
-TRACE_EVENT(tp2e_generic_event,
+DECLARE_EVENT_CLASS(tp2e_generic_class,
 
 	    TP_PROTO(
 		    enum tp2e_ev_type ev_type,
@@ -40,12 +41,14 @@ TRACE_EVENT(tp2e_generic_event,
 		    char *data2,
 		    char *data3,
 		    char *data4,
-		    char *data5
+		    char *data5,
+		    char *filelist,
+		    unsigned int add_steps
 		    ),
 
 	    TP_ARGS(
 		    ev_type, submitter_name, ev_name,
-		    data0, data1, data2, data3, data4, data5
+		    data0, data1, data2, data3, data4, data5, filelist, add_steps
 		    ),
 
 	    TP_STRUCT__entry(
@@ -58,6 +61,8 @@ TRACE_EVENT(tp2e_generic_event,
 		    __array(char, data3, DATA_MAX_LEN)
 		    __array(char, data4, DATA_MAX_LEN)
 		    __array(char, data5, DATA_MAX_LEN)
+		    __array(char, filelist, FILELIST_MAX_LEN)
+		    __field(unsigned int, add_steps)
 		    ),
 
 	    TP_fast_assign(
@@ -70,14 +75,80 @@ TRACE_EVENT(tp2e_generic_event,
 		    strncpy(__entry->data3, data3, DATA_MAX_LEN);
 		    strncpy(__entry->data4, data4, DATA_MAX_LEN);
 		    strncpy(__entry->data5, data5, DATA_MAX_LEN);
+		    strncpy(__entry->filelist, filelist, FILELIST_MAX_LEN);
+		    __entry->add_steps = add_steps;
 		    ),
 
-	    TP_printk("type=%s submitter_name=%s name=%s data0=%s data1=%s data2=%s data3=%s data4=%s data5=%s",
+	    TP_printk("type=%s submitter_name=%s name=%s data0=%s data1=%s data2=%s data3=%s data4=%s data5=%s add_steps=%d",
 		      show_tp2e_ev_type(__entry->ev_type),
 		      __entry->submitter_name, __entry->ev_name,
 		      __entry->data0, __entry->data1, __entry->data2,
-		      __entry->data3, __entry->data4, __entry->data5
+		      __entry->data3, __entry->data4, __entry->data5,
+		      __entry->add_steps
 		    )
+	);
+
+DEFINE_EVENT(tp2e_generic_class, tp2e_generic_event,
+	TP_PROTO(
+		enum tp2e_ev_type ev_type,
+		char *submitter_name,
+		char *ev_name,
+		char *data0,
+		char *data1,
+		char *data2,
+		char *data3,
+		char *data4,
+		char *data5,
+		char *filelist,
+		unsigned int add_steps
+		),
+
+	TP_ARGS(
+		ev_type, submitter_name, ev_name,
+		data0, data1, data2, data3, data4, data5, filelist, add_steps
+		)
+	);
+
+DEFINE_EVENT(tp2e_generic_class, tp2e_scu_recov_event,
+	TP_PROTO(
+		enum tp2e_ev_type ev_type,
+		char *submitter_name,
+		char *ev_name,
+		char *data0,
+		char *data1,
+		char *data2,
+		char *data3,
+		char *data4,
+		char *data5,
+		char *filelist,
+		uint32_t add_steps
+		),
+
+	TP_ARGS(
+		ev_type, submitter_name, ev_name,
+		data0, data1, data2, data3, data4, data5, filelist, add_steps
+		)
+	);
+
+DEFINE_EVENT(tp2e_generic_class, tp2e_iwlwifi_driver_event,
+	TP_PROTO(
+		enum tp2e_ev_type ev_type,
+		char *submitter_name,
+		char *ev_name,
+		char *data0,
+		char *data1,
+		char *data2,
+		char *data3,
+		char *data4,
+		char *data5,
+		char *filelist,
+		unsigned int add_steps
+		),
+
+	TP_ARGS(
+		ev_type, submitter_name, ev_name,
+		data0, data1, data2, data3, data4, data5, filelist, add_steps
+		)
 	);
 
 #endif /* _TRACE_TP2E_H || TRACE_HEADER_MULTI_READ */

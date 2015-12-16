@@ -7,3 +7,4 @@ config NFC_PN544_PLATFORM_DATA
        ---help---
         Enables NFC PN544 platform file, required by PN544 I2C driver
 
+source "drivers/external_drivers/drivers/nfc/intel/Kconfig"

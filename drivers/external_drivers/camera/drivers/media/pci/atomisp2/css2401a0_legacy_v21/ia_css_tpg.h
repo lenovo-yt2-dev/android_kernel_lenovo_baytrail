@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_TPG_H
 #define __IA_CSS_TPG_H
 
+/** @file
+ * This file contains support for the test pattern generator (TPG)
+ */
+
 /** Enumerate the TPG IDs.
  */
 enum ia_css_tpg_id {

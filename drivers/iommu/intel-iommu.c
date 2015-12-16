@@ -490,7 +490,6 @@ __setup("intel_iommu=", intel_iommu_setup);
 
 static struct kmem_cache *iommu_domain_cache;
 static struct kmem_cache *iommu_devinfo_cache;
-static struct kmem_cache *iommu_iova_cache;
 
 static inline void *alloc_pgtable_page(int node)
 {
@@ -526,16 +525,6 @@ static inline void * alloc_devinfo_mem(void)
 static inline void free_devinfo_mem(void *vaddr)
 {
 	kmem_cache_free(iommu_devinfo_cache, vaddr);
-}
-
-struct iova *alloc_iova_mem(void)
-{
-	return kmem_cache_alloc(iommu_iova_cache, GFP_ATOMIC);
-}
-
-void free_iova_mem(struct iova *iova)
-{
-	kmem_cache_free(iommu_iova_cache, iova);
 }
 
 
@@ -3223,27 +3212,10 @@ static inline int iommu_devinfo_cache_init(void)
 	return ret;
 }
 
-static inline int iommu_iova_cache_init(void)
-{
-	int ret = 0;
-
-	iommu_iova_cache = kmem_cache_create("iommu_iova",
-					 sizeof(struct iova),
-					 0,
-					 SLAB_HWCACHE_ALIGN,
-					 NULL);
-	if (!iommu_iova_cache) {
-		printk(KERN_ERR "Couldn't create iova cache\n");
-		ret = -ENOMEM;
-	}
-
-	return ret;
-}
-
 static int __init iommu_init_mempool(void)
 {
 	int ret;
-	ret = iommu_iova_cache_init();
+	ret = iova_cache_get();
 	if (ret)
 		return ret;
 
@@ -3266,7 +3238,7 @@ static void __init iommu_exit_mempool(void)
 {
 	kmem_cache_destroy(iommu_devinfo_cache);
 	kmem_cache_destroy(iommu_domain_cache);
-	kmem_cache_destroy(iommu_iova_cache);
+	iova_cache_put();
 
 }
 

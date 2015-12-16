@@ -20,8 +20,10 @@
 #include "intel_soc_pmu.h"
 #include <linux/cpuidle.h>
 #include <linux/proc_fs.h>
+#include <asm/stacktrace.h>
 #include <asm/intel_mid_rpmsg.h>
 
+#include <asm/intel_scu_pmic.h>
 #include <asm/hypervisor.h>
 #include <asm/xen/hypercall.h>
 
@@ -32,6 +34,9 @@
 bool pmu_initialized;
 
 DEFINE_MUTEX(pci_root_lock);
+
+DEFINE_SPINLOCK(nc_ready_lock);
+EXPORT_SYMBOL(nc_ready_lock);
 
 /* mid_pmu context structure */
 struct mid_pmu_dev *mid_pmu_cxt;
@@ -147,16 +152,9 @@ static inline bool pmu_power_down_lss_without_driver(int index,
 	if (platform_is(INTEL_ATOM_MRFLD))
 		return ((sub_sys_index == 0x0) && (sub_sys_pos == 0x5));
 
-	/* For MOFD ignore D0i0 on LSS 5, 7, 19 */
-	if (platform_is(INTEL_ATOM_MOORFLD)) {
-		if (sub_sys_index == 0x0)
-			/* LSS 5(HSI) & 7(SSIC)*/
-			return ((sub_sys_pos == 0x5) || (sub_sys_pos == 0x7));
-		else
-			/* LSS 19(SSP6) */
-			return ((sub_sys_index == 0x1) && (sub_sys_pos == 0x3));
-	}
-
+	/* For MOFD ignore D0i0 on LSS 5 */
+	if ((platform_is(INTEL_ATOM_MOORFLD)) && (sub_sys_index == 0x0))
+		return (sub_sys_pos == 0x5);
 	return false;
 }
 
@@ -282,19 +280,55 @@ static void pmu_write_subsys_config(struct pmu_ss_states *pm_ssc)
 	writel(pm_ssc->pmu2_states[3], &mid_pmu_cxt->pmu_reg->pm_ssc[3]);
 }
 
+static inline union pmu_pm_ics pmu_read_ics(void)
+{
+	union pmu_pm_ics result;
+
+	/* read the pm interrupt status register */
+	result.pmu_pm_ics_value = readl(&mid_pmu_cxt->pmu_reg->pm_ics);
+
+	return result;
+}
+
+void pmu_read_sss(struct pmu_ss_states *pm_ss)
+{
+	pm_ss->pmu2_states[0] =
+			readl(&mid_pmu_cxt->pmu_reg->pm_sss[0]);
+	pm_ss->pmu2_states[1] =
+			readl(&mid_pmu_cxt->pmu_reg->pm_sss[1]);
+	pm_ss->pmu2_states[2] =
+			readl(&mid_pmu_cxt->pmu_reg->pm_sss[2]);
+	pm_ss->pmu2_states[3] =
+			readl(&mid_pmu_cxt->pmu_reg->pm_sss[3]);
+}
+
+void pmu_read_ssc(struct pmu_ss_states *pm_ss)
+{
+	pm_ss->pmu2_states[0] =
+			readl(&mid_pmu_cxt->pmu_reg->pm_ssc[0]);
+	pm_ss->pmu2_states[1] =
+			readl(&mid_pmu_cxt->pmu_reg->pm_ssc[1]);
+	pm_ss->pmu2_states[2] =
+			readl(&mid_pmu_cxt->pmu_reg->pm_ssc[2]);
+	pm_ss->pmu2_states[3] =
+			readl(&mid_pmu_cxt->pmu_reg->pm_ssc[3]);
+}
+
 void log_wakeup_irq(void)
 {
 	unsigned int irr = 0, vector = 0;
 	int offset = 0, irq = 0;
 	struct irq_desc *desc;
 	const char *act_name;
+	union pmu_pm_ics pm_ics;
+	struct pmu_ss_states pm_ssc, pm_sss;
 
 	if ((mid_pmu_cxt->pmu_current_state != SYS_STATE_S3)
 	    || !mid_pmu_cxt->suspend_started)
 		return;
 
 	for (offset = (FIRST_EXTERNAL_VECTOR/32);
-	offset < (NR_VECTORS/32); offset++) {
+		offset < (NR_VECTORS/32); offset++) {
 		irr = apic->read(APIC_IRR + (offset * 0x10));
 
 		while (irr) {
@@ -313,6 +347,27 @@ void log_wakeup_irq(void)
 				pr_info("IRQ %d,action name:%s\n",
 					irq,
 					(act_name) ? (act_name) : "no action");
+			}
+
+			/* for PMU IRQ dump pm_ics, pm_ssc and pm_sss */
+			if (irq == mid_pmu_cxt->pmu_dev->irq) {
+				pm_ics = pmu_read_ics();
+				pmu_read_ssc(&pm_ssc);
+				pmu_read_sss(&pm_sss);
+				pr_info("pm_ics: st=0x%x, ie=0x%x, ip=0x%x\n",
+					pm_ics.pmu_pm_ics_parts.int_status,
+					pm_ics.pmu_pm_ics_parts.int_enable,
+					pm_ics.pmu_pm_ics_parts.int_pend);
+				pr_info("pm_ssc: 0x%x, 0x%x, 0x%x, 0x%x\n",
+					pm_ssc.pmu2_states[0],
+					pm_ssc.pmu2_states[1],
+					pm_ssc.pmu2_states[2],
+					pm_ssc.pmu2_states[3]);
+				pr_info("pm_sss: 0x%x, 0x%x, 0x%x, 0x%x\n",
+					pm_sss.pmu2_states[0],
+					pm_sss.pmu2_states[1],
+					pm_sss.pmu2_states[2],
+					pm_sss.pmu2_states[3]);
 			}
 		}
 	}
@@ -759,19 +814,6 @@ static void pmu_enumerate(void)
 	}
 }
 
-void pmu_read_sss(struct pmu_ss_states *pm_ssc)
-{
-	pm_ssc->pmu2_states[0] =
-			readl(&mid_pmu_cxt->pmu_reg->pm_sss[0]);
-	pm_ssc->pmu2_states[1] =
-			readl(&mid_pmu_cxt->pmu_reg->pm_sss[1]);
-	pm_ssc->pmu2_states[2] =
-			readl(&mid_pmu_cxt->pmu_reg->pm_sss[2]);
-	pm_ssc->pmu2_states[3] =
-			readl(&mid_pmu_cxt->pmu_reg->pm_sss[3]);
-}
-
-
 /*
  * For all devices in this lss, we check what is the weakest power state
  *
@@ -835,7 +877,7 @@ static bool update_nc_device_states(int i, pci_power_t state)
 			reg = APM_REG_TYPE;
 		} else if (platform_is(INTEL_ATOM_MRFLD) ||
 				platform_is(INTEL_ATOM_MOORFLD)) {
-			islands = ISP_PWR_ISLAND;
+			islands = TNG_ISP_ISLAND;
 			reg = ISP_SS_PM0;
 		} else
 			return false;
@@ -920,32 +962,30 @@ int set_enable_s0ix(const char *val, struct kernel_param *kp)
 	if (platform_is(INTEL_ATOM_MRFLD) || platform_is(INTEL_ATOM_MOORFLD)) {
 		if (!enable_s0ix) {
 			mid_pmu_cxt->cstate_ignore =
-				~((1 << CPUIDLE_STATE_MAX) - 1);
+				~((1 << (CPUIDLE_STATE_MAX-1)) - 1);
 
 			/* Ignore C2, C3, C5 states */
 			mid_pmu_cxt->cstate_ignore |= (1 << 1);
 			mid_pmu_cxt->cstate_ignore |= (1 << 2);
 			mid_pmu_cxt->cstate_ignore |= (1 << 4);
 
-			/* For now ignore C7, C8, C9, C10 states */
+			/* For now ignore C7, C8, C9 states */
 			mid_pmu_cxt->cstate_ignore |= (1 << 6);
 			mid_pmu_cxt->cstate_ignore |= (1 << 7);
 			mid_pmu_cxt->cstate_ignore |= (1 << 8);
-			mid_pmu_cxt->cstate_ignore |= (1 << 9);
 
 			/* Restrict platform Cx state to C6 */
 			pm_qos_update_request(mid_pmu_cxt->cstate_qos,
 						(CSTATE_EXIT_LATENCY_S0i1-1));
 		} else {
 			mid_pmu_cxt->cstate_ignore =
-				~((1 << CPUIDLE_STATE_MAX) - 1);
+				~((1 << (CPUIDLE_STATE_MAX-1)) - 1);
 
-			/* Ignore C2, C3, C5, C8 and C10 states */
+			/* Ignore C2, C3, C5, C8 states */
 			mid_pmu_cxt->cstate_ignore |= (1 << 1);
 			mid_pmu_cxt->cstate_ignore |= (1 << 2);
 			mid_pmu_cxt->cstate_ignore |= (1 << 4);
 			mid_pmu_cxt->cstate_ignore |= (1 << 7);
-			mid_pmu_cxt->cstate_ignore |= (1 << 9);
 
 			pm_qos_update_request(mid_pmu_cxt->cstate_qos,
 							PM_QOS_DEFAULT_VALUE);
@@ -1108,46 +1148,36 @@ static void print_saved_record(struct saved_nc_power_history *record)
 	}
 }
 
-#ifndef CONFIG_64BIT
-int verify_stack_ok(unsigned int *good_ebp, unsigned int *_ebp)
-{
-	return ((unsigned int)_ebp & 0xffffe000) ==
-		((unsigned int)good_ebp & 0xffffe000);
-}
-#endif
-
+#ifdef CONFIG_FRAME_POINTER
 size_t backtrace_safe(void **array, size_t max_size)
 {
-#ifndef CONFIG_64BIT
-	unsigned int *_ebp, *base_ebp;
-	unsigned int *caller;
+	unsigned long *bp;
+	unsigned long *caller;
 	unsigned int i;
 
-	asm ("movl %%ebp, %0"
-		: "=r" (_ebp)
-	    );
+	get_bp(bp);
 
-	base_ebp = _ebp;
-	caller = (unsigned int *) *(_ebp+1);
+	caller = (unsigned long *) *(bp+1);
 
 	for (i = 0; i < max_size; i++)
 		array[i] = 0;
 	for (i = 0; i < max_size; i++) {
 		array[i] = caller;
-		_ebp = (unsigned int *) *_ebp;
-		if (!verify_stack_ok(base_ebp, _ebp))
+		bp = (unsigned long *) *bp;
+		if (!object_is_on_stack(bp))
 			break;
-		caller = (unsigned int *) *(_ebp+1);
+		caller = (unsigned long *) *(bp+1);
 	}
 
 	return i + 1;
-#else
-	unsigned int i;
-	for (i = 0; i < max_size; i++)
-		array[i] = 0;
-	return 0;
-#endif
 }
+#else
+size_t backtrace_safe(void **array, size_t max_size)
+{
+	memset(array, 0, max_size);
+	return 0;
+}
+#endif
 
 void dump_nc_power_history(void)
 {
@@ -1239,7 +1269,7 @@ int pmu_nc_set_power_state(int islands, int state_type, int reg)
 	int ret = 0;
 	int change;
 
-	spin_lock_irqsave(&mid_pmu_cxt->nc_ready_lock, flags);
+	spin_lock_irqsave(&nc_ready_lock, flags);
 
 	record = get_new_record_history();
 	record->cpu = raw_smp_processor_id();
@@ -1260,7 +1290,7 @@ int pmu_nc_set_power_state(int islands, int state_type, int reg)
 		}
 	}
 
-	spin_unlock_irqrestore(&mid_pmu_cxt->nc_ready_lock, flags);
+	spin_unlock_irqrestore(&nc_ready_lock, flags);
 	return ret;
 }
 EXPORT_SYMBOL(pmu_nc_set_power_state);
@@ -1290,7 +1320,7 @@ int pmu_nc_get_power_state(int island, int reg_type)
 	if (!platform_is(INTEL_ATOM_MFLD) && !platform_is(INTEL_ATOM_CLV))
 		return 0;
 
-	spin_lock_irqsave(&mid_pmu_cxt->nc_ready_lock, flags);
+	spin_lock_irqsave(&nc_ready_lock, flags);
 
 	switch (reg_type) {
 	case APM_REG_TYPE:
@@ -1314,10 +1344,23 @@ int pmu_nc_get_power_state(int island, int reg_type)
 	}
 
 unlock:
-	spin_unlock_irqrestore(&mid_pmu_cxt->nc_ready_lock, flags);
+	spin_unlock_irqrestore(&nc_ready_lock, flags);
 	return ret;
 }
 EXPORT_SYMBOL(pmu_nc_get_power_state);
+
+void pmu_set_s0i1_disp_vote(bool enable)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&nc_ready_lock, flags);
+
+	if (pmu_ops->set_s0i1_disp_vote)
+		pmu_ops->set_s0i1_disp_vote(enable);
+
+	spin_unlock_irqrestore(&nc_ready_lock, flags);
+}
+EXPORT_SYMBOL(pmu_set_s0i1_disp_vote);
 
 /*
 * update_dev_res - Calulates & Updates the device residency when
@@ -1358,6 +1401,21 @@ void update_dev_res(int index, pci_power_t state)
 		}
 	}
 	mid_pmu_cxt->pmu_dev_res[index].state = state;
+}
+
+bool pmu_pci_power_manageable(struct pci_dev *pdev)
+{
+	/* Even if we assume here that the device is PM
+	 * capable, Since this driver is not initialized
+	 * the request will be ignored */
+	if (unlikely((!pmu_initialized)))
+		return true;
+
+	if (pmu_ops->is_dev_power_manageable)
+		return pmu_ops->is_dev_power_manageable(pdev);
+	/* Else all devices are capable of PM */
+	else
+		return true;
 }
 
 /**
@@ -1549,6 +1607,18 @@ retry:
 	inc_d0ix_stat((i-mid_pmu_cxt->pmu1_max_devs),
 				pci_to_platform_state(state));
 
+	/* D0i0 stats */
+	{
+		int lss = i-mid_pmu_cxt->pmu1_max_devs;
+		if (state == PCI_D0) {
+			mid_pmu_cxt->d0i0_count[lss]++;
+			mid_pmu_cxt->d0i0_prev_time[lss] = cpu_clock(0);
+		} else {
+			mid_pmu_cxt->d0i0_time[lss] += (cpu_clock(0) -
+						mid_pmu_cxt->d0i0_prev_time[lss]);
+		}
+	}
+
 	/* check if tranisition to requested state has happened */
 	pmu_read_sss(&cur_pmssc);
 
@@ -1576,19 +1646,6 @@ nc_done:
 		mid_pmu_cxt->camera_off = true;
 	}
 #endif
-
-	/* FIXME:: If S0ix is enabled when North Complex is ON we see
-	 * Fabric errors, tracked in BZ: 115181, hence hold pm_qos
-	 * to restrict s0ix during North Island in D0i0
-	 */
-	if (nc_device_state()) {
-		if (!pm_qos_request_active(mid_pmu_cxt->nc_restrict_qos))
-			pm_qos_add_request(mid_pmu_cxt->nc_restrict_qos,
-			 PM_QOS_CPU_DMA_LATENCY, (CSTATE_EXIT_LATENCY_S0i1-1));
-	} else {
-		if (pm_qos_request_active(mid_pmu_cxt->nc_restrict_qos))
-			pm_qos_remove_request(mid_pmu_cxt->nc_restrict_qos);
-	}
 
 unlock:
 	up(&mid_pmu_cxt->scu_ready_sem);
@@ -1727,7 +1784,7 @@ static int pmu_init(void)
 
 
 	dev_dbg(&mid_pmu_cxt->pmu_dev->dev, "PMU Driver loaded\n");
-	spin_lock_init(&mid_pmu_cxt->nc_ready_lock);
+	spin_lock_init(&nc_ready_lock);
 
 	/* enumerate the PCI configuration space */
 	pmu_enumerate();
@@ -1797,14 +1854,13 @@ static int pmu_init(void)
 	 */
 	update_all_lss_states(&pmu_config);
 
-	/* In MOFD LSS 16 is used by PTI and LSS 15 is used by DFX
-	 * and should not be powered down during init
-	 */
 	if (platform_is(INTEL_ATOM_MOORFLD)) {
 		pmu_config.pmu2_states[0] &=
 			~SSMSK(D0I3_MASK, 15);
 		pmu_config.pmu2_states[1] &=
 			~SSMSK(D0I3_MASK, 0);
+		pmu_config.pmu2_states[0] &=
+			~SSMSK(D0I3_MASK, 7);
 	}
 
 	status = pmu_issue_interactive_command(&pmu_config, false,
@@ -1863,6 +1919,7 @@ mid_pmu_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 	struct mrst_pmu_reg __iomem *pmu;
 	u32 data;
 
+#ifdef CONFIG_XEN
 	u32 dc_islands = (OSPM_DISPLAY_A_ISLAND |
 			  OSPM_DISPLAY_B_ISLAND |
 			  OSPM_DISPLAY_C_ISLAND |
@@ -1871,6 +1928,7 @@ mid_pmu_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 			   APM_VIDEO_ENC_ISLAND |
 			   APM_GL3_CACHE_ISLAND |
 			   APM_GRAPHICS_ISLAND);
+#endif
 
 	mid_pmu_cxt->pmu_wake_lock =
 				wakeup_source_register("pmu_wake_lock");
@@ -1923,6 +1981,9 @@ mid_pmu_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 
 	mid_pmu_cxt->pmu_reg = pmu;
 
+	/* CCU is in same PCI device with PMU, offset is 0x800 */
+	ccu_osc_clk_init((void __iomem *)pmu + 0x800);
+
 	/* Map the memory of emergency emmc up */
 	mid_pmu_cxt->emergency_emmc_up_addr =
 		devm_ioremap_nocache(&mid_pmu_cxt->pmu_dev->dev, PMU_PANIC_EMMC_UP_ADDR, 4);
@@ -1948,8 +2009,7 @@ mid_pmu_probe(struct pci_dev *dev, const struct pci_device_id *pci_id)
 	}
 	dev_warn(&mid_pmu_cxt->pmu_dev->dev, "after pmu initialization\n");
 
-	mid_pmu_cxt->pmu_init_time =
-		cpu_clock(raw_smp_processor_id());
+	mid_pmu_cxt->pmu_init_time = cpu_clock(0);
 
 #ifdef CONFIG_PM_DEBUG
 	/*
@@ -1984,6 +2044,12 @@ static void mid_pmu_remove(struct pci_dev *dev)
 {
 	/* Freeing up the irq */
 	free_irq(dev->irq, &pmu_sc_irq);
+
+	/* If CCU/OSC is inuse, don't remove PMU */
+	if (ccu_osc_clk_uninit() < 0) {
+		pr_warn("ccu/osc is in using. abort\n");
+		return;
+	}
 
 	if (pmu_ops->remove)
 		pmu_ops->remove();
@@ -2104,11 +2170,14 @@ static int mid_suspend_enter(suspend_state_t state)
 	if (state != PM_SUSPEND_MEM)
 		return -EINVAL;
 
-	/* one last check before entering standby */
-	if (pmu_ops->check_nc_sc_status) {
-		if (!(pmu_ops->check_nc_sc_status())) {
-			trace_printk("Device d0ix status check failed! Aborting Standby entry!\n");
-			WARN_ON(1);
+	/*FIXME:: On MOFD target mask is incorrect, hence avoid check for MOFD*/
+	if (!platform_is(INTEL_ATOM_MOORFLD)) {
+		/* one last check before entering standby */
+		if (pmu_ops->check_nc_sc_status) {
+			if (!(pmu_ops->check_nc_sc_status())) {
+				trace_printk("Device d0ix status check failed! Aborting Standby entry!\n");
+				WARN_ON(1);
+			}
 		}
 	}
 
@@ -2180,8 +2249,52 @@ static int __init mid_pci_register_init(void)
 }
 fs_initcall(mid_pci_register_init);
 
+#define TMUIRQ_REG_ADD		0x03
+#define TMUIRQ_REG_WAFMASK	0x02
+
+#define ID_REG_ADD		0x00
+#define ID_REG_REVMASK		0x3F
+
+#define SHADYCOVE_MAX_REV	0x02
+
 void pmu_power_off(void)
 {
+	u8 intval = 0;
+	u8 pmic_id = 0;
+	int ret = 0;
+
+	/*
+	* Workaround for Shady Cove PMIC BZ 186509: clear WAF before going OFF
+	*/
+	if (intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE) {
+		ret = intel_scu_ipc_ioread8(ID_REG_ADD, &pmic_id);
+		if (!ret) {
+			if ((pmic_id & ID_REG_REVMASK) <= SHADYCOVE_MAX_REV) {
+				ret = intel_scu_ipc_ioread8(TMUIRQ_REG_ADD, &intval);
+				if (!ret) {
+					if (intval & TMUIRQ_REG_WAFMASK) {
+						dev_dbg(&mid_pmu_cxt->pmu_dev->dev,
+							"WAF is set, it will be cleared\n");
+						ret  = intel_scu_ipc_iowrite8(TMUIRQ_REG_ADD,
+							TMUIRQ_REG_WAFMASK);
+						if (ret)
+							dev_err(&mid_pmu_cxt->pmu_dev->dev,
+								"clear WAF Failed !!\n");
+					} else {
+						dev_dbg(&mid_pmu_cxt->pmu_dev->dev,
+							"WAF is not set\n");
+					}
+				} else {
+					dev_err(&mid_pmu_cxt->pmu_dev->dev,
+						"TMU irq read failed !!\n");
+				}
+			}
+		} else {
+			dev_err(&mid_pmu_cxt->pmu_dev->dev,
+				"PMIC id read failed !!\n");
+		}
+	}
+
 	/* wait till SCU is ready */
 	if (!_pmu2_wait_not_busy())
 		writel(S5_VALUE, &mid_pmu_cxt->pmu_reg->pm_cmd);

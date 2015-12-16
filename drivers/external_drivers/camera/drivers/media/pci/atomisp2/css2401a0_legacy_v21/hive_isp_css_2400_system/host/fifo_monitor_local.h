@@ -22,12 +22,7 @@
 #ifndef __FIFO_MONITOR_LOCAL_H_INCLUDED__
 #define __FIFO_MONITOR_LOCAL_H_INCLUDED__
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stdbool.h>
-#endif
-
+#include <type_support.h>
 #include "fifo_monitor_global.h"
 
 #include "hive_isp_css_defs.h"	/* ISP_STR_MON_PORT_SND_SP, ... */

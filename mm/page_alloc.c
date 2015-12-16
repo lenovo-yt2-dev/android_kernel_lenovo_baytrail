@@ -299,6 +299,25 @@ static inline int bad_range(struct zone *zone, struct page *page)
 }
 #endif
 
+int panic_on_bad_page;
+EXPORT_SYMBOL_GPL(panic_on_bad_page);
+
+static int __init panic_on_bad_page_setup(char *str)
+{
+	unsigned long enabled;
+	int ret;
+
+	ret = kstrtoul(str, 10, &enabled);
+	if (ret)
+		return ret;
+
+	if (enabled == 1)
+		panic_on_bad_page = 1;
+
+	return 0;
+}
+early_param("panic_on_bad_page", panic_on_bad_page_setup);
+
 static void bad_page(struct page *page)
 {
 	static unsigned long resume;
@@ -341,6 +360,9 @@ out:
 	/* Leave bad fields for debug, except PageBuddy could make trouble */
 	page_mapcount_reset(page); /* remove PageBuddy */
 	add_taint(TAINT_BAD_PAGE, LOCKDEP_NOW_UNRELIABLE);
+
+	if (panic_on_bad_page)
+		panic("Bad page");
 }
 
 /*

@@ -34,10 +34,15 @@
  * Prerequisites:
  *
  */
+#include "storage_class.h"
 
-#ifndef STORAGE_CLASS_ISP_OP1W_H
-#define STORAGE_CLASS_ISP_OP1W_H extern
-#endif
+#ifdef INLINE_ISP_OP1W
+#define STORAGE_CLASS_ISP_OP1W_FUNC_H STORAGE_CLASS_INLINE
+#define STORAGE_CLASS_ISP_OP1W_DATA_H STORAGE_CLASS_INLINE_DATA
+#else /* INLINE_ISP_OP1W */
+#define STORAGE_CLASS_ISP_OP1W_FUNC_H STORAGE_CLASS_EXTERN
+#define STORAGE_CLASS_ISP_OP1W_DATA_H STORAGE_CLASS_EXTERN_DATA
+#endif  /* INLINE_ISP_OP1W */
 
 /*
  * Single-precision data type specification
@@ -62,7 +67,7 @@
  * This function will calculate the bitwise and.
  * result = _a & _b
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_and(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_and(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -76,7 +81,7 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_and(
  * This function will calculate the bitwise or.
  * result = _a | _b
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_or(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_or(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -90,7 +95,7 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_or(
  * This function will calculate the bitwise xor.
  * result = _a ^ _b
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_xor(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_xor(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -103,7 +108,7 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_xor(
  * This function will calculate the bitwise inverse.
  * result = ~_a
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_inv(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_inv(
     const tvector1w     _a);
 
 /* Additive */
@@ -119,22 +124,22 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_inv(
  * in case of overflow it will wrap around.
  * result = _a + _b
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_add(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_add(
     const tvector1w     _a,
     const tvector1w     _b);
 
-/** @brief substraction
+/** @brief subtraction
  *
  * @param[in] _a	first argument
  * @param[in] _b	second argument
  *
- * @return		_b substracted from _a.
+ * @return		_b subtracted from _a.
  *
- * This function will substract _b from _a.
+ * This function will subtract _b from _a.
  * in case of overflow it will wrap around.
  * result = _a - _b
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_sub(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_sub(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -146,68 +151,70 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_sub(
  * @return		saturated sum of both input arguments
  *
  * This function will calculate the sum of the input arguments.
- * in case of overflow it will saturate
+ * in case of overflow it will saturate.
  * result = CLIP(_a + _b, MIN_RANGE, MAX_RANGE);
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_addsat(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_addsat(
     const tvector1w     _a,
     const tvector1w     _b);
 
-/** @brief saturated substraction
+/** @brief saturated subtraction
  *
  * @param[in] _a	first argument
  * @param[in] _b	second argument
  *
- * @return		saturated substraction of both input arguments
+ * @return		saturated subtraction of both input arguments
  *
- * This function will substract _b from _a.
- * in case of overflow it will saturate
+ * This function will subtract _b from _a.
+ * in case of overflow it will saturate.
  * result = CLIP(_a - _b, MIN_RANGE, MAX_RANGE);
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_subsat(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_subsat(
     const tvector1w     _a,
     const tvector1w     _b);
 
-/** @brief substraction with shift right
+/** @brief subtraction with shift right
  *
  * @param[in] _a	first argument
  * @param[in] _b	second argument
  *
  * @return		(a - b) >> 1
  *
- * This function will substract _b from _a.
- * and right shift the result with 1 bit.
+ * This function will subtract _b from _a at full
+ * precision, and right shift the result with 1 bit.
+ * No overflow can occur.
  * result = (_a - _b) >> 1
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_subasr1(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_subasr1(
     const tvector1w     _a,
     const tvector1w     _b);
 
-/** @brief saturated substraction
+/** @brief saturated absolute value
  *
  * @param[in] _a	input
  *
- * @return		absolute value of the input
+ * @return		saturated absolute value of the input
  *
- * This function will calculate the absolute value of the input
+ * This function will calculate the saturated absolute value of the input.
+ * in case of overflow it will saturate.
  * if (_a > 0) return _a;<br>
- * else return -_a;<br>
+ * else return CLIP(-_a, MIN_RANGE, MAX_RANGE);<br>
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_abs(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_abs(
     const tvector1w     _a);
 
-/** @brief subabs
+/** @brief saturated absolute difference
  *
  * @param[in] _a	first argument
  * @param[in] _b	second argument
  *
- * @return		abs(a-b);
+ * @return		sat(abs(a-b));
  *
- * This function will calculate the absolute value
- * of the difference of both inputs
- * result = abs(_a - _b);
+ * This function will calculate the saturated absolute value
+ * of the saturated difference of both inputs.
+ * result = sat(abs(sat(_a - _b)));
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_subabs(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_subabssat(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -222,10 +229,11 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_subabs(
  *
  * This function will calculate the product
  * of the input arguments and returns a double
- * precision result
+ * precision result.
+ * No overflow can occur.
  * result = _a * _b;
  */
-STORAGE_CLASS_ISP_OP1W_H tvector2w OP_1w_muld(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector2w OP_1w_muld(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -238,26 +246,48 @@ STORAGE_CLASS_ISP_OP1W_H tvector2w OP_1w_muld(
  *
  * This function will calculate the product
  * of the input arguments and returns the LSB
- * aligned single precison result.
+ * aligned single precision result.
+ * In case of overflow it will wrap around.
  * result = _a * _b;
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_mul(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_mul(
     const tvector1w     _a,
     const tvector1w     _b);
 
-/** @brief fractional multiply
+/** @brief fractional saturating multiply
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		saturated product of _a and _b
+ *
+ * This function will calculate the fixed point
+ * product of the input arguments
+ * and returns a single precision result.
+ * In case of overflow it will saturate.
+ * FP_UNITY * FP_UNITY => FP_UNITY.
+ * result = CLIP(_a * _b >> (NUM_BITS-1), MIN_RANGE, MAX_RANGE);
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_qmul(
+    const tvector1w     _a,
+    const tvector1w     _b);
+
+/** @brief fractional saturating multiply with rounding
  *
  * @param[in] _a	first argument
  * @param[in] _b	second argument
  *
  * @return		product of _a and _b
  *
- * This function will calculate the product
- * of the input arguments and returns the MSB
- * aligned single precison result.
- * result = _a * _b >> NUM_BITS;
+ * This function will calculate the fixed point
+ * product of the input arguments
+ * and returns a single precision result.
+ * FP_UNITY * FP_UNITY => FP_UNITY.
+ * Depending on the rounding mode of the core
+ * it will round to nearest or to nearest even.
+ * result = CLIP(_a * _b >> (NUM_BITS-1), MIN_RANGE, MAX_RANGE);
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_qmul(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_qrmul(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -273,7 +303,7 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_qmul(
  * This function will return true if both inputs
  * are equal, and false if not equal.
  */
-STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_eq(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tflags OP_1w_eq(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -287,7 +317,7 @@ STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_eq(
  * This function will return false if both inputs
  * are equal, and true if not equal.
  */
-STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_ne(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tflags OP_1w_ne(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -301,7 +331,7 @@ STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_ne(
  * This function will return true if _a is smaller
  * or equal than _b.
  */
-STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_le(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tflags OP_1w_le(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -315,7 +345,7 @@ STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_le(
  * This function will return true if _a is smaller
  * than _b.
  */
-STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_lt(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tflags OP_1w_lt(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -329,7 +359,7 @@ STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_lt(
  * This function will return true if _a is greater
  * or equal than _b.
  */
-STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_ge(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tflags OP_1w_ge(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -343,7 +373,7 @@ STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_ge(
  * This function will return true if _a is greater
  * than _b.
  */
-STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_gt(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tflags OP_1w_gt(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -356,24 +386,14 @@ STORAGE_CLASS_ISP_OP1W_H tflags OP_1w_gt(
  *
  * @return		_a >> _b
  *
- * This function will shift _a with _b bits to the right.
+ * This function will shift _a with _b bits to the right,
  * preserving the sign bit.
+ * It asserts 0 <= _b <= MAX_SHIFT_1W.
+ *
+ * The operation count for this function assumes that
+ * the shift amount is a cloned scalar input.
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_asr(
-    const tvector1w     _a,
-    const tvector1w     _b);
-
-/** @brief aritmetic shift left
- *
- * @param[in] _a	input
- * @param[in] _b	shift amount
- *
- * @return		_a << _b
- *
- * This function will shift _a with _b bits to the left.
- *
- */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_asl(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_asr(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -384,12 +404,48 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_asl(
  *
  * @return		_a >> _b
  *
- * This function will shift _a with _b bits to the right.
- * and depending on the rounding mode of the core
+ * If _b < NUM_BITS, this function will shift _a with _b bits to the right,
+ * preserving the sign bit, and depending on the rounding mode of the core
  * it will round to nearest or to nearest even.
- *
+ * If _b >= NUM_BITS, this function will return 0.
+ * It asserts 0 <= _b <= MAX_SHIFT_1W.
+ * The operation count for this function assumes that
+ * the shift amount is a cloned scalar input.
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_asrrnd(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_asrrnd(
+    const tvector1w     _a,
+    const tvector1w     _b);
+
+/** @brief saturating arithmetic shift left
+ *
+ * @param[in] _a	input
+ * @param[in] _b	shift amount
+ *
+ * @return		_a << _b
+ *
+ * If _b < MAX_BITDEPTH, this function will shift _a with _b bits to the left,
+ * saturating at MIN_RANGE/MAX_RANGE in case of overflow.
+ * If _b >= MAX_BITDEPTH, this function will return MIN_RANGE if _a < 0,
+ * MAX_RANGE if _a > 0, 0 if _a == 0.
+ * (with MAX_BITDEPTH=64)
+ * It asserts 0 <= _b <= MAX_SHIFT_1W.
+ * The operation count for this function assumes that
+ * the shift amount is a cloned scalar input.
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_asl(
+    const tvector1w     _a,
+    const tvector1w     _b);
+
+/** @brief saturating aritmetic shift left
+ *
+ * @param[in] _a	input
+ * @param[in] _b	shift amount
+ *
+ * @return		_a << _b
+ *
+ * This function is identical to OP_1w_asl( )
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_aslsat(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -401,23 +457,12 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_asrrnd(
  * @return		_a << _b
  *
  * This function will shift _a with _b bits to the left.
- * It will insert zero's on the right.
+ * It will insert zeroes on the right.
+ * It asserts 0 <= _b <= MAX_SHIFT_1W.
+ * The operation count for this function assumes that
+ * the shift amount is a cloned scalar input.
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_lsl(
-    const tvector1w     _a,
-    const tvector1w     _b);
-
-/** @brief saturated logical shift left
- *
- * @param[in] _a	input
- * @param[in] _b	shift amount
- *
- * @return		_a << _b
- *
- * This function will shift _a with _b bits to the left.
- * It will insert zero's on the right, and clip the result.
- */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_lslsat(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_lsl(
     const tvector1w     _a,
     const tvector1w     _b);
 
@@ -429,29 +474,14 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_lslsat(
  * @return		_a >> _b
  *
  * This function will shift _a with _b bits to the right.
- * It will insert zero's on the left
+ * It will insert zeroes on the left.
+ * It asserts 0 <= _b <= MAX_SHIFT_1W.
+ * The operation count for this function assumes that
+ * the shift amount is a cloned scalar input.
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_lsr(
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_lsr(
     const tvector1w     _a,
     const tvector1w     _b);
-
-/** @brief logical shift right with rounding
- *
- * @param[in] _a	input
- * @param[in] _b	shift amount
- *
- * @return		_a >> _b
- *
- * This function will shift _a with _b bits to the right.
- * It will insert zero's on the left
- * and depending on the rounding mode of the core
- * it will round to nearest or to nearest even.
- *
- */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_lsrrnd(
-    const tvector1w     _a,
-    const tvector1w     _b);
-
 
 /* Cast */
 
@@ -461,11 +491,11 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_lsrrnd(
  *
  * @return		_a
  *
- * This function cast the input from integer type to
- * single precision. It will also assert on ranges
+ * This function casts the input from integer type to
+ * single precision. It asserts there is no overflow.
  *
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_int_cast_to_1w (
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_int_cast_to_1w(
     const int           _a);
 
 /** @brief Cast from 1w to int
@@ -474,80 +504,222 @@ STORAGE_CLASS_ISP_OP1W_H tvector1w OP_int_cast_to_1w (
  *
  * @return		_a
  *
- * This function cast the input from single precision type to
- * integer.
+ * This function casts the input from single precision type to
+ * integer, preserving value and sign.
  *
  */
-STORAGE_CLASS_ISP_OP1W_H int OP_1w_cast_to_int (
+STORAGE_CLASS_ISP_OP1W_FUNC_H int OP_1w_cast_to_int(
     const tvector1w      _a);
 
-/** @brief Cast from int to 1w
+/** @brief Cast from 1w to 2w
  *
  * @param[in] _a	input
  *
  * @return		_a
  *
- * This function cast the input from single precision type to
- * double precision. lsb aligned.
+ * This function casts the input from single precision type to
+ * double precision, preserving value and sign.
  *
  */
-STORAGE_CLASS_ISP_OP1W_H tvector2w OP_1w_cast_to_2w (
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector2w OP_1w_cast_to_2w(
     const tvector1w     _a);
 
-/** @brief Cast from int to 1w
+/** @brief Cast from 2w to 1w
  *
  * @param[in] _a	input
  *
  * @return		_a
  *
- * This function cast the input from double precision type to
- * single precision. MSB's will be truncated.
+ * This function casts the input from double precision type to
+ * single precision. In case of overflow it will wrap around.
  *
  */
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_2w_cast_to_1w (
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_2w_cast_to_1w(
+    const tvector2w    _a);
+
+
+/** @brief Cast from 2w to 1w with saturation
+ *
+ * @param[in] _a	input
+ *
+ * @return		_a
+ *
+ * This function casts the input from double precision type to
+ * single precision after saturating it to the range of single
+ * precision.
+ *
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_2w_sat_cast_to_1w(
     const tvector2w    _a);
 
 /* clipping */
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_clip_asym(
+/** @brief Clip asymmetrical
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		_a clipped between ~_b and b
+ *
+ * This function will clip the first argument between
+ * (-_b - 1) and _b.
+ * It asserts _b >= 0.
+ *
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_clip_asym(
     const tvector1w     _a,
     const tvector1w     _b);
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_clipz(
+/** @brief Clip zero
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		_a clipped beteween 0 and _b
+ *
+ * This function will clip the first argument between
+ * zero and _b.
+ * It asserts _b >= 0.
+ *
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_clipz(
     const tvector1w     _a,
     const tvector1w     _b);
 
 /* division */
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_div(
+/** @brief Truncated division
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		trunc( _a / _b )
+ *
+ * This function will divide the first argument by
+ * the second argument, with rounding toward 0.
+ * If _b == 0 and _a <  0, the function will return MIN_RANGE.
+ * If _b == 0 and _a == 0, the function will return 0.
+ * If _b == 0 and _a >  0, the function will return MAX_RANGE.
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_div(
     const tvector1w     _a,
     const tvector1w     _b);
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_mod(
+/** @brief Fractional saturating divide
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		_a / _b
+ *
+ * This function will perform fixed point division of
+ * the first argument by the second argument, with rounding toward 0.
+ * In case of overflow it will saturate.
+ * If _b == 0 and _a <  0, the function will return MIN_RANGE.
+ * If _b == 0 and _a == 0, the function will return 0.
+ * If _b == 0 and _a >  0, the function will return MAX_RANGE.
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_qdiv(
     const tvector1w     _a,
     const tvector1w     _b);
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_sqrt(
+/** @brief Modulo
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		_a % _b
+ *
+ * This function will return the remainder r = _a - _b * trunc( _a / _b ),
+ * Note that the sign of the remainder is always equal to the sign of _a.
+ * If _b == 0 the function will return _a.
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_mod(
     const tvector1w     _a,
     const tvector1w     _b);
+
+/** @brief Unsigned integer Square root
+ *
+ * @param[in] _a	input
+ *
+ * @return		Integer square root of _a
+ *
+ * This function will calculate the Integer square root of _a
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w_unsigned OP_1w_sqrt_u(
+	const tvector1w_unsigned     _a);
 
 /* Miscellaneous */
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_mux(
+/** @brief Multiplexer
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ * @param[in] _c	condition
+ *
+ * @return		_c ? _a : _b
+ *
+ * This function will return _a if the condition _c
+ * is true and _b otherwise.
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_mux(
     const tvector1w     _a,
     const tvector1w     _b,
     const tflags           _c);
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_avgrnd(
+/** @brief Average
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		(_a + _b) >> 1
+ *
+ * This function will add _a and _b at full precision,
+ * and right shift with rounding the result with 1 bit.
+ * Depending on the rounding mode of the core
+ * it will round to nearest or to nearest even.
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_avgrnd(
     const tvector1w     _a,
     const tvector1w     _b);
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_min(
+/** @brief Minimum
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		(_a < _b) ? _a : _b;
+ *
+ * This function will return the smallest of both
+ * input arguments.
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_min(
     const tvector1w     _a,
     const tvector1w     _b);
 
-STORAGE_CLASS_ISP_OP1W_H tvector1w OP_1w_max(
+/** @brief Maximum
+ *
+ * @param[in] _a	first argument
+ * @param[in] _b	second argument
+ *
+ * @return		(_a > _b) ? _a : _b;
+ *
+ * This function will return the largest of both
+ * input arguments.
+ */
+STORAGE_CLASS_ISP_OP1W_FUNC_H tvector1w OP_1w_max(
     const tvector1w     _a,
     const tvector1w     _b);
+
+#ifndef INLINE_ISP_OP1W
+#define STORAGE_CLASS_ISP_OP1W_FUNC_C
+#define STORAGE_CLASS_ISP_OP1W_DATA_C const
+#else /* INLINE_ISP_OP1W */
+#define STORAGE_CLASS_ISP_OP1W_FUNC_C STORAGE_CLASS_ISP_OP1W_FUNC_H
+#define STORAGE_CLASS_ISP_OP1W_DATA_C STORAGE_CLASS_ISP_OP1W_DATA_H
+#include "isp_op1w.c"
+#define ISP_OP1W_INLINED
+#endif  /* INLINE_ISP_OP1W */
 
 #endif /* __ISP_OP1W_H_INCLUDED__ */
+

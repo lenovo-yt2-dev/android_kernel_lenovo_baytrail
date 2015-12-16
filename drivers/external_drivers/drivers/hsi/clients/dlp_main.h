@@ -45,7 +45,7 @@
 #define DLP_HANGUP_DELAY	1000000
 
 /* Defaut HSI TX delay (in microseconds) */
-#define DLP_HSI_TX_DELAY		10000
+#define DLP_HSI_TX_DELAY		100000
 
 /* Defaut HSI RX delay (in microseconds) */
 #define DLP_HSI_RX_DELAY		10000
@@ -61,6 +61,7 @@
 
 #define DLP_HSI_TX_WAIT_FIFO	15
 #define DLP_HSI_RX_WAIT_FIFO	8
+#define DLP_HSI_TRACE_WAIT_FIFO	36
 
 /* PDU size for TTY channel */
 #define DLP_TTY_TX_PDU_SIZE		4096	/* 4 KBytes */

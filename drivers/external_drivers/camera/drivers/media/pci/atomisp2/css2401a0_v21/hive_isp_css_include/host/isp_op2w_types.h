@@ -44,6 +44,9 @@
 
 typedef mpsdata_t       tvector2w;
 typedef mpsdata_t       tscalar2w;
+typedef mpsdata_t       tvector2w_signed_positive;
+typedef mpudata_t       tvector2w_unsigned;
+
 
 typedef struct {
   tvector2w       d;

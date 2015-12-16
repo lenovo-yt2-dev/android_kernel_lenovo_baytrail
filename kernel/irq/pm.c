@@ -54,7 +54,7 @@ static void resume_irqs(bool want_early)
 			continue;
 
 #ifdef CONFIG_PM_DEBUG
-		if ((desc->istate & IRQS_PENDING)&&(desc->irq_data.state_use_accessors & IRQD_WAKEUP_STATE)) {
+		if (desc->istate & IRQS_PENDING) {
 			printk(KERN_DEBUG "Wakeup from IRQ %d %s\n",
 				irq,
 				desc->action && desc->action->name ?

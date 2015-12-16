@@ -254,6 +254,7 @@ struct sep_ctx_aead {
 	enum sep_crypto_alg alg;	/* SEP_CRYPTO_ALG_AES */
 	enum sep_cipher_mode mode;
 	enum sep_crypto_direction direction;
+	enum dx_crypto_key_type crypto_key_type;
 	u32 key_size;	/* numeric value in bytes   */
 	u32 nonce_size;	/* nonce size (octets) */
 	u32 header_size;	/* finit additional data size (octets) */
@@ -266,7 +267,7 @@ struct sep_ctx_aead {
 	u8 nonce[SEP_AES_BLOCK_SIZE];	/* nonce buffer */
 	u8 key[SEP_AES_KEY_SIZE_MAX];
 	/* reserve to end of allocated context size */
-	u32 reserved[SEP_CTX_SIZE_WORDS - 8 -
+	u32 reserved[SEP_CTX_SIZE_WORDS - 9 -
 			  3 * (SEP_AES_BLOCK_SIZE / sizeof(u32)) -
 			  SEP_AES_KEY_SIZE_MAX / sizeof(u32)];
 };

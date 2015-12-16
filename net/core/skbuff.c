@@ -823,6 +823,21 @@ int skb_copy_ubufs(struct sk_buff *skb, gfp_t gfp_mask)
 		u8 *vaddr;
 		skb_frag_t *f = &skb_shinfo(skb)->frags[i];
 
+		/* Try to catch IPANIC, caused by:
+		general protection fault: 0000 [#1] [ 4108.238018] PREEMPT SMP
+		RIP: 0010:[<ffffffff82330696>]  [<ffffffff82330696>] memcpy+0x6/0x110
+		RSP: 0000:ffff88003b403d28  EFLAGS: 00010207
+		RAX: ffff88000b481000 RBX: ffffea00002d2040 RCX: 00000000b151f820
+		RDX: 00000000b151f820 RSI: 36e526a1a698a434 RDI: ffff88000b481000
+		...
+		[<ffffffff827b2f9c>] ? skb_copy_ubufs+0xcc/0x270
+		*/
+		WARN_ON(skb_frag_size(f) > 2048);
+		if (skb_frag_size(f) > 2048) {
+			printk(KERN_ERR "%s: skb frag [%d]%p:%u\n", __func__, i, skb_frag_page(f), skb_frag_size(f));
+			return -EFAULT;
+		}
+
 		page = alloc_page(gfp_mask);
 		if (!page) {
 			while (head) {

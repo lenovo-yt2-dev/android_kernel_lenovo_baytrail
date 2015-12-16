@@ -323,4 +323,13 @@ config INTEL_MID_PSTORE_RAM
 	  Options could be enabled, see CONFIG_PSTORE_CONSOLE and
 	  CONFIG_PSTORE_FTRACE.
 
+config LBR_DUMP_ON_EXCEPTION
+	bool "Dump Last Branch Records on Oops"
+	depends on DEBUG_KERNEL && X86_64
+	---help---
+	  Enabling this option turns on LBR recording and dump during Oops.
+
+	  This might help diagnose exceptions where faulting code
+	  is not easy to determine from the call stack.
+
 endmenu

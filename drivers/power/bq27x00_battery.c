@@ -30,6 +30,7 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
+#include <linux/reboot.h>
 #include <linux/idr.h>
 #include <linux/i2c.h>
 #include <linux/slab.h>
@@ -41,7 +42,7 @@
 #include <linux/wakelock.h>
 #include <linux/power/bq27x00_battery.h>
 
-#if 0
+#if 1  //liulc1
 #define pr_axs(format, args...) printk("<bat_fg> %s: "format, __func__, ##args)
 #define fg_dbg(format, args...) printk("<fg> %s: "format, __func__, ##args)
 #else
@@ -243,8 +244,11 @@ static u8 bq27541_regs[] = {
 extern int chrgState2FuelGauge;
 extern bool ovp_stat;
 static int soc_prev = 0,soc_jump = 0,chrg_full_cap = 0;
-volatile int rd_count = 0,rd_loop = 1;
+volatile int rd_count = 0,rd_loop = 1,low_soc_count = 0;
 #define CHRG_DONE			(3 << 4)
+static int btpsoc_set = 0x32; /*50mAh*/
+static int btpsoc_clr = 0x37; /*55mAh*/
+static int shutdown_soc = 2;
 
 struct bq27x00_device_info;
 struct bq27x00_access_methods {
@@ -260,7 +264,10 @@ static void bq27x00_reset_registers(struct bq27x00_device_info *di);
 static int bq27x00_battery_read_control_reg(struct bq27x00_device_info *di);
 static int bq27x00_read_block_i2c(struct bq27x00_device_info *di, u8 reg,
 	unsigned char *buf, size_t len);
-
+static void bq27x00_btpsoc_set(struct bq27x00_device_info *di);
+static void bq27x00_btpsoc_clr(struct bq27x00_device_info *di);
+static int bq27x00_read_i2c(struct bq27x00_device_info *di, u8 reg, bool single);
+static int bq27x00_write_i2c(struct bq27x00_device_info *di, u8 reg, int value, bool single);
 
 enum bq27x00_chip { BQ27000, BQ27500 };
 
@@ -346,6 +353,7 @@ struct bq27x00_device_info {
 	unsigned long data_flash_update_time;
 	struct delayed_work work;
 	struct delayed_work debug_work;
+	struct delayed_work soc_low_work;
 
 	struct power_supply	bat;
 
@@ -365,6 +373,7 @@ struct bq27x00_device_info {
 
 	struct switch_dev sdev;
 	struct wake_lock wake_lock;
+	struct wake_lock low_power_lock;
 };
 
 static enum power_supply_property bq27x00_battery_props[] = {
@@ -485,6 +494,7 @@ static int bq27x00_battery_read_rsoc(struct bq27x00_device_info *di)
 {
 	int rsoc,remin_chrg_cap = 0;
 	int chrg_done =0;
+	int volt;
 
 	if (di->chip == BQ27500)
 		rsoc = bq27x00_read(di, BQ27x00_REG_SOC, false);
@@ -494,6 +504,10 @@ static int bq27x00_battery_read_rsoc(struct bq27x00_device_info *di)
 	chrg_done = get_chrg_done();
 	chrg_done &= CHRG_DONE;
 
+	volt = bq27x00_read(di, BQ27x00_REG_VOLT, false);
+	if(volt > 0 && volt < 4321){
+		chrg_done = 0;
+	}
 	if((di->cache.flags & BQ27500_FLAG_FC) || (chrg_done == CHRG_DONE)){
 		if(rsoc != 100){
 			chrg_full_cap = di->cache.remain_cap;
@@ -644,7 +658,9 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 
 	cache.flags = bq27x00_read(di, BQ27x00_REG_FLAGS, false);
 	//dev_info(di->dev,"FLAGS = 0x%04X\n", cache.flags);
-
+	di->cache.flags = cache.flags;  //liulc1 add
+	di->cache.remain_cap = bq27x00_read(di, BQ27x00_REG_RM, false); //liulc1 add
+	
 	if (cache.flags >= 0) {
 		getnstimeofday(&ts);
 		cache.timestamp = ts;
@@ -847,7 +863,8 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 		di->cache = cache;
 		power_supply_changed(&di->bat);
 	}
-
+	if (wake_lock_active(&di->wake_lock))
+        	wake_unlock(&di->wake_lock);
 	di->last_update = jiffies;
 
 }
@@ -856,7 +873,17 @@ static void bq27x00_battery_poll(struct work_struct *work)
 {
 	struct bq27x00_device_info *di =
 		container_of(work, struct bq27x00_device_info, work.work);
-
+	int rsoc;
+        rsoc = bq27x00_read(di, BQ27x00_REG_SOC, false);
+        if(chrgState2FuelGauge < 0 )
+                chrgState2FuelGauge = 0;
+        if(chrgState2FuelGauge == 0){
+                if(rsoc >= 0 && rsoc <= 5){
+                        bq27x00_btpsoc_set(di);
+                        poll_interval = 10;
+		}
+        }else
+		poll_interval = 60;
 	if (poll_interval > 0) {
 		bq27x00_update(di);
 		/* The timer does not have to be accurate. */
@@ -865,6 +892,37 @@ static void bq27x00_battery_poll(struct work_struct *work)
 	}
 
 	return;
+}
+
+/*
+ *When detect the battery voltage < 3100 shutdown system.
+ *
+ */
+static void bq27x00_low_shutdown(struct work_struct *work)
+{
+        struct bq27x00_device_info *di =
+               container_of(work, struct bq27x00_device_info, soc_low_work.work);
+        int batv,rsoc;
+        batv = bq27x00_read(di, BQ27x00_REG_VOLT, false);
+        rsoc = bq27x00_read(di, BQ27x00_REG_SOC, false);
+        if(chrgState2FuelGauge ==0){
+                if(batv <= 3100 || (rsoc >= 0 && rsoc <= shutdown_soc)){
+                        if(low_soc_count < 10){ /*6s x 10*/
+                                schedule_delayed_work(&di->soc_low_work, 6 * HZ);
+                                printk(KERN_ERR "WARNING: Low batv %d mV and Shutdown count %d\n",
+                                		batv,low_soc_count);
+                                low_soc_count++;
+                        }else{
+                                low_soc_count = 0;
+                                printk(KERN_ERR "WARNING: Low batv %d mV and Shutdown system\n",batv);
+                                kernel_power_off();
+                        }
+                }
+        }else{
+                low_soc_count = 0;
+                if (wake_lock_active(&di->low_power_lock))
+                        wake_unlock(&di->low_power_lock);
+        }
 }
 
 /*
@@ -1309,6 +1367,7 @@ static int bq27x00_powersupply_init(struct bq27x00_device_info *di)
 
 	INIT_DELAYED_WORK(&di->work, bq27x00_battery_poll);
 	INIT_DELAYED_WORK(&di->debug_work, bq27x00_battery_debug_poll);
+	INIT_DELAYED_WORK(&di->soc_low_work, bq27x00_low_shutdown);
 	mutex_init(&di->lock);
 
 	/*
@@ -1334,7 +1393,8 @@ static int bq27x00_powersupply_init(struct bq27x00_device_info *di)
 		di->data_flash_update_time = jiffies;
 
 	bq27x00_update(di);
-
+        bq27x00_btpsoc_clr(di);
+        bq27x00_btpsoc_set(di);
 	return 0;
 }
 
@@ -1731,7 +1791,8 @@ static int bq27x00_dump_dataflash(struct bq27x00_device_info *di)
 		goto error;
 	}
 #endif
-
+        ret = dump_subclass(di, 0x40, 4);
+        ret = dump_subclass(di, 0x31, 4);
 	if (di->fw_ver == G3_FW_VERSION) {
 		ret = dump_subclass(di, 0x02, 9);
 		ret = dump_subclass(di, 0x20, 5);
@@ -1812,6 +1873,24 @@ error:
 	return ret;
 }
 
+/*
+ *BTSOC set 50mAh and clear was 55mAh.
+ *SET_HDQINTEN.
+*/
+static void bq27x00_btpsoc_set(struct bq27x00_device_info *di)
+{
+        bq27x00_write_i2c(di, CMD_CONTROL, CMD_CONTROL_HDQ_INT, false);
+        msleep(5);
+        bq27x00_write_i2c(di, 0x24, btpsoc_set ,false);
+        printk(KERN_ERR "<fg>:[0x24] = 0x%04X\n",
+                        bq27x00_read_i2c(di, 0x24, false));
+}
+static void bq27x00_btpsoc_clr(struct bq27x00_device_info *di)
+{
+        bq27x00_write_i2c(di, 0x26, btpsoc_clr ,false);
+        printk(KERN_ERR "<fg>:[0x26] = 0x%04X\n",
+                        bq27x00_read_i2c(di, 0x26, false));
+}
 static ssize_t show_dump_partial_data_flash(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -1846,15 +1925,25 @@ static ssize_t show_dump_partial_data_flash(struct device *dev,
 static irqreturn_t soc_int_irq_threaded_handler(int irq, void *arg)
 {
 	struct bq27x00_device_info *di = arg;
-	int flags;
+	int flags,rsoc,batv;
 
-	//dev_warn(di->dev, "soc_int\n");
+	dev_info(di->dev, "soc_int\n");
 
 	/* the actual SysDown event is processed in the normal update path */
 
 	mutex_lock(&di->lock);
 
 	flags = bq27x00_read(di, BQ27x00_REG_FLAGS, false);
+        rsoc = bq27x00_read(di, BQ27x00_REG_SOC, false);
+        batv = bq27x00_read(di, BQ27x00_REG_VOLT, false);
+
+        if(chrgState2FuelGauge < 0 )
+                chrgState2FuelGauge = 0;
+
+        if(chrgState2FuelGauge  == 0 && rsoc <= shutdown_soc ){
+                wake_lock(&di->low_power_lock);
+                schedule_delayed_work(&di->soc_low_work, 0);
+        }
 /*
 	if (flags & SYSDOWN_BIT) {
 		dev_warn(di->dev, "detected SYSDOWN condition, pulsing poweroff switch\n");
@@ -1868,6 +1957,7 @@ static irqreturn_t soc_int_irq_threaded_handler(int irq, void *arg)
 	}
 */
 	mutex_unlock(&di->lock);
+	printk(KERN_ERR "%s:0x%x,%d,%d\n",__func__,flags,rsoc,batv);
 
 	return IRQ_HANDLED;
 }
@@ -1931,7 +2021,7 @@ static ssize_t show_registers(struct device *dev,
 	fg_dbg("CMD_DOD0				[0x%02X] = %d\n", CMD_DOD0, bq27x00_read_reg(di, CMD_DOD0, false));
 	fg_dbg("CMD_SELF_DISCH_CURR		[0x%02X] = %d\n", CMD_SELF_DISCH_CURR, bq27x00_read_reg(di, CMD_SELF_DISCH_CURR, false));
 */
-	for(i=0;i<26;i++){
+	for(i=0;i<45;i++){
 		if(bq27541_regs[i] == 0x0A)
 			printk("<fg>:	[0x%02X] = 0x%04X\n",
 				bq27541_regs[i],
@@ -2194,6 +2284,7 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 	bq27x00_reset_registers(di);
 
 	wake_lock_init(&di->wake_lock, WAKE_LOCK_SUSPEND, "battery_wake_lock");
+	wake_lock_init(&di->low_power_lock, WAKE_LOCK_SUSPEND, "batt_low_power_wake_lock");
 
 	/* use switch dev reporting to tell userspace to poweroff gracefully */
 	di->sdev.name = "poweroff";
@@ -2210,7 +2301,7 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 
 	if (pdata->soc_int_irq >= 0) {
 		retval = request_threaded_irq(pdata->soc_int_irq, NULL,
-				soc_int_irq_threaded_handler, IRQF_TRIGGER_FALLING | IRQF_ONESHOT, "soc_int_irq", di);
+				soc_int_irq_threaded_handler, IRQF_TRIGGER_RISING | IRQF_ONESHOT, "soc_int_irq", di);
 
 		if (retval) {
 			dev_err(&client->dev, "failed to request threaded irq for soc_int: %d\n", retval);
@@ -2322,8 +2413,10 @@ static int bq27x00_battery_suspend_resume(struct i2c_client *client, const char 
 		dev_err(di->dev,"Failed to get Qpassed value!\n");
 		return -EIO;
 	}
-	if (suspend_resume == RESUME_STR)
+	if (suspend_resume == RESUME_STR){
+		wake_lock(&di->wake_lock);
 		schedule_delayed_work(&di->work, 0);
+	}
 
 	dev_info(di->dev,"Qpassed @%s: %s\n", suspend_resume, buf);
 

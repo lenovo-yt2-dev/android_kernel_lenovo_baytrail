@@ -2838,7 +2838,7 @@ static void serial8250_console_putchar(struct uart_port *port, int ch)
 {
 	struct uart_8250_port *up =
 		container_of(port, struct uart_8250_port, port);
-
+		return ;  //liulc1 add
 	wait_for_xmitr(up, UART_LSR_THRE);
 	serial_port_out(port, UART_TX, ch);
 }

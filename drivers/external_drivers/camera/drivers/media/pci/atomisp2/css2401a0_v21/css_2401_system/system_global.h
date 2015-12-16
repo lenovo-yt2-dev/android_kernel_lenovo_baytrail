@@ -32,6 +32,15 @@
 #define HIVE_ISP_MAX_BURST_LENGTH	1024
 
 /*
+ * Maximum allowed burst length in words for the ISP DMA
+ * This value is set to 2 to prevent the ISP DMA from blocking
+ * the bus for too long; as the input system can only buffer
+ * 2 lines on Moorefield and Cherrytrail, the input system buffers
+ * may overflow if blocked for too long (BZ 2726).
+ */
+#define ISP_DMA_MAX_BURST_LENGTH	2
+
+/*
  * Create a list of HAS and IS properties that defines the system
  *
  * The configuration assumes the following
@@ -93,6 +102,12 @@
 #define HAS_TIMED_CTRL_VERSION_1
 #define HAS_RX_VERSION_2
 #define HAS_NO_INPUT_FORMATTER
+/*#define HAS_NO_PACKED_RAW_PIXELS*/
+/*#define HAS_NO_DVS_6AXIS_CONFIG_UPDATE*/
+
+#define DMA_DDR_TO_VAMEM_WORKAROUND
+#define DMA_DDR_TO_HMEM_WORKAROUND
+
 
 /*
  * Semi global. "HRT" is accessible from SP, but
@@ -109,6 +124,11 @@
 /* The main bus connecting all devices */
 #define HRT_BUS_WIDTH		HIVE_ISP_CTRL_DATA_WIDTH
 #define HRT_BUS_BYTES		HIVE_ISP_CTRL_DATA_BYTES
+
+#define CSI2P_DISABLE_ISYS2401_ONLINE_MODE
+
+/* per-frame parameter handling support */
+#define SH_CSS_ENABLE_PER_FRAME_PARAMS
 
 typedef uint32_t			hrt_bus_align_t;
 
@@ -219,6 +239,18 @@ typedef enum {
 	GP_DEVICE0_ID = 0,
 	N_GP_DEVICE_ID
 } gp_device_ID_t;
+
+typedef enum {
+	GP_TIMER0_ID = 0,
+	GP_TIMER1_ID,
+	GP_TIMER2_ID,
+	GP_TIMER3_ID,
+	GP_TIMER4_ID,
+	GP_TIMER5_ID,
+	GP_TIMER6_ID,
+	GP_TIMER7_ID,
+	N_GP_TIMER_ID
+} gp_timer_ID_t;
 
 typedef enum {
 	GPIO0_ID = 0,
@@ -412,5 +444,22 @@ typedef enum {
 	ISYS2401_DMA_CHANNEL_11,
 	N_ISYS2401_DMA_CHANNEL
 } isys2401_dma_channel;
+
+enum ia_css_isp_memories {
+	IA_CSS_ISP_PMEM0 = 0,
+	IA_CSS_ISP_DMEM0,
+	IA_CSS_ISP_VMEM0,
+	IA_CSS_ISP_VAMEM0,
+	IA_CSS_ISP_VAMEM1,
+	IA_CSS_ISP_VAMEM2,
+	IA_CSS_ISP_HMEM0,
+	IA_CSS_SP_DMEM0,
+	IA_CSS_DDR,
+	N_IA_CSS_MEMORIES
+};
+#define IA_CSS_NUM_MEMORIES 9
+/* For driver compatability */
+#define N_IA_CSS_ISP_MEMORIES   IA_CSS_NUM_MEMORIES
+#define IA_CSS_NUM_ISP_MEMORIES IA_CSS_NUM_MEMORIES
 
 #endif /* __SYSTEM_GLOBAL_H_INCLUDED__ */

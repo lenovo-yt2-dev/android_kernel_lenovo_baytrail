@@ -105,7 +105,7 @@
 #define CHR_CFG_CHRG_MASK			3
 #define POWER_ON_CFG_CHRG_CFG_DIS		(0 << 4)
 #define POWER_ON_CFG_CHRG_CFG_EN		(1 << 4)
-#define POWER_ON_CFG_CHRG_CFG_OTG		(3 << 4)
+#define POWER_ON_CFG_CHRG_CFG_OTG		(2 << 4) //liulc1
 /* BQ2429X series charger and OTG enable bits */
 #define POWER_ON_CFG_BQ29X_OTG_EN		(1 << 5)
 #define POWER_ON_CFG_BQ29X_CHRG_EN		(1 << 4)
@@ -122,11 +122,13 @@
 			+ BQ24192_CHRG_CUR_OFFSET) /* in mA */
 #define BQ24192_CHRG_ITERM_OFFSET       128
 #define BQ24192_CHRG_CUR_LSB_TO_ITERM   128
+#define BQ24192_CHRG_FORCE_20PCT		(1 << 0)
 
 /* Pre charge and termination current limit reg */
 #define BQ24192_PRECHRG_TERM_CUR_CNTL_REG	0x3
 #define BQ24192_TERM_CURR_LIMIT_128		0	/* 128mA */
 #define BQ24192_PRE_CHRG_CURR_256		(1 << 4)  /* 256mA */
+#define BQ24192_PRE_CHRG_CURR_512		(3 << 4)  /* 512mA */ 
 
 /* Charge voltage control reg */
 #define BQ24192_CHRG_VOLT_CNTL_REG	0x4
@@ -323,7 +325,8 @@ static char bq24192_dbg_regs[BQ24192_MAX_MEM][4];
 static struct i2c_client *bq24192_client;
 static int bq24192_get_chip_version(struct bq24192_chip *chip);
 static int bq24192_is_online(struct bq24192_chip *chip);
-
+unsigned int read_vbus();  //liulc1
+static inline int bq24192_set_inlmt(struct bq24192_chip *chip, int inlmt); //liulc1
 static enum power_supply_property bq24192_usb_props[] = {
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
@@ -413,8 +416,8 @@ static int bq24192_read_reg(struct i2c_client *client, u8 reg)
 
 bool bq24192_get_regulator(struct bq24192_chip *chip)
 {
-	dev_err(&chip->client->dev, "get_regulator");
-	if(chip->regulator_v3p3s == NULL)
+	dev_info(&chip->client->dev, "get_regulator");
+	if(chip->regulator_v3p3s == NULL)	
 	{
 		chip->regulator_v3p3s = regulator_get(&chip->client->dev, REGULATOR_V3P3S);
 		if(chip->regulator_v3p3s == NULL)
@@ -428,7 +431,7 @@ bool bq24192_get_regulator(struct bq24192_chip *chip)
 			return false;
 		}
 	}
-	return true;
+    return true;
 }
 
 #ifdef DEBUG
@@ -675,7 +678,6 @@ static int fg_chip_get_property(enum power_supply_property psp)
 int bq24192_get_charger_health(void)
 {
 	int ret_status, ret_fault;
-	int chrg_curr;
 	struct bq24192_chip *chip =
 		i2c_get_clientdata(bq24192_client);
 
@@ -685,13 +687,6 @@ int bq24192_get_charger_health(void)
 	if (chip->cable_type == POWER_SUPPLY_CHARGER_TYPE_NONE)
 		return POWER_SUPPLY_HEALTH_UNKNOWN;
 
-	if(chip->online == 1){
-		chrg_curr = fg_chip_get_property(POWER_SUPPLY_PROP_CURRENT_NOW);
-		if(chrg_curr > 0){
-			printk("%s: LOWCURRENT, %d\n",__func__,chrg_curr);
-			return POWER_SUPPLY_HEALTH_LOWCURRENT;
-		}
-	}
 	ret_fault = bq24192_read_reg(chip->client, BQ24192_FAULT_STAT_REG);
 	if (ret_fault < 0) {
 		dev_warn(&chip->client->dev,
@@ -835,16 +830,25 @@ static u8 chrg_iterm_to_reg(int iterm)
 static u8 chrg_cur_to_reg(int cur)
 {
 	u8 reg;
+	if (cur < BQ24192_CHRG_CUR_OFFSET)
+		reg = 0x01;
 
-	if (cur <= BQ24192_CHRG_CUR_OFFSET)
-		reg = 0x0;
+	else if(cur>=500&&cur<=900)
+         {  
+		reg = ((cur*5 - BQ24192_CHRG_CUR_OFFSET) /
+                                BQ24192_CHRG_CUR_LSB_TO_CUR) + 1;
+        	reg = reg << 2;
+		reg|=0x01;
+	}
 	else
+	{
 		reg = ((cur - BQ24192_CHRG_CUR_OFFSET) /
 				BQ24192_CHRG_CUR_LSB_TO_CUR) + 1;
 
-	/* D0, D1 bits of Charge Current
-	 * register are not used */
-	reg = reg << 2;
+		/* D0, D1 bits of Charge Current
+		 * register are not used */
+		reg = reg << 2;
+	}
 	return reg;
 }
 
@@ -1281,6 +1285,8 @@ static inline int bq24192_enable_charging(
 		if(set_curr_num == 1)
 			schedule_delayed_work(&chip->chrg_ovp_wrkr,0);
 
+		//schedule_delayed_work(&chip->chrg_ovp_wrkr,0); //liulc1
+
 		/*send the chrg status to fg*/
 		reg_status = bq24192_read_reg(chip->client, BQ24192_SYSTEM_STAT_REG);
 		if((reg_status & SYSTEM_STAT_VBUS_HOST) == SYSTEM_STAT_VBUS_HOST){
@@ -1306,14 +1312,7 @@ static inline int bq24192_enable_charging(
 		 * happening
 		 */
 		cancel_delayed_work_sync(&chip->chrg_full_wrkr);
-		if(!bq24192_is_online(chip) && ovp_stat == true){
-			ret = bq24192_clear_hiz(chip);
-			if (ret < 0)
-				dev_warn(&chip->client->dev, "HiZ clear failed:\n");
-			else
-				ovp_stat = false;
-		}
-		cancel_delayed_work_sync(&chip->chrg_ovp_wrkr);
+		cancel_delayed_work_sync(&chip->chrg_ovp_wrkr); //liulc1
 
 		chrgState2FuelGauge = 0;
 
@@ -1434,6 +1433,7 @@ static int low_temp_curr_cntl(void)
 	return ret;
 }
 
+#if 0
 static inline int bq24192_set_cc(struct bq24192_chip *chip, int cc)
 {
 	u8 regval;
@@ -1444,16 +1444,82 @@ static inline int bq24192_set_cc(struct bq24192_chip *chip, int cc)
 	if(ret == 1){
 		yt2_8 = is_blade2_8();
 		if(yt2_8)
-			cc = 600;
+			cc = 3000;//20%=600mA
 		else
-			cc = 900;
+			cc = 4500;//20%=900mA
 	}
+	cc=3000; //liulc1
 	dev_warn(&chip->client->dev, "%s:%d %d\n", __func__, __LINE__, cc);
 	regval = chrg_cur_to_reg(cc);
-
+	if((ret == 1) && regval){
+		regval |= BQ24192_CHRG_FORCE_20PCT;
+	}
 	return bq24192_write_reg(chip->client, BQ24192_CHRG_CUR_CNTL_REG,
 				regval);
 }
+#endif
+
+static inline int bq24192_set_cc(struct bq24192_chip *chip, int cc)
+{
+        u8 regval;
+	int temp ;
+	unsigned int vbus;
+
+
+
+	vbus=read_vbus();
+       if(chip->cable_type == POWER_SUPPLY_CHARGER_TYPE_USB_DCP)
+       {
+               if(vbus>10500)
+                       bq24192_set_inlmt(chip,1500);
+               else
+                       bq24192_set_inlmt(chip,2000);
+       }
+
+
+//===================================================================
+	temp = fg_chip_get_property(POWER_SUPPLY_PROP_TEMP);
+	temp /= 10;
+	printk("liulc1================temp=%d\n",temp);
+	if(temp > 10&& temp <= 45)
+	{
+		if(chip->cable_type == POWER_SUPPLY_CHARGER_TYPE_USB_SDP)
+		   cc=1500;
+		else if(chip->cable_type == POWER_SUPPLY_CHARGER_TYPE_USB_CDP)
+		   cc=1500;
+		else if(chip->cable_type == POWER_SUPPLY_CHARGER_TYPE_USB_DCP)
+		 {
+			 if(vbus>10500)
+				 cc=3000;
+			  else 
+				 cc=2000;
+		}
+
+	}
+	else if((temp > 0 && temp <=10)||(temp > 45 && temp <=50))
+	{
+		if(chip->cable_type == POWER_SUPPLY_CHARGER_TYPE_USB_SDP)
+		   cc=1200;
+		else
+		   cc=1200;
+	}
+	else if(temp <=0||temp > 50)
+	{
+		cc=1500;
+	}
+
+	printk("liulc1================cc=%d\n",cc);
+
+	chip->cc = cc;
+//==================================================================
+        dev_warn(&chip->client->dev, "%s:%d %d\n", __func__, __LINE__, cc);
+        regval = chrg_cur_to_reg(cc);
+
+        return bq24192_write_reg(chip->client, BQ24192_CHRG_CUR_CNTL_REG,
+                                regval);
+}
+
+
 
 static inline int bq24192_set_cv(struct bq24192_chip *chip, int cv)
 {
@@ -1484,7 +1550,7 @@ static inline int bq24192_set_inlmt(struct bq24192_chip *chip, int inlmt)
 static inline int bq24192_set_iterm(struct bq24192_chip *chip, int iterm)
 {
 	u8 reg_val;
-
+	iterm = 256; //liulc1
 	if (iterm > BQ24192_CHRG_ITERM_OFFSET)
 		dev_warn(&chip->client->dev,
 			"%s ITERM set for >128mA", __func__);
@@ -1494,7 +1560,7 @@ static inline int bq24192_set_iterm(struct bq24192_chip *chip, int iterm)
 
 	return bq24192_write_reg(chip->client,
 			BQ24192_PRECHRG_TERM_CUR_CNTL_REG,
-				(BQ24192_PRE_CHRG_CURR_256 | reg_val));
+				(BQ24192_PRE_CHRG_CURR_512 | reg_val));
 }
 
 static enum bq24192_chrgr_stat bq24192_is_charging(struct bq24192_chip *chip)
@@ -1526,7 +1592,7 @@ static enum bq24192_chrgr_stat bq24192_is_charging(struct bq24192_chip *chip)
 
 static int bq24192_is_online(struct bq24192_chip *chip)
 {
-	int ret,online;
+	int ret,online =0;
 	ret = bq24192_read_reg(chip->client, BQ24192_SYSTEM_STAT_REG);
 	if (ret < 0)
 		dev_err(&chip->client->dev, "STATUS register read failed\n");
@@ -1541,6 +1607,8 @@ static int bq24192_is_online(struct bq24192_chip *chip)
 	case SYSTEM_STAT_VBUS_OTG:
 	case SYSTEM_STAT_VBUS_UNKNOWN:
 		online = 0;
+		break;
+	default:
 		break;
 	}
 	return online;
@@ -1660,10 +1728,12 @@ static int bq24192_usb_get_property(struct power_supply *psy,
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_PRESENT:
-		val->intval = bq24192_is_online(chip);
+		//val->intval = bq24192_is_online(chip);  //liulc1
+		val->intval = chip->present;
 		break;
 	case POWER_SUPPLY_PROP_ONLINE:
-		val->intval = bq24192_is_online(chip);
+		//val->intval = bq24192_is_online(chip);  //liulc1
+		val->intval = chip->online;
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
 		val->intval = bq24192_get_charger_health();
@@ -1774,6 +1844,7 @@ static irqreturn_t bq24192_irq_thread(int irq, void *devid)
 {
 	struct bq24192_chip *chip = (struct bq24192_chip *)devid;
 	int reg_status, reg_fault;
+	int vbat;
 
 	dev_info(&chip->client->dev,
 		"IRQ Handled for charger interrupt: %d\n", irq);
@@ -1814,10 +1885,15 @@ static irqreturn_t bq24192_irq_thread(int irq, void *devid)
 
 	if (reg_status == SYSTEM_STAT_CHRG_DONE) {
 		dev_warn(&chip->client->dev, "HW termination happened\n");
-		mutex_lock(&chip->event_lock);
-		//bq24192_enable_hw_term(chip, false);
-		bq24192_resume_charging(chip);
-		mutex_unlock(&chip->event_lock);
+
+		vbat = fg_chip_get_property(POWER_SUPPLY_PROP_VOLTAGE_OCV);
+		if(vbat > 0 && vbat < 4250)
+		{
+			mutex_lock(&chip->event_lock);
+			//bq24192_enable_hw_term(chip, false);
+			bq24192_resume_charging(chip);
+			mutex_unlock(&chip->event_lock);
+		}
 		/* schedule the thread to let the framework know about FULL */
 		schedule_delayed_work(&chip->chrg_full_wrkr, 0);
 	}
@@ -1957,6 +2033,9 @@ sched_task_work:
 		dev_warn(&chip->client->dev,
 			"%s battery full", __func__);
 	}
+#ifdef DEBUG
+		bq24192_dump_registers(chip);
+#endif
 
 	schedule_delayed_work(&chip->chrg_task_wrkr, jiffy);
 }
@@ -1977,27 +2056,35 @@ static void bq24192_otg_evt_worker(struct work_struct *work)
 		spin_unlock_irqrestore(&chip->otg_queue_lock, flags);
 
 		dev_info(&chip->client->dev,
-			"%s:%d state=%d event=%ld\n", __FILE__, __LINE__,
+			"%s:%d state=%d event=%d\n", __FILE__, __LINE__,
 				evt->is_enable, evt->event);
 
-		if(evt->event == USB_EVENT_ID){
-			dev_info(&chip->client->dev,
-				"chip->a_bus_enable %d,chip->regulator_v3p3s %p \n",
-					chip->a_bus_enable,chip->regulator_v3p3s);
-			if(chip->a_bus_enable){
+	    if((evt->event == USB_EVENT_ID) || (evt->event == USB_EVENT_DRIVE_VBUS)) {
+	    	dev_dbg(&chip->client->dev, "chip->a_bus_enable %d  chip->regulator_v3p3s %d \n", chip->a_bus_enable, chip->regulator_v3p3s);
+
+	    	if(chip->a_bus_enable) {	
+	    		if (evt->is_enable) {
+	    			if (bq24192_get_regulator(chip)) {
+	    				regulator_enable(chip->regulator_v3p3s);
+	    				dev_dbg(&chip->client->dev, "regulator_enable ret \n");
+	    			}
+	    		} else {
+	    			if (bq24192_get_regulator(chip)) {
+	    				regulator_disable(chip->regulator_v3p3s);
+	    				dev_dbg(&chip->client->dev, "regulator_disable ret \n");
+	    			}
+	    		}
+	    	}
+			else{
 				if (evt->is_enable){
-					if (bq24192_get_regulator(chip)){
-						regulator_enable(chip->regulator_v3p3s);
-						printk("regulator_enable ret \n");
-					}
-				}else{
-					if (bq24192_get_regulator(chip)){
-						regulator_disable(chip->regulator_v3p3s);
-						printk("regulator_disable ret \n");
-					}
-				}
+					chip->cable_type = POWER_SUPPLY_TYPE_OTG_DISABLE;
+					power_supply_changed(NULL);
+					dev_info(&chip->client->dev,"cable type is %d\n",
+									chip->cable_type);
+				}else
+					chip->cable_type = 0;
 			}
-		}
+	    }	
 
 		mutex_lock(&chip->event_lock);
 		ret = bq24192_turn_otg_vbus(chip, evt->is_enable);
@@ -2089,9 +2176,59 @@ static int adc_to_volt(unsigned int adc_val)
 /*
 	r_div = (r1013/(r1013+r1012+r1011))*100;
 */
+
 	ret = ((2000/1000)*adc_val*100/r_div);
 	return ret;
 }
+
+static int adc_to_volt_13a(unsigned int adc_val)
+{
+        int r1070=22,r1000=44.2,r1016=130;
+        int r_div=11;/*r1013 15%*/ //11.21
+        u32 ret;
+/*
+        r_div = (r1070/(r1070+r1000+r1016))*100;
+*/
+
+        ret = ((2000/1000)*adc_val*100/r_div);
+        return ret;
+}
+
+
+unsigned int read_vbus()
+{
+	 int ret = 0,i;
+        unsigned int pending0;
+        unsigned int val;
+        unsigned int volt;
+
+ 	ret = intel_mid_pmic_readb(THERM_ENABLE);
+        intel_mid_pmic_setb(THERM_ENABLE,ret|0x8); //enable bptherm0
+        udelay(5);
+        intel_mid_pmic_setb(0x72,0x8);
+
+        for(i=0;i<1000;i++)
+        {
+                udelay(1);
+                pending0 = intel_mid_pmic_readb(ADCIRQ0);
+                if(pending0&0x8)
+                {
+                        intel_mid_pmic_writeb(ADCIRQ0, pending0);//clear irq status
+                        break;
+                }
+        }
+        val = intel_mid_pmic_readb(BPTEMP0_RSLTH); //therm adc high bits
+        val = ((val & 0x3) << 8) + intel_mid_pmic_readb(BPTEMP0_RSLTL);
+        intel_mid_pmic_setb(THERM_ENABLE,ret); //set to ori value
+        volt =  adc_to_volt_13a(val);
+
+        return volt;
+
+
+}
+
+EXPORT_SYMBOL(read_vbus);
+
 static void bq24192_ovp_worker(struct work_struct *work)
 {
 	struct bq24192_chip *chip =
@@ -2131,12 +2268,12 @@ static void bq24192_ovp_worker(struct work_struct *work)
 	val = intel_mid_pmic_readb(BPTEMP0_RSLTH); //therm adc high bits
 	val = ((val & 0x3) << 8) + intel_mid_pmic_readb(BPTEMP0_RSLTL);
 	intel_mid_pmic_setb(THERM_ENABLE,ret); //set to ori value
-	volt =  adc_to_volt(val);
+	volt =  adc_to_volt_13a(val);
 
 	dev_info(&chip->client->dev,
 			"BP0: %d, vbus:%d mV\n", val,volt);
 
-	if(volt > 7500){
+	if(volt > 14000){
 		ret = bq24192_reg_read_modify(chip->client,
 			BQ24192_INPUT_SRC_CNTL_REG,
 				INPUT_SRC_CNTL_EN_HIZ, true);
@@ -2204,14 +2341,12 @@ static int otg_handle_notification(struct notifier_block *nb,
 	}
 
 	evt->event = event;
-
 	if (event == USB_EVENT_DRIVE_VBUS)
 		evt->is_enable = *(bool *)param;
 	else	/* treat id short as drive vbus evt */
 		evt->is_enable = !(*(bool *)param);
 	otg_stat = evt->is_enable;
-
-	dev_info(&chip->client->dev, "evt->is_enable is %d, evt->event is %ld\n", evt->is_enable, evt->event);
+	dev_info(&chip->client->dev, "evt->is_enable is %d, evt->event is %d\n", evt->is_enable, evt->event);
 	INIT_LIST_HEAD(&evt->node);
 
 	spin_lock(&chip->otg_queue_lock);
@@ -2257,8 +2392,8 @@ static void bq24192_usb_otg_enable(struct usb_phy *phy)
 		ret = bq24192_turn_otg_vbus(chip, false);
 		if (ret < 0)
 			dev_err(&chip->client->dev, "VBUS OFF FAILED:\n");
-	//regulator_get is always done before this enable func, hence use regulator directly
-		else if (chip->regulator_v3p3s)
+		//regulator_get is always done before this enable func, hence use regulator directly
+		else if (chip->regulator_v3p3s) 
 			ret = regulator_disable(chip->regulator_v3p3s);
 	} else {
 		dev_info(&chip->client->dev, "OTG Enable");
@@ -2459,7 +2594,6 @@ static int bq24192_probe(struct i2c_client *client,
 					"FAILED: init_platform_data\n");
 		}
 	}
-	mutex_init(&chip->event_lock);
 	/*
 	 * Request for charger chip gpio.This will be used to
 	 * register for an interrupt handler for servicing charger
@@ -2506,7 +2640,8 @@ static int bq24192_probe(struct i2c_client *client,
 	INIT_DELAYED_WORK(&chip->chrg_full_wrkr, bq24192_full_worker);
 	INIT_DELAYED_WORK(&chip->chrg_task_wrkr, bq24192_task_worker);
 	INIT_DELAYED_WORK(&chip->chrg_temp_wrkr, bq24192_temp_update_worker);
-	INIT_DELAYED_WORK(&chip->chrg_ovp_wrkr, bq24192_ovp_worker);
+	INIT_DELAYED_WORK(&chip->chrg_ovp_wrkr, bq24192_ovp_worker);  //liulc1 
+	mutex_init(&chip->event_lock);
 
 	/* Initialize the wakelock */
 	wake_lock_init(&chip->wakelock, WAKE_LOCK_SUSPEND,
@@ -2605,10 +2740,6 @@ static int bq24192_remove(struct i2c_client *client)
 
 	i2c_set_clientdata(client, NULL);
 	wake_lock_destroy(&chip->wakelock);
-
-	if (chip->regulator_v3p3s)
-		regulator_put(chip->regulator_v3p3s);
-
 	kfree(chip);
 	return 0;
 }
@@ -2616,13 +2747,11 @@ static int bq24192_remove(struct i2c_client *client)
 #ifdef CONFIG_PM
 static int bq24192_suspend(struct device *dev)
 {
-	int ret;
+	//int ret;
 	struct bq24192_chip *chip = dev_get_drvdata(dev);
-	ret=bq24192_read_reg(chip->client, BQ24192_CHRG_TIMER_EXP_CNTL_REG);
-	ret &= ~(3 << 4);
-	ret = bq24192_write_reg(chip->client,
-				BQ24192_CHRG_TIMER_EXP_CNTL_REG,
-				ret);
+	//ret=bq24192_read_reg(chip->client, BQ24192_CHRG_TIMER_EXP_CNTL_REG);
+	//ret &= ~(3 << 4);
+	//ret = bq24192_write_reg(chip->client,	BQ24192_CHRG_TIMER_EXP_CNTL_REG,ret);
 	if (chip->irq > 0) {
 		/*
 		 * Once the WDT is expired all bq24192 registers gets
@@ -2647,7 +2776,7 @@ static int bq24192_resume(struct device *dev)
 {
 	struct bq24192_chip *chip = dev_get_drvdata(dev);
 	int ret;
-	program_timers(chip,CHRG_TIMER_EXP_CNTL_WDT160SEC, false);
+	//program_timers(chip,CHRG_TIMER_EXP_CNTL_WDT160SEC, false);
 	if (chip->irq > 0) {
 		ret = request_threaded_irq(chip->irq,
 				bq24192_irq_isr, bq24192_irq_thread,

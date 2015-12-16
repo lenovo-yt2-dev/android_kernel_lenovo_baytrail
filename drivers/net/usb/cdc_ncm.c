@@ -116,6 +116,13 @@ static u8 cdc_ncm_setup(struct cdc_ncm_ctx *ctx)
 	ctx->tx_max_datagrams = le16_to_cpu(ctx->ncm_parm.wNtbOutMaxDatagrams);
 	ntb_fmt_supported = le16_to_cpu(ctx->ncm_parm.bmNtbFormatsSupported);
 
+	/* get device flags only once */
+	ctx->device_flags = dev->driver_info->flags;
+	if (ctx->device_flags & FLAG_NO_PADDING_TX)
+		pr_info("NCM PADDING TX disabled\n");
+	else
+		pr_info("NCM PADDING TX enabled\n");
+
 	eth_hlen = ETH_HLEN;
 	min_dgram_size = CDC_NCM_MIN_DATAGRAM_SIZE;
 	min_hdr_size = CDC_NCM_MIN_HDR_SIZE;
@@ -804,7 +811,8 @@ cdc_ncm_fill_tx_frame(struct cdc_ncm_ctx *ctx, struct sk_buff *skb, __le32 sign)
 	 * efficient for USB HS mobile device with DMA engine to receive a full
 	 * size NTB, than canceling DMA transfer and receiving a short packet.
 	 */
-	if (skb_out->len > CDC_NCM_MIN_TX_PKT)
+	/* Tx padding is a device option */
+	if ((ctx->device_flags & FLAG_NO_PADDING_TX) == 0 && skb_out->len > CDC_NCM_MIN_TX_PKT)
 		/* final zero padding */
 		memset(skb_put(skb_out, ctx->tx_max - skb_out->len), 0, ctx->tx_max - skb_out->len);
 
@@ -1293,7 +1301,7 @@ static int cdc_ncm_manage_power(struct usbnet *dev, int status)
 
 static const struct driver_info cdc_ncm_info_alt = {
 	.description = "CDC NCM",
-	.flags = FLAG_POINTTOPOINT | FLAG_NO_SETINT | FLAG_MULTI_PACKET,
+	.flags = FLAG_POINTTOPOINT | FLAG_NO_SETINT | FLAG_MULTI_PACKET | FLAG_NO_PADDING_TX,
 	.bind = cdc_ncm_bind_alt,
 	.unbind = cdc_ncm_unbind,
 	.check_connect = cdc_ncm_check_connect,

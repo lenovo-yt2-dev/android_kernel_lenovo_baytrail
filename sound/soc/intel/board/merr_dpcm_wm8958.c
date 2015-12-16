@@ -30,7 +30,6 @@
 #include <linux/async.h>
 #include <linux/delay.h>
 #include <linux/gpio.h>
-#include <asm/intel_scu_pmic.h>
 #include <asm/intel_mid_rpmsg.h>
 #include <asm/platform_mrfld_audio.h>
 #include <asm/intel_sst_mrfld.h>
@@ -39,11 +38,13 @@
 #include <sound/soc.h>
 #include <sound/jack.h>
 #include <linux/input.h>
+#include <asm/intel-mid.h>
 
 #include <linux/mfd/wm8994/core.h>
 #include <linux/mfd/wm8994/registers.h>
 #include <linux/mfd/wm8994/pdata.h>
 #include "../../codecs/wm8994.h"
+#include "../platform-libs/controls_v2_dpcm.h"
 
 /* Codec PLL output clk rate */
 #define CODEC_SYSCLK_RATE			24576000
@@ -63,10 +64,48 @@
 struct mrfld_8958_mc_private {
 	struct snd_soc_jack jack;
 	int jack_retry;
-	u8 pmic_id;
 	void __iomem    *osc_clk0_reg;
+	int spk_gpio;
 };
 
+struct mrfld_slot_info {
+	unsigned int tx_mask;
+	unsigned int rx_mask;
+	int slots;
+	int slot_width;
+};
+
+static const struct snd_soc_pcm_stream mrfld_wm8958_dai_params_ssp1_fm = {
+	.formats = SNDRV_PCM_FMTBIT_S24_LE,
+	.rate_min = SNDRV_PCM_RATE_48000,
+	.rate_max = SNDRV_PCM_RATE_48000,
+	.channels_min = 2,
+	.channels_max = 2,
+};
+
+static const struct snd_soc_pcm_stream mrfld_wm8958_ssp1_bt_nb = {
+	.formats = SNDRV_PCM_FMTBIT_S24_LE,
+	.rate_min = SNDRV_PCM_RATE_8000,
+	.rate_max = SNDRV_PCM_RATE_8000,
+	.channels_min = 2,
+	.channels_max = 2,
+};
+
+static const struct snd_soc_pcm_stream mrfld_wm8958_ssp1_bt_wb = {
+	.formats = SNDRV_PCM_FMTBIT_S24_LE,
+	.rate_min = SNDRV_PCM_RATE_16000,
+	.rate_max = SNDRV_PCM_RATE_16000,
+	.channels_min = 2,
+	.channels_max = 2,
+};
+
+static const struct snd_soc_pcm_stream mrfld_wm8958_ssp1_bt_a2dp = {
+	.formats = SNDRV_PCM_FMTBIT_S24_LE,
+	.rate_min = SNDRV_PCM_RATE_48000,
+	.rate_max = SNDRV_PCM_RATE_48000,
+	.channels_min = 2,
+	.channels_max = 2,
+};
 
 /* set_osc_clk0-	enable/disables the osc clock0
  * addr:		address of the register to write to
@@ -229,33 +268,150 @@ static int mrfld_wm8958_compr_set_params(struct snd_compr_stream *cstream)
 	return 0;
 }
 
-static const struct snd_soc_pcm_stream mrfld_wm8958_dai_params = {
+static const struct snd_soc_pcm_stream mrfld_wm8958_dai_params_ssp0 = {
 	.formats = SNDRV_PCM_FMTBIT_S24_LE,
-	.rate_min = 48000,
-	.rate_max = 48000,
+	.rate_min = SNDRV_PCM_RATE_48000,
+	.rate_max = SNDRV_PCM_RATE_48000,
 	.channels_min = 2,
 	.channels_max = 2,
 };
 
+static const struct snd_soc_pcm_stream mrfld_wm8958_dai_params_ssp2 = {
+	.formats = SNDRV_PCM_FMTBIT_S24_LE,
+	.rate_min = SNDRV_PCM_RATE_48000,
+	.rate_max = SNDRV_PCM_RATE_48000,
+	.channels_min = 2,
+	.channels_max = 2,
+};
+
+#define MRFLD_CONFIG_SLOT(slot_tx_mask, slot_rx_mask, num_slot, width)\
+	(struct mrfld_slot_info){ .tx_mask = slot_tx_mask,			\
+				  .rx_mask = slot_rx_mask,			\
+				  .slots = num_slot,				\
+				  .slot_width = width, }
+
+static int merr_set_slot_and_format(struct snd_soc_dai *dai,
+			struct mrfld_slot_info *slot_info, unsigned int fmt)
+{
+	int ret;
+
+	ret = snd_soc_dai_set_tdm_slot(dai, slot_info->tx_mask,
+		slot_info->rx_mask, slot_info->slots, slot_info->slot_width);
+	if (ret < 0) {
+		pr_err("can't set codec pcm format %d\n", ret);
+		return ret;
+	}
+
+	ret = snd_soc_dai_set_fmt(dai, fmt);
+	if (ret < 0) {
+		pr_err("can't set codec DAI configuration %d\n", ret);
+		return ret;
+	}
+	return ret;
+}
+
 static int merr_codec_fixup(struct snd_soc_pcm_runtime *rtd,
 			    struct snd_pcm_hw_params *params)
 {
-	struct snd_interval *rate = hw_param_interval(params,
-			SNDRV_PCM_HW_PARAM_RATE);
-	struct snd_interval *channels = hw_param_interval(params,
-						SNDRV_PCM_HW_PARAM_CHANNELS);
+	int ret = 0;
+	unsigned int fmt;
+	struct mrfld_slot_info *info;
+	struct snd_interval *rate =  hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	/* WM8958 slave Mode */
+	fmt =   SND_SOC_DAIFMT_DSP_B | SND_SOC_DAIFMT_IB_NF |
+		SND_SOC_DAIFMT_CBS_CFS;
+	info = &MRFLD_CONFIG_SLOT(0xF, 0xF, 4, SNDRV_PCM_FORMAT_S24_LE);
+	ret = merr_set_slot_and_format(rtd->cpu_dai, info, fmt);
 
 	pr_debug("Invoked %s for dailink %s\n", __func__, rtd->dai_link->name);
 
-	/* The DSP will covert the FE rate to 48k, stereo, 24bits */
-	rate->min = rate->max = 48000;
-	channels->min = channels->max = 2;
+	rate->min = rate->max = SNDRV_PCM_RATE_48000;
+	channels->min = channels->max = 4;
 
 	/* set SSP2 to 24-bit */
 	snd_mask_set(&params->masks[SNDRV_PCM_HW_PARAM_FORMAT -
-				    SNDRV_PCM_HW_PARAM_FIRST_MASK],
-				    SNDRV_PCM_FORMAT_S24_LE);
+					SNDRV_PCM_HW_PARAM_FIRST_MASK],
+					SNDRV_PCM_FORMAT_S24_LE);
 	return 0;
+}
+
+#define BT_DOMAIN_NB	0
+#define BT_DOMAIN_WB	1
+#define BT_DOMAIN_A2DP	2
+
+static int mrfld_bt_fm_fixup(struct snd_soc_dai_link *dai_link, struct snd_soc_dai *dai)
+{
+	unsigned int fmt;
+	bool is_bt;
+	u16 is_bt_wb;
+	unsigned int mask, reg_val;
+	int ret;
+	struct mrfld_slot_info *info;
+
+	reg_val = snd_soc_platform_read(dai->platform, SST_MUX_REG);
+	mask = (1 << fls(1)) - 1;
+	is_bt = (reg_val >> SST_BT_FM_MUX_SHIFT) & mask;
+	mask = (1 << fls(2)) - 1;
+	is_bt_wb = (reg_val >> SST_BT_MODE_SHIFT) & mask;
+
+	if (is_bt) {
+		switch (is_bt_wb) {
+		case BT_DOMAIN_WB:
+			dai_link->params = &mrfld_wm8958_ssp1_bt_wb;
+			info = &MRFLD_CONFIG_SLOT(0x01, 0x01, 1, SNDRV_PCM_FORMAT_S16_LE);
+			break;
+		case BT_DOMAIN_NB:
+			dai_link->params = &mrfld_wm8958_ssp1_bt_nb;
+			info = &MRFLD_CONFIG_SLOT(0x01, 0x01, 1, SNDRV_PCM_FORMAT_S16_LE);
+			break;
+		case BT_DOMAIN_A2DP:
+			dai_link->params = &mrfld_wm8958_ssp1_bt_a2dp;
+			info = &MRFLD_CONFIG_SLOT(0x03, 0x00, 2, SNDRV_PCM_FORMAT_S16_LE);
+			break;
+		default:
+			return -EINVAL;
+		}
+
+		fmt = SND_SOC_DAIFMT_IB_NF | SND_SOC_DAIFMT_DSP_A | SND_SOC_DAIFMT_CBS_CFS;
+	} else {
+		fmt = SND_SOC_DAIFMT_IB_NF | SND_SOC_DAIFMT_DSP_A | SND_SOC_DAIFMT_CBS_CFS;
+		dai_link->params = &mrfld_wm8958_dai_params_ssp1_fm;
+		info = &MRFLD_CONFIG_SLOT(0x00, 0x03, 2, SNDRV_PCM_FORMAT_S16_LE);
+	}
+	ret = merr_set_slot_and_format(dai, info, fmt);
+
+	return ret;
+}
+
+static int mrfld_modem_fixup(struct snd_soc_dai_link *dai_link, struct snd_soc_dai *dai)
+{
+	int ret;
+	unsigned int fmt;
+	struct mrfld_slot_info *info;
+
+	info = &MRFLD_CONFIG_SLOT(0x01, 0x01, 1, SNDRV_PCM_FORMAT_S16_LE);
+	fmt = SND_SOC_DAIFMT_DSP_A | SND_SOC_DAIFMT_IB_NF
+						| SND_SOC_DAIFMT_CBS_CFS;
+
+	ret = merr_set_slot_and_format(dai, info, fmt);
+
+	return ret;
+}
+
+static int mrfld_codec_loop_fixup(struct snd_soc_dai_link *dai_link, struct snd_soc_dai *dai)
+{
+	int ret;
+	unsigned int fmt;
+	struct mrfld_slot_info *info;
+
+	info = &MRFLD_CONFIG_SLOT(0xF, 0xF, 4, SNDRV_PCM_FORMAT_S24_LE);
+	fmt = SND_SOC_DAIFMT_DSP_B | SND_SOC_DAIFMT_IB_NF
+					| SND_SOC_DAIFMT_CBS_CFS;
+	ret = merr_set_slot_and_format(dai, info, fmt);
+
+	return ret;
 }
 
 static int mrfld_8958_set_bias_level(struct snd_soc_card *card,
@@ -316,46 +472,33 @@ static int mrfld_8958_set_bias_level_post(struct snd_soc_card *card,
 	return ret;
 }
 
-#define PMIC_ID_ADDR		0x00
-#define PMIC_CHIP_ID_A0_VAL	0xC0
-
-static int mrfld_8958_set_vflex_vsel(struct snd_soc_dapm_widget *w,
+static int mrfld_8958_set_spk_boost(struct snd_soc_dapm_widget *w,
 				struct snd_kcontrol *k, int event)
 {
-#define VFLEXCNT		0xAB
-#define VFLEXVSEL_5V		0x01
-#define VFLEXVSEL_B0_VSYS_PT	0x80	/* B0: Vsys pass-through */
-#define VFLEXVSEL_A0_4P5V	0x41	/* A0: 4.5V */
-
 	struct snd_soc_dapm_context *dapm = w->dapm;
 	struct snd_soc_card *card = dapm->card;
 	struct mrfld_8958_mc_private *ctx = snd_soc_card_get_drvdata(card);
-
-	u8 vflexvsel, pmic_id = ctx->pmic_id;
-	int retval = 0;
+	int ret = 0;
 
 	pr_debug("%s: ON? %d\n", __func__, SND_SOC_DAPM_EVENT_ON(event));
 
-	vflexvsel = (pmic_id == PMIC_CHIP_ID_A0_VAL) ? VFLEXVSEL_A0_4P5V : VFLEXVSEL_B0_VSYS_PT;
-	pr_debug("pmic_id %#x vflexvsel %#x\n", pmic_id,
-		SND_SOC_DAPM_EVENT_ON(event) ? VFLEXVSEL_5V : vflexvsel);
-
 	if (SND_SOC_DAPM_EVENT_ON(event))
-		retval = intel_scu_ipc_iowrite8(VFLEXCNT, VFLEXVSEL_5V);
+		gpio_set_value((unsigned)ctx->spk_gpio, 1);
 	else if (SND_SOC_DAPM_EVENT_OFF(event))
-		retval = intel_scu_ipc_iowrite8(VFLEXCNT, vflexvsel);
-	if (retval)
-		pr_err("Error writing to VFLEXCNT register\n");
+		gpio_set_value((unsigned)ctx->spk_gpio, 0);
 
-	return retval;
+	return ret;
 }
 
 static const struct snd_soc_dapm_widget widgets[] = {
 	SND_SOC_DAPM_HP("Headphones", NULL),
 	SND_SOC_DAPM_MIC("AMIC", NULL),
 	SND_SOC_DAPM_MIC("DMIC", NULL),
-	SND_SOC_DAPM_SUPPLY("VFLEXCNT", SND_SOC_NOPM, 0, 0,
-			mrfld_8958_set_vflex_vsel,
+};
+static const struct snd_soc_dapm_widget spk_boost_widget[] = {
+	/* DAPM route is added only for Moorefield */
+	SND_SOC_DAPM_SUPPLY("SPK_BOOST", SND_SOC_NOPM, 0, 0,
+			mrfld_8958_set_spk_boost,
 			SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
 };
 
@@ -379,13 +522,26 @@ static const struct snd_soc_dapm_route map[] = {
 	{ "IN1LP", NULL, "AMIC" },
 
 	/* SWM map link the SWM outs to codec AIF */
-	{ "AIF1 Playback", NULL, "codec_out0"  },
-	{ "AIF1 Playback", NULL, "codec_out1"  },
-	{ "codec_in0", NULL, "AIF1 Capture" },
-	{ "codec_in1", NULL, "AIF1 Capture" },
+	{ "AIF1 Playback", NULL, "ssp2 Tx"},
+	{ "ssp2 Tx", NULL, "codec_out0"},
+	{ "ssp2 Tx", NULL, "codec_out1"},
+	{ "codec_in0", NULL, "ssp2 Rx" },
+	{ "codec_in1", NULL, "ssp2 Rx" },
+	{ "ssp2 Rx", NULL, "AIF1 Capture"},
+	{ "pcm1_out", NULL, "Dummy Capture"},
+	{ "pcm2_out", NULL, "Dummy Capture"},
 
-	{ "AIF1 Playback", NULL, "VFLEXCNT" },
-	{ "AIF1 Capture", NULL, "VFLEXCNT" },
+	{ "ssp0 Tx", NULL, "modem_out"},
+	{ "modem_in", NULL, "ssp0 Rx" },
+
+	{ "ssp1 Tx", NULL, "bt_fm_out"},
+	{ "bt_fm_in", NULL, "ssp1 Rx" },
+};
+static const struct snd_soc_dapm_route mofd_spk_boost_map[] = {
+	{"SPKOUTLP", NULL, "SPK_BOOST"},
+	{"SPKOUTLN", NULL, "SPK_BOOST"},
+	{"SPKOUTRP", NULL, "SPK_BOOST"},
+	{"SPKOUTRN", NULL, "SPK_BOOST"},
 };
 
 static const struct wm8958_micd_rate micdet_rates[] = {
@@ -472,6 +628,7 @@ static void wm8958_custom_mic_id(void *data, u16 status)
 
 		wm8994->mic_detecting = false;
 		wm8994->jack_mic = true;
+		wm8994->headphone_detected = false;
 
 		snd_soc_jack_report(wm8994->micdet[0].jack, SND_JACK_HEADSET,
 				    SND_JACK_HEADSET);
@@ -487,6 +644,8 @@ static void wm8958_custom_mic_id(void *data, u16 status)
 		 * or headset is detected)
 		 * */
 		wm8994->mic_detecting = true;
+		wm8994->jack_mic = false;
+		wm8994->headphone_detected = true;
 
 		snd_soc_jack_report(wm8994->micdet[0].jack, SND_JACK_HEADPHONE,
 				    SND_JACK_HEADSET);
@@ -531,7 +690,6 @@ static int mrfld_8958_init(struct snd_soc_pcm_runtime *runtime)
 	 * IN1R
 	 * DMICDAT2
 	 */
-	snd_soc_dapm_nc_pin(&card->dapm, "DMIC2DAT");
 	snd_soc_dapm_nc_pin(&card->dapm, "LINEOUT1P");
 	snd_soc_dapm_nc_pin(&card->dapm, "LINEOUT1N");
 	snd_soc_dapm_nc_pin(&card->dapm, "LINEOUT2P");
@@ -539,6 +697,14 @@ static int mrfld_8958_init(struct snd_soc_pcm_runtime *runtime)
 	snd_soc_dapm_nc_pin(&card->dapm, "IN1RN");
 	snd_soc_dapm_nc_pin(&card->dapm, "IN1RP");
 
+	if (ctx->spk_gpio >= 0) {
+		snd_soc_dapm_new_controls(&card->dapm, spk_boost_widget,
+					ARRAY_SIZE(spk_boost_widget));
+		snd_soc_dapm_add_routes(&card->dapm, mofd_spk_boost_map,
+				ARRAY_SIZE(mofd_spk_boost_map));
+	}
+	/* Force enable VMID to avoid cold latency constraints */
+	snd_soc_dapm_force_enable_pin(&card->dapm, "VMID");
 	snd_soc_dapm_sync(&card->dapm);
 
 	codec = mrfld_8958_get_codec(card);
@@ -559,6 +725,9 @@ static int mrfld_8958_init(struct snd_soc_pcm_runtime *runtime)
 
 	snd_jack_set_key(ctx->jack.jack, SND_JACK_BTN_1, KEY_MEDIA);
 	snd_jack_set_key(ctx->jack.jack, SND_JACK_BTN_0, KEY_MEDIA);
+
+	snd_soc_update_bits(codec, WM8958_MICBIAS2, WM8958_MICB2_LVL_MASK,
+				WM8958_MICB2_LVL_2P6V << WM8958_MICB2_LVL_SHIFT);
 
 	wm8958_mic_detect(codec, &ctx->jack, NULL, NULL,
 			  wm8958_custom_mic_id, codec);
@@ -692,23 +861,58 @@ struct snd_soc_dai_link mrfld_8958_msic_dailink[] = {
 		.playback_count = 8,
 		.capture_count = 8,
 	},
+	[MERR_DPCM_CAPTURE] = {
+		.name = "Merrifield Capture Port",
+		.stream_name = "Saltbay Capture",
+		.cpu_dai_name = "Capture-cpu-dai",
+		.codec_name = "snd-soc-dummy",
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.platform_name = "sst-platform",
+		.init = mrfld_8958_init,
+		.ignore_suspend = 1,
+		.dynamic = 1,
+		.ops = &mrfld_8958_ops,
+	},
 	/* CODEC<->CODEC link */
 	{
 		.name = "Merrifield Codec-Loop Port",
 		.stream_name = "Saltbay Codec-Loop",
-		.cpu_dai_name = "snd-soc-dummy-dai",
+		.cpu_dai_name = "ssp2-port",
+		.platform_name = "sst-platform",
 		.codec_dai_name = "wm8994-aif1",
 		.codec_name = "wm8994-codec",
-		.dai_fmt = SND_SOC_DAIFMT_DSP_B | SND_SOC_DAIFMT_IB_NF
-						| SND_SOC_DAIFMT_CBS_CFS,
-		.params = &mrfld_wm8958_dai_params,
+		.params = &mrfld_wm8958_dai_params_ssp2,
+		.be_fixup = mrfld_codec_loop_fixup,
+		.dsp_loopback = true,
+	},
+	{
+		.name = "Merrifield Modem-Loop Port",
+		.stream_name = "Saltbay Modem-Loop",
+		.cpu_dai_name = "ssp0-port",
+		.platform_name = "sst-platform",
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.params = &mrfld_wm8958_dai_params_ssp0,
+		.be_fixup = mrfld_modem_fixup,
+		.dsp_loopback = true,
+	},
+	{
+		.name = "Merrifield BTFM-Loop Port",
+		.stream_name = "Saltbay BTFM-Loop",
+		.cpu_dai_name = "ssp1-port",
+		.platform_name = "sst-platform",
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.params = &mrfld_wm8958_ssp1_bt_nb,
+		.be_fixup = mrfld_bt_fm_fixup,
+		.dsp_loopback = true,
 	},
 
 	/* back ends */
 	{
 		.name = "SSP2-Codec",
 		.be_id = 1,
-		.cpu_dai_name = "ssp2-codec",
+		.cpu_dai_name = "ssp2-port",
 		.platform_name = "sst-platform",
 		.no_pcm = 1,
 		.codec_dai_name = "wm8994-aif1",
@@ -742,14 +946,48 @@ struct snd_soc_dai_link mrfld_8958_msic_dailink[] = {
 #ifdef CONFIG_PM_SLEEP
 static int snd_mrfld_8958_prepare(struct device *dev)
 {
-	pr_debug("In %s device name\n", __func__);
+	struct snd_soc_card *card = dev_get_drvdata(dev);
+	struct snd_soc_codec *codec;
+	struct snd_soc_dapm_context *dapm;
+
+	pr_debug("In %s\n", __func__);
+
+	codec = mrfld_8958_get_codec(card);
+	if (!codec) {
+		pr_err("%s: couldn't find the codec pointer!\n", __func__);
+		return -EAGAIN;
+	}
+
+	pr_debug("found codec %s\n", codec->name);
+	dapm = &codec->dapm;
+
+	snd_soc_dapm_disable_pin(dapm, "VMID");
+	snd_soc_dapm_sync(dapm);
+
 	snd_soc_suspend(dev);
 	return 0;
 }
 
 static void snd_mrfld_8958_complete(struct device *dev)
 {
+	struct snd_soc_card *card = dev_get_drvdata(dev);
+	struct snd_soc_codec *codec;
+	struct snd_soc_dapm_context *dapm;
+
 	pr_debug("In %s\n", __func__);
+
+	codec = mrfld_8958_get_codec(card);
+	if (!codec) {
+		pr_err("%s: couldn't find the codec pointer!\n", __func__);
+		return;
+	}
+
+	pr_debug("found codec %s\n", codec->name);
+	dapm = &codec->dapm;
+
+	snd_soc_dapm_force_enable_pin(dapm, "VMID");
+	snd_soc_dapm_sync(dapm);
+
 	snd_soc_resume(dev);
 	return;
 }
@@ -779,19 +1017,47 @@ static struct snd_soc_card snd_soc_card_mrfld = {
 	.num_dapm_routes = ARRAY_SIZE(map),
 };
 
+static int snd_mrfld_8958_config_gpio(struct platform_device *pdev,
+					struct mrfld_8958_mc_private *drv)
+{
+	int ret = 0;
+
+	if (drv->spk_gpio >= 0) {
+		/* Set GPIO as output and init it with high value. So
+		 * spk boost is disable by default */
+		ret = devm_gpio_request_one(&pdev->dev, (unsigned)drv->spk_gpio,
+				GPIOF_INIT_LOW, "spk_boost");
+		if (ret) {
+			pr_err("GPIO request failed\n");
+			return ret;
+		}
+	}
+	return ret;
+}
+
 static int snd_mrfld_8958_mc_probe(struct platform_device *pdev)
 {
 	int ret_val = 0;
 	struct mrfld_8958_mc_private *drv;
+	struct mrfld_audio_platform_data *mrfld_audio_pdata = pdev->dev.platform_data;
 
 	pr_debug("Entry %s\n", __func__);
 
+	if (!mrfld_audio_pdata) {
+		pr_err("Platform data not provided\n");
+		return -EINVAL;
+	}
 	drv = kzalloc(sizeof(*drv), GFP_ATOMIC);
 	if (!drv) {
 		pr_err("allocation failed\n");
 		return -ENOMEM;
 	}
-
+	drv->spk_gpio = mrfld_audio_pdata->spk_gpio;
+	ret_val = snd_mrfld_8958_config_gpio(pdev, drv);
+	if (ret_val) {
+		pr_err("GPIO configuration failed\n");
+		goto unalloc;
+	}
 	/* ioremap the register */
 	drv->osc_clk0_reg = devm_ioremap_nocache(&pdev->dev,
 					MERR_OSC_CLKOUT_CTRL0_REG_ADDR,
@@ -799,12 +1065,6 @@ static int snd_mrfld_8958_mc_probe(struct platform_device *pdev)
 	if (!drv->osc_clk0_reg) {
 		pr_err("osc clk0 ctrl ioremap failed\n");
 		ret_val = -1;
-		goto unalloc;
-	}
-
-	ret_val = intel_scu_ipc_ioread8(PMIC_ID_ADDR, &drv->pmic_id);
-	if (ret_val) {
-		pr_err("Error reading PMIC ID register\n");
 		goto unalloc;
 	}
 

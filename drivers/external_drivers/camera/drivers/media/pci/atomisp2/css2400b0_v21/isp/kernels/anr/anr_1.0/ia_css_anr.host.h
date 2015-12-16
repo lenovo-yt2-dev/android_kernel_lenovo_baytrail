@@ -30,7 +30,8 @@ extern const struct ia_css_anr_config default_anr_config;
 void
 ia_css_anr_encode(
 	struct sh_css_isp_anr_params *to,
-	const struct ia_css_anr_config *from);
+	const struct ia_css_anr_config *from,
+	unsigned size);
 
 void
 ia_css_anr_dump(

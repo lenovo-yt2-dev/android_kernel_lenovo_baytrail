@@ -29,9 +29,12 @@
 #include <linux/of_platform.h>
 #include <linux/of_gpio.h>
 #include <linux/spinlock.h>
+#include <linux/lnw_gpio.h>
+#include <drm/intel_dual_display.h>
 
 #ifdef CONFIG_GPIO_KEYS_TRIGGER_PANIC
 static bool trigger_panic = true;
+extern int  i915_boot_mode;
 MODULE_PARM_DESC(trigger_panic, "trigger panic");
 module_param_named(trigger_panic, trigger_panic, bool, 0600);
 static unsigned long panic_start = 0xffffffff;
@@ -42,7 +45,12 @@ static bool power_button_pressed = false;
 struct gpio_keys_drvdata;
 struct gpio_button_data {
 	struct gpio_keys_drvdata *ddata;
-	const struct gpio_keys_button *button;
+
+#ifdef CONFIG_DLP
+	struct gpio_keys_button *button;
+#else
+   const  struct gpio_keys_button *button;
+#endif
 	struct input_dev *input;
 	struct timer_list timer;
 	struct work_struct work;
@@ -62,7 +70,13 @@ struct gpio_keys_drvdata {
 	void (*disable)(struct device *dev);
 	struct gpio_button_data data[0];
 };
-
+#ifdef CONFIG_DLP
+extern void drm_sysfs_power_key_up(void);
+extern void simulate_valleyview_irq_handler(bool enable,int (*cb)(int));
+extern struct intel_dual_display_status dual_display_status;
+extern  int dlp_inited;
+extern bool dlp_poweron;
+#endif
 static int gpio_keys_request_irq(int gpio, irq_handler_t isr,
 		unsigned long flags, const char *name, void *data)
 {
@@ -413,62 +427,75 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 	const struct gpio_keys_button *button = bdata->button;
 	struct input_dev *input = bdata->input;
 	unsigned int type = button->type ?: EV_KEY;
+#ifdef CONFIG_DLP
 	static unsigned long timecontup = 0;
 	static unsigned long timecontdw = 1000;
 	static unsigned long timelastreport = 1000;
 	static bool isignored = false;
 	static int lastpowerkeystate = 0;
+	static unsigned int power_key_up;
+	static unsigned int power_key_down;
+#endif
 	int state =
 		(gpio_keys_getval(button->gpio) ? 1 : 0) ^ button->active_low;
-	
-	if(button->code==116)
-	{
-		if(state == lastpowerkeystate)
-		{
-			printk("#%s:the same power key state %d, just return@@@@@\n", __func__, state);
-			return;
-		}
-		lastpowerkeystate = state;
-	}
+#ifdef CONFIG_DLP	
+			
+		 /*press powre down with dlp not off should not pass to android
+					or else android will try to power off the phone */
+			if(!!state == 1){
+				if(((bdata->button->code == KEY_POWER)
+						)
+						&& (dual_display_status.pipeb_status > PIPE_OFF) )
+						{
+						//	bdata->button->code = KEY_PAUSE; //change key event value							
+							printk("dual_display powerkey down:%u  %u\n",power_key_down);
+							power_key_down = jiffies_to_msecs(jiffies);
 
-    printk(KERN_EMERG "button->code = %d, button->desc = %s, type=%d, state = %d\n",
-            button->code, button->desc, type, state);
-
+						}
+#if 1
+              if( bdata->button->code == KEY_DLP) { 
+                                printk("====> dlp3430 debug: dlp switch key !dlp_inited:%d,i915_boot_mode:%d\n",dlp_inited,i915_boot_mode);
+				if(dlp_inited == 0 && i915_boot_mode ==1){
+				
+                                     simulate_valleyview_irq_handler(!dlp_poweron,NULL);
+                                     return IRQ_HANDLED;       	
+                                } 
+	      }    
+#endif
+			}
+			//only handle the up key , ingore the down key!!!
+			if(!!state == 0)
+			{
+					//power key escape if dlp is not off, report another key event 
+					// just sends the uevent,let MDS knows
+					if( ((bdata->button->code == KEY_POWER)
+							) 
+							&& (dual_display_status.pipeb_status > PIPE_OFF) )
+							{
+						power_key_up = jiffies_to_msecs(jiffies);
+						
+						/* power key down time > 1.5s and eDP is on, treat as long press to power off
+						don't  report powerkey to turn off eDP*/
+						
+						printk("dual_display powerkey up:%u\n",power_key_up);
+						printk("dual_display power delay:%d\n",power_key_up-power_key_down);
+						if(!(((power_key_up - power_key_down) > 300) &&
+							dual_display_status.pipea_status == PIPE_ON))
+							{
+								drm_sysfs_power_key_up();
+							}
+								power_key_down = 0;
+								power_key_up = 0;
+								
+							}
+			}
+			
+		
+#endif
 	if (type == EV_ABS) {
 		if (state)
 			input_event(input, type, button->code, button->value);
 	} else {
-	
-#if 0
-		if(button->code==116 && state==0)
-		{
-			timecontup = jiffies_to_msecs(jiffies);
-			if(isignored)
-			{
-				isignored = false;
-				return;
-			}
-		}else if(button->code==116 && state==1)
-		{
-			timecontdw = jiffies_to_msecs(jiffies);
-			//printk("%s: %lu %lu %lu\n", __func__, timecontdw, timecontup, timelastreport);
-			if( ((timecontdw - timecontup) < 400) && (timecontdw - timelastreport) < 800)
-			{
-				isignored = true;
-				printk("%s: ignore powerky#####%lu###%lu##\n", __func__, (timecontdw - timecontup), (timecontdw - timelastreport) );
-				return;
-			}
-		}
-		if(button->code==116)
-		{
-			timelastreport = timecontup;
-			if(state)
-					printk("\n%s: code=%d#################%lu %lu %lu###\n", __func__, button->code, timecontdw, timecontup, timelastreport);
-			else
-					printk("%s: code=%d===============================\n", __func__, button->code);
-		}
-#endif
-
 		input_event(input, type, button->code, !!state);
 #ifdef CONFIG_GPIO_KEYS_TRIGGER_PANIC
         if (state && button->code == KEY_POWER)
@@ -621,6 +648,7 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 	spin_lock_init(&bdata->lock);
 
 	if (gpio_is_valid(button->gpio)) {
+
 		error = gpio_request(button->gpio, desc);
 		if (error < 0) {
 			dev_err(dev, "Failed to request GPIO %d, error %d\n",
@@ -968,6 +996,35 @@ static int gpio_keys_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static int gpio_keys_shutdown(struct platform_device *pdev)
+{
+    const struct gpio_keys_platform_data *pdata = pdev->dev.platform_data;
+    int i, ret_val;
+
+    dev_info(&pdev->dev, "%s enter, name:%s\n", __func__, pdev->name);
+
+    /*avoid synapatic touch screen reset failed after reboot*/
+    if (0 == strcmp(pdev->name, "gpio-keys")) {
+        for (i = 0; i < pdata->nbuttons; i++) {
+            const struct gpio_keys_button *button = &pdata->buttons[i];
+            // dev_info(&pdev->dev, "button[%d] gpio: %d\n", i, button->gpio);
+            gpio_direction_output(button->gpio, 0);
+        }
+
+        lnw_gpio_set_alt(4, LNW_GPIO);
+        ret_val = gpio_request_one(4, GPIOF_DIR_OUT|GPIOF_INIT_LOW, "volume down");
+        if (ret_val)
+            pr_err("%s, volume down gpio config failed\n");
+
+        lnw_gpio_set_alt(5, LNW_GPIO);
+        ret_val = gpio_request_one(5, GPIOF_DIR_OUT|GPIOF_INIT_LOW, "volume up");
+        if (ret_val)
+            pr_err("%s, volume up gpio config failed\n");
+    }
+
+    return 0;
+}
+
 #ifdef CONFIG_PM_SLEEP
 static int gpio_keys_suspend(struct device *dev)
 {
@@ -1050,6 +1107,7 @@ MODULE_DEVICE_TABLE(platform, gpio_keys_ids);
 static struct platform_driver gpio_keys_device_driver = {
 	.probe		= gpio_keys_probe,
 	.remove		= gpio_keys_remove,
+	.shutdown   = gpio_keys_shutdown,
 	.id_table	= gpio_keys_ids,
 	.driver		= {
 		.name	= "gpio-keys",

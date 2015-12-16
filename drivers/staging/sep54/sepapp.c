@@ -28,11 +28,15 @@
 
 #include <linux/uaccess.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 /*#include <linux/export.h>*/
 #include "dx_driver.h"
 #include "dx_sepapp_kapi.h"
 #include "sep_applets.h"
 #include "sep_power.h"
+#include "crypto_api.h"
+#include "sepapp.h"
+#include "sepfs.h"
 
 /* Global drvdata to be used by kernel clients via dx_sepapp_ API */
 static struct sep_drvdata *kapps_drvdata;
@@ -557,14 +561,13 @@ static int sepapp_command_invoke(struct sep_op_ctx *op_ctx,
 				 u32 command_id,
 				 struct dxdi_sepapp_params *command_params,
 				 struct dxdi_sepapp_kparams *command_kparams,
-				 enum dxdi_sep_module *sep_ret_origin)
+				 enum dxdi_sep_module *sep_ret_origin,
+				 int async)
 {
 	int rc;
 	struct sep_app_session *session_ctx =
 	    &op_ctx->client_ctx->sepapp_sessions[session_id];
 	struct queue_drvdata *drvdata = op_ctx->client_ctx->drv_data;
-	struct client_dma_buffer *local_dma_objs[SEPAPP_MAX_PARAMS];
-	struct mlli_tables_list mlli_tables[SEPAPP_MAX_PARAMS];
 	struct sep_sw_desc desc;
 	struct sepapp_in_params_command_invoke *sepapp_msg_p;
 
@@ -603,12 +606,27 @@ static int sepapp_command_invoke(struct sep_op_ctx *op_ctx,
 	sepapp_msg_p =
 	    (struct sepapp_in_params_command_invoke *)op_ctx->spad_buf_p;
 
+	op_ctx->async_info.dxdi_params = command_params;
+	op_ctx->async_info.dxdi_kparams = command_kparams;
+	op_ctx->async_info.sw_desc_params = &sepapp_msg_p->client_params;
+	op_ctx->async_info.session_id = session_id;
+
+	if (async) {
+		wait_event_interruptible(op_ctx->client_ctx->memref_wq,
+			op_ctx->client_ctx->memref_cnt < 1);
+		mutex_lock(&session_ctx->session_lock);
+		op_ctx->client_ctx->memref_cnt++;
+		mutex_unlock(&session_ctx->session_lock);
+	}
+
+	mutex_lock(&drvdata->desc_queue_sequencer);
 	/* Convert parameters to SeP Applet format */
 	rc = dxdi_sepapp_params_to_sw_desc_params(op_ctx->client_ctx,
-						  command_params,
-						  command_kparams,
-						  &sepapp_msg_p->client_params,
-						  local_dma_objs, mlli_tables);
+					  command_params,
+					  command_kparams,
+					  &sepapp_msg_p->client_params,
+					  op_ctx->async_info.local_dma_objs,
+					  op_ctx->async_info.mlli_tables);
 
 	if (likely(rc == 0)) {
 		sepapp_msg_p->command_id = cpu_to_le32(command_id);
@@ -619,12 +637,20 @@ static int sepapp_command_invoke(struct sep_op_ctx *op_ctx,
 		/* Associate operation with the session */
 		op_ctx->session_ctx = session_ctx;
 		op_ctx->internal_error = false;
+		op_ctx->op_state = USER_OP_INPROC;
 		rc = desc_q_enqueue(drvdata->desc_queue, &desc, true);
 		if (likely(!IS_DESCQ_ENQUEUE_ERR(rc)))
 			rc = 0;
-	}
 
-	if (likely(rc == 0))
+		if (async && rc != 0) {
+			mutex_lock(&session_ctx->session_lock);
+			op_ctx->client_ctx->memref_cnt--;
+			mutex_unlock(&session_ctx->session_lock);
+		}
+	}
+	mutex_unlock(&drvdata->desc_queue_sequencer);
+
+	if (likely(rc == 0) && !async)
 		rc = wait_for_sep_op_result(op_ctx);
 
 	/* Process descriptor completion */
@@ -638,17 +664,22 @@ static int sepapp_command_invoke(struct sep_op_ctx *op_ctx,
 		*sep_ret_origin = DXDI_SEP_MODULE_SW_QUEUE;
 		op_ctx->error_info = DXDI_ERROR_INTERNAL;
 	}
-	op_ctx->op_state = USER_OP_NOP;
-	sepapp_params_cleanup(op_ctx->client_ctx,
-			      command_params, command_kparams,
-			      &sepapp_msg_p->client_params, local_dma_objs,
-			      mlli_tables);
+	if (!async) {
+		op_ctx->op_state = USER_OP_NOP;
+		sepapp_params_cleanup(op_ctx->client_ctx,
+				command_params, command_kparams,
+				&sepapp_msg_p->client_params,
+				op_ctx->async_info.local_dma_objs,
+				op_ctx->async_info.mlli_tables);
+	}
 
- sepapp_command_exit:
-	/* Release session */
-	mutex_lock(&session_ctx->session_lock);
-	session_ctx->ref_cnt--;
-	mutex_unlock(&session_ctx->session_lock);
+sepapp_command_exit:
+	if (!async) {
+		/* Release session */
+		mutex_lock(&session_ctx->session_lock);
+		session_ctx->ref_cnt--;
+		mutex_unlock(&session_ctx->session_lock);
+	}
 
 	return rc;
 
@@ -664,9 +695,6 @@ int sep_ioctl_sepapp_session_open(struct sep_client_ctx *client_ctx,
 	/* Calculate size of input parameters part */
 	const unsigned long input_size =
 	    offsetof(struct dxdi_sepapp_session_open_params, session_id);
-	const unsigned long output_size =
-	    sizeof(struct dxdi_sepapp_session_open_params) -
-	    offsetof(struct dxdi_sepapp_session_open_params, app_auth_data);
 	int rc;
 
 	/* access permissions to arg was already checked in sep_ioctl */
@@ -675,6 +703,10 @@ int sep_ioctl_sepapp_session_open(struct sep_client_ctx *client_ctx,
 		return -EFAULT;
 	}
 
+	/* Check the MAC ACL to see if this client is allow to open a session */
+	if (!is_permitted(params.app_uuid, -666))
+		return -EPERM;
+
 	op_ctx_init(&op_ctx, client_ctx);
 	rc = sepapp_session_open(&op_ctx,
 				 params.app_uuid, params.auth_method,
@@ -682,13 +714,16 @@ int sep_ioctl_sepapp_session_open(struct sep_client_ctx *client_ctx,
 				 &params.session_id, &params.sep_ret_origin);
 
 	/* Copying back from app_auth_data in case of output of "by value"... */
-	if (__copy_to_user(&user_params->app_auth_data, &params.app_auth_data,
-		       output_size)) {
+	if (copy_to_user(&user_params->app_auth_data, &params.app_auth_data,
+			   sizeof(struct dxdi_sepapp_params))
+	    || put_user(params.session_id, &user_params->session_id)
+	    || put_user(params.sep_ret_origin,
+			  &user_params->sep_ret_origin)) {
 		pr_err("Failed writing input parameters");
 		return -EFAULT;
 	}
 
-	__put_user(op_ctx.error_info, &(user_params->error_info));
+	put_user(op_ctx.error_info, &(user_params->error_info));
 
 	op_ctx_fini(&op_ctx);
 
@@ -788,10 +823,6 @@ int sep_ioctl_sepapp_command_invoke(struct sep_client_ctx *client_ctx,
 	const unsigned long input_size =
 	    offsetof(struct dxdi_sepapp_command_invoke_params,
 		     sep_ret_origin);
-	const unsigned long output_size =
-	    sizeof(struct dxdi_sepapp_command_invoke_params) -
-	    offsetof(struct dxdi_sepapp_command_invoke_params,
-		     command_params);
 	int rc;
 
 	/* access permissions to arg was already checked in sep_ioctl */
@@ -800,20 +831,27 @@ int sep_ioctl_sepapp_command_invoke(struct sep_client_ctx *client_ctx,
 		return -EFAULT;
 	}
 
+	/* Check the MAC ACL to see if this client is allow to invoke command */
+	if (!is_permitted(params.app_uuid, params.command_id))
+		return -EPERM;
+
 	op_ctx_init(&op_ctx, client_ctx);
 	rc = sepapp_command_invoke(&op_ctx,
 				   params.session_id, params.command_id,
 				   &params.command_params, NULL,
-				   &params.sep_ret_origin);
+				   &params.sep_ret_origin, 0);
 
 	/* Copying back from command_params in case of output of "by value" */
-	if (__copy_to_user(&user_params->command_params,
-		       &params.command_params, output_size)) {
+	if (copy_to_user(&user_params->command_params,
+			   &params.command_params,
+			   sizeof(struct dxdi_sepapp_params))
+	    || put_user(params.sep_ret_origin,
+			  &user_params->sep_ret_origin)) {
 		pr_err("Failed writing input parameters");
 		return -EFAULT;
 	}
 
-	__put_user(op_ctx.error_info, &(user_params->error_info));
+	put_user(op_ctx.error_info, &(user_params->error_info));
 
 	op_ctx_fini(&op_ctx);
 	return rc;
@@ -841,7 +879,7 @@ int dx_sepapp_command_invoke(void *ctx,
 
 	op_ctx_init(&op_ctx, client_ctx);
 	rc = sepapp_command_invoke(&op_ctx, session_id, command_id,
-				   NULL, command_params, ret_origin);
+				   NULL, command_params, ret_origin, 0);
 	/* If request operation suceeded return the return code from SeP */
 	if (likely(rc == 0))
 		rc = op_ctx.error_info;
@@ -849,6 +887,93 @@ int dx_sepapp_command_invoke(void *ctx,
 	return rc;
 }
 EXPORT_SYMBOL(dx_sepapp_command_invoke);
+
+static void async_app_handle_op_completion(struct work_struct *work)
+{
+	struct async_req_ctx *areq_ctx =
+	    container_of(work, struct async_req_ctx, comp_work);
+	struct sep_op_ctx *op_ctx = &areq_ctx->op_ctx;
+	struct crypto_async_request *initiating_req = areq_ctx->initiating_req;
+	int err = 0;
+	struct sep_app_session *session_ctx =
+	  &op_ctx->client_ctx->sepapp_sessions[op_ctx->async_info.session_id];
+
+	SEP_LOG_DEBUG("req=%p op_ctx=%p\n", initiating_req, op_ctx);
+	if (op_ctx == NULL) {
+		SEP_LOG_ERR("Invalid work context (%p)\n", work);
+		return;
+	}
+
+	if (op_ctx->op_state == USER_OP_COMPLETED) {
+
+		if (unlikely(op_ctx->error_info != 0)) {
+			SEP_LOG_ERR("SeP crypto-op failed (sep_rc=0x%08X)\n",
+				    op_ctx->error_info);
+		}
+		/* Save ret_code info before cleaning op_ctx */
+		err = -(op_ctx->error_info);
+		if (unlikely(err == -EINPROGRESS)) {
+			/* SeP error code collides with EINPROGRESS */
+			SEP_LOG_ERR("Invalid SeP error code 0x%08X\n",
+				    op_ctx->error_info);
+			err = -EINVAL;	/* fallback */
+		}
+		sepapp_params_cleanup(op_ctx->client_ctx,
+					op_ctx->async_info.dxdi_params,
+					op_ctx->async_info.dxdi_kparams,
+					op_ctx->async_info.sw_desc_params,
+					op_ctx->async_info.local_dma_objs,
+					op_ctx->async_info.mlli_tables);
+
+		mutex_lock(&session_ctx->session_lock);
+		session_ctx->ref_cnt--;
+		mutex_unlock(&session_ctx->session_lock);
+
+		op_ctx->client_ctx->memref_cnt--;
+		wake_up_interruptible(&op_ctx->client_ctx->memref_wq);
+
+		if (op_ctx->async_info.dxdi_kparams != NULL)
+			kfree(op_ctx->async_info.dxdi_kparams);
+		op_ctx_fini(op_ctx);
+	} else if (op_ctx->op_state == USER_OP_INPROC) {
+		/* Report with the callback the dispatch from backlog to
+		   the actual processing in the SW descriptors queue
+		   (Returned -EBUSY when the request was dispatched) */
+		err = -EINPROGRESS;
+	} else {
+		SEP_LOG_ERR("Invalid state (%d) for op_ctx %p\n",
+			    op_ctx->op_state, op_ctx);
+		BUG();
+	}
+
+	if (likely(initiating_req->complete != NULL))
+		initiating_req->complete(initiating_req, err);
+	else
+		SEP_LOG_ERR("Async. operation has no completion callback.\n");
+}
+
+int async_sepapp_command_invoke(void *ctx,
+			     int session_id,
+			     u32 command_id,
+			     struct dxdi_sepapp_kparams *command_params,
+			     enum dxdi_sep_module *ret_origin,
+			     struct async_req_ctx *areq_ctx)
+{
+	struct sep_client_ctx *client_ctx = (struct sep_client_ctx *)ctx;
+	struct sep_op_ctx *op_ctx = &areq_ctx->op_ctx;
+	int rc;
+
+	INIT_WORK(&areq_ctx->comp_work, async_app_handle_op_completion);
+	op_ctx_init(op_ctx, client_ctx);
+	op_ctx->comp_work = &areq_ctx->comp_work;
+	rc = sepapp_command_invoke(op_ctx, session_id, command_id,
+				   NULL, command_params, ret_origin, 1);
+
+	if (rc == 0)
+		return -EINPROGRESS;
+	else
+		return rc;
+}
 
 /**
  * dx_sepapp_context_alloc() - Allocate client context for SeP applets ops.
@@ -891,7 +1016,18 @@ void dx_sepapp_init(struct sep_drvdata *drvdata)
 	kapps_drvdata = drvdata;	/* Save for dx_sepapp_ API */
 }
 
-int sepapp_image_verify(u8 *addr, ssize_t size, u32 key_index, u32 magic_num)
+/**
+ * execute_sep() - Execute command in SEP.
+ *
+ * @command: Command ID to execute in SEP.
+ * @addr: Address of buffer to be passed to SEP.
+ * @size: Size of the buffer.
+ * @data1: Arbitrary data to be passed to SEP.
+ * @data2: Arbitrary data to be passed to SEP.
+ *
+ * Returns 0 on success, -EBUSY if resources (sessions) are still allocated
+ */
+static int execute_sep(u32 command, u8 *addr, u32 size, u32 data1, u32 data2)
 {
 	int sess_id = 0;
 	enum dxdi_sep_module ret_origin;
@@ -899,9 +1035,6 @@ int sepapp_image_verify(u8 *addr, ssize_t size, u32 key_index, u32 magic_num)
 	u8 uuid[16] = DEFAULT_APP_UUID;
 	struct dxdi_sepapp_kparams cmd_params;
 	int rc = 0;
-
-	pr_info("image verify: addr 0x%p size: %zd key_index: 0x%08X magic_num: 0x%08X\n",
-		addr, size, key_index, magic_num);
 
 	cmd_params.params_types[0] = DXDI_SEPAPP_PARAM_VAL;
 	/* addr is already a physical address, so this works on
@@ -918,12 +1051,12 @@ int sepapp_image_verify(u8 *addr, ssize_t size, u32 key_index, u32 magic_num)
 	cmd_params.params[1].val.copy_dir = DXDI_DATA_TO_DEVICE;
 
 	cmd_params.params_types[2] = DXDI_SEPAPP_PARAM_VAL;
-	cmd_params.params[2].val.data[0] = key_index;
+	cmd_params.params[2].val.data[0] = data1;
 	cmd_params.params[2].val.data[1] = 0;
 	cmd_params.params[2].val.copy_dir = DXDI_DATA_TO_DEVICE;
 
 	cmd_params.params_types[3] = DXDI_SEPAPP_PARAM_VAL;
-	cmd_params.params[3].val.data[0] = magic_num;
+	cmd_params.params[3].val.data[0] = data2;
 	cmd_params.params[3].val.data[1] = 0;
 	cmd_params.params[3].val.copy_dir = DXDI_DATA_TO_DEVICE;
 
@@ -940,7 +1073,7 @@ int sepapp_image_verify(u8 *addr, ssize_t size, u32 key_index, u32 magic_num)
 	if (unlikely(rc != 0))
 		goto failed;
 
-	rc = dx_sepapp_command_invoke(sctx, sess_id, CMD_IMAGE_VERIFY,
+	rc = dx_sepapp_command_invoke(sctx, sess_id, command,
 					&cmd_params, &ret_origin);
 
 	dx_sepapp_session_close(sctx, sess_id);
@@ -953,4 +1086,306 @@ failed:
 	dx_sepapp_context_free(sctx);
 	return rc;
 }
+
+int sepapp_image_verify(u8 *addr, ssize_t size, u32 key_index, u32 magic_num)
+{
+	pr_info("image verify: addr 0x%p size: %zd key_index: 0x%08X magic_num: 0x%08X\n",
+		addr, size, key_index, magic_num);
+	return execute_sep(CMD_IMAGE_VERIFY, addr, size, key_index, magic_num);
+}
 EXPORT_SYMBOL(sepapp_image_verify);
+
+/**
+ * sepapp_key_validity_check() - Check VRL header against active key policy.
+ *
+ * @addr: Address of buffer containing the VRL header.
+ * @size: Size of the buffer. (normal VRL 728 bytes)
+ * @flags: VRL_ALLOW_ALL_KEY_INDEXES
+ *          - Ignore key policy and allow all keys found in the device.
+ *
+ * Returns 0 on success
+ */
+int sepapp_key_validity_check(u8 *addr, ssize_t size, u32 flags)
+{
+	pr_info("validity: addr 0x%p size: %zd flags: 0x%08X\n",
+		addr, size, flags);
+	return execute_sep(CMD_KEYPOLICY_CHECK, addr, size, flags, 0);
+}
+EXPORT_SYMBOL(sepapp_key_validity_check);
+
+int sepapp_hdmi_status(u8 status, u8 bksv[5])
+{
+	int sess_id = 0;
+	enum dxdi_sep_module ret_origin;
+	struct sep_client_ctx *sctx = NULL;
+	u8 uuid[16] = HDCP_APP_UUID;
+	struct dxdi_sepapp_kparams cmd_params;
+	int rc = 0;
+
+	pr_info("Hdmi status: status 0x%02x\n", status);
+
+	memset(&cmd_params, 0, sizeof(struct dxdi_sepapp_kparams));
+
+	cmd_params.params_types[0] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[0].val.data[0] = status;
+	cmd_params.params[0].val.data[1] = 0;
+	cmd_params.params[0].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	cmd_params.params_types[1] = DXDI_SEPAPP_PARAM_VAL;
+	memcpy(&cmd_params.params[1].val.data[0], bksv, sizeof(u32));
+	memcpy((uint8_t *)&cmd_params.params[1].val.data[1],
+		&bksv[4], sizeof(u8));
+	cmd_params.params[1].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	sctx = dx_sepapp_context_alloc();
+	if (unlikely(!sctx))
+		return -ENOMEM;
+
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_get();
+#endif
+
+	rc = dx_sepapp_session_open(sctx, uuid, 0, NULL, NULL, &sess_id,
+				    &ret_origin);
+	if (unlikely(rc != 0))
+		goto failed;
+
+	rc = dx_sepapp_command_invoke(sctx, sess_id, HDCP_RX_HDMI_STATUS,
+				      &cmd_params, &ret_origin);
+
+	dx_sepapp_session_close(sctx, sess_id);
+
+failed:
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_put();
+#endif
+
+	dx_sepapp_context_free(sctx);
+	return rc;
+}
+EXPORT_SYMBOL(sepapp_hdmi_status);
+
+int sepapp_drm_playback(enum ied_status status)
+{
+	int ses_id = 0;
+	enum dxdi_sep_module ret_origin;
+	struct sep_client_ctx *sctx = NULL;
+	u8 uuid[16] = DEFAULT_APP_UUID;
+	int rc = 0;
+	int command;
+
+	pr_debug("Requesting IED status change %d\n", status);
+
+	if (status == ied_status_enable)
+		command = CMD_DRM_ENABLE_IED;
+	else if (status == ied_status_disable)
+		command = CMD_DRM_DISABLE_IED;
+	else
+		return -EINVAL;
+
+	sctx = dx_sepapp_context_alloc();
+	if (unlikely(!sctx))
+		return -ENOMEM;
+
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_get();
+#endif
+
+	rc = dx_sepapp_session_open(sctx, uuid, 0, NULL, NULL, &ses_id,
+				    &ret_origin);
+	if (unlikely(rc != 0))
+		goto failed;
+
+	rc = dx_sepapp_command_invoke(sctx, ses_id, command, NULL, &ret_origin);
+
+	dx_sepapp_session_close(sctx, ses_id);
+
+failed:
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_put();
+#endif
+
+	dx_sepapp_context_free(sctx);
+	return rc;
+}
+EXPORT_SYMBOL(sepapp_drm_playback);
+
+int sepapp_os_imr_get(u8 imr, u64 *lo, u64 *hi, u32 *rac, u32 *wac, u32 *status)
+{
+	int sess_id = 0;
+	enum dxdi_sep_module ret_origin;
+	struct sep_client_ctx *sctx = NULL;
+	u8 uuid[16] = DEFAULT_APP_UUID;
+	struct dxdi_sepapp_kparams cmd_params;
+	int rc = 0;
+
+	cmd_params.params_types[0] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[0].val.data[0] = 15; /* Hard coded IMR number */
+	cmd_params.params[0].val.data[1] = 0;
+	cmd_params.params[0].val.copy_dir = DXDI_DATA_BIDIR;
+
+	cmd_params.params_types[1] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[1].val.data[0] = 0;
+	cmd_params.params[1].val.data[1] = 0;
+	cmd_params.params[1].val.copy_dir = DXDI_DATA_FROM_DEVICE;
+
+	cmd_params.params_types[2] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[2].val.data[0] = 0;
+	cmd_params.params[2].val.data[1] = 0;
+	cmd_params.params[2].val.copy_dir = DXDI_DATA_FROM_DEVICE;
+
+	cmd_params.params_types[3] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[3].val.data[0] = 0;
+	cmd_params.params[3].val.data[1] = 0;
+	cmd_params.params[3].val.copy_dir = DXDI_DATA_FROM_DEVICE;
+
+	sctx = dx_sepapp_context_alloc();
+	if (unlikely(!sctx))
+		return -ENOMEM;
+
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_get();
+#endif
+
+	rc = dx_sepapp_session_open(sctx, uuid, 0, NULL, NULL, &sess_id,
+		&ret_origin);
+	if (unlikely(rc != 0))
+		goto failed;
+
+	rc = dx_sepapp_command_invoke(sctx, sess_id, CMD_OS_IMR_GET,
+		&cmd_params, &ret_origin);
+	if (!rc) {
+		*status = cmd_params.params[0].val.data[1];
+		*lo = (u64)cmd_params.params[1].val.data[0] |
+			(((u64)cmd_params.params[1].val.data[1]) << 32);
+		*hi = (u64)cmd_params.params[2].val.data[0] |
+			(((u64)cmd_params.params[2].val.data[1]) << 32);
+		*rac = cmd_params.params[3].val.data[0];
+		*wac = cmd_params.params[3].val.data[1];
+	}
+
+	dx_sepapp_session_close(sctx, sess_id);
+
+failed:
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_put();
+#endif
+
+	dx_sepapp_context_free(sctx);
+	return rc;
+}
+EXPORT_SYMBOL(sepapp_os_imr_get);
+
+int sepapp_os_imr_set(u8 imr, u64 lo, u64 hi, u32 rac, u32 wac, u32 status)
+{
+	int sess_id = 0;
+	enum dxdi_sep_module ret_origin;
+	struct sep_client_ctx *sctx = NULL;
+	u8 uuid[16] = DEFAULT_APP_UUID;
+	struct dxdi_sepapp_kparams cmd_params;
+	int rc = 0;
+
+	cmd_params.params_types[0] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[0].val.data[0] = 15; /* Hard coded IMR number */
+	cmd_params.params[0].val.data[1] = status;
+	cmd_params.params[0].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	cmd_params.params_types[1] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[1].val.data[0] = (u32)lo;
+	cmd_params.params[1].val.data[1] = (u32)(lo >> 32);
+	cmd_params.params[1].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	cmd_params.params_types[2] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[2].val.data[0] = (u32)hi;
+	cmd_params.params[2].val.data[1] = (u32)(hi >> 32);
+	cmd_params.params[2].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	cmd_params.params_types[3] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[3].val.data[0] = rac;
+	cmd_params.params[3].val.data[1] = wac;
+	cmd_params.params[3].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	sctx = dx_sepapp_context_alloc();
+	if (unlikely(!sctx))
+		return -ENOMEM;
+
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_get();
+#endif
+
+	rc = dx_sepapp_session_open(sctx, uuid, 0, NULL, NULL, &sess_id,
+		&ret_origin);
+	if (unlikely(rc != 0))
+		goto failed;
+
+	rc = dx_sepapp_command_invoke(sctx, sess_id, CMD_OS_IMR_SET,
+		&cmd_params, &ret_origin);
+
+	dx_sepapp_session_close(sctx, sess_id);
+
+failed:
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_put();
+#endif
+
+	dx_sepapp_context_free(sctx);
+	return rc;
+}
+EXPORT_SYMBOL(sepapp_os_imr_set);
+
+int sepapp_os_imr_disable(u8 imr_number)
+{
+	int sess_id = 0;
+	enum dxdi_sep_module ret_origin;
+	struct sep_client_ctx *sctx = NULL;
+	u8 uuid[16] = DEFAULT_APP_UUID;
+	struct dxdi_sepapp_kparams cmd_params;
+	int rc = 0;
+
+	cmd_params.params_types[0] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[0].val.data[0] = 15; /* Hard coded IMR number */
+	cmd_params.params[0].val.data[1] = 0;
+	cmd_params.params[0].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	cmd_params.params_types[1] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[1].val.data[0] = 0;
+	cmd_params.params[1].val.data[1] = 0;
+	cmd_params.params[1].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	cmd_params.params_types[2] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[2].val.data[0] = 0;
+	cmd_params.params[2].val.data[1] = 0;
+	cmd_params.params[2].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	cmd_params.params_types[3] = DXDI_SEPAPP_PARAM_VAL;
+	cmd_params.params[3].val.data[0] = 0;
+	cmd_params.params[3].val.data[1] = 0;
+	cmd_params.params[3].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+	sctx = dx_sepapp_context_alloc();
+	if (unlikely(!sctx))
+		return -ENOMEM;
+
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_get();
+#endif
+
+	rc = dx_sepapp_session_open(sctx, uuid, 0, NULL, NULL, &sess_id,
+		&ret_origin);
+	if (unlikely(rc != 0))
+		goto failed;
+
+	rc = dx_sepapp_command_invoke(sctx, sess_id, CMD_OS_IMR_DISABLE,
+		&cmd_params, &ret_origin);
+
+	dx_sepapp_session_close(sctx, sess_id);
+
+failed:
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_put();
+#endif
+
+	dx_sepapp_context_free(sctx);
+	return rc;
+}
+EXPORT_SYMBOL(sepapp_os_imr_disable);

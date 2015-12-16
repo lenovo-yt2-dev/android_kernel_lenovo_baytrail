@@ -38,7 +38,9 @@
 /* Added for HDMI Audio */
 #include "hdmi_audio_if.h"
 #include "intel_sync.h"
-
+#ifdef CONFIG_DLP
+#include <drm/intel_dual_display.h>
+#endif
 static const u32 hpd_ibx[] = {
 	[HPD_CRT] = SDE_CRT_HOTPLUG,
 	[HPD_SDVO_B] = SDE_SDVOB_HOTPLUG,
@@ -691,6 +693,7 @@ static int i915_get_vblank_timestamp(struct drm_device *dev, int pipe,
 						     crtc);
 }
 
+#ifndef CONFIG_DLP
 static int intel_hpd_irq_event(struct drm_device *dev, struct drm_connector *connector)
 {
 	enum drm_connector_status old_status;
@@ -705,31 +708,94 @@ static int intel_hpd_irq_event(struct drm_device *dev, struct drm_connector *con
 		      old_status, connector->status);
 	return (old_status != connector->status);
 }
-
+#endif
 /*
  * Handle hotplug events outside the interrupt handler proper.
  */
 #define I915_REENABLE_HOTPLUG_DELAY (2*60*1000)
+
+#ifdef CONFIG_DLP
+extern struct drm_device *gdev;
+//don't call me during bootup to prevent screen on during boot up
+
+struct intel_dual_display_status dual_display_status;
+
+extern int simulate_valleyview_irq_handler(bool enable,bool (*cb)(int));
+int simulate_valleyview_irq_handler(bool enable,bool (*cb)(int))
+ {     
+     int ret =-1;
+     struct drm_device *dev = gdev;
+     drm_i915_private_t *dev_priv = (drm_i915_private_t *) dev->dev_private; 
+    
+       /* moved outof isr */
+      if(cb)
+       dual_display_status.call_back = cb;
+
+		 
+		mutex_lock(&dual_display_status.dual_display_mutex);
+		if((enable && (dual_display_status.pipeb_status!=PIPE_OFF))
+			||(!enable && (dual_display_status.pipeb_status!=PIPE_ON))){
+			mutex_unlock(&dual_display_status.dual_display_mutex);
+                        printk("%s----enable=%d,pipeb_status=%d \n",__func__,enable,dual_display_status.pipeb_status);
+			return ret;
+			}
+         switch(dual_display_status.pipeb_status)
+         {
+             case  PIPE_INIT:
+             case  PIPE_OFF:
+
+                 dual_display_status.pipeb_status = PIPE_ON_PROCESSING;
+                 ret =0;
+		if(dual_display_status.call_back)
+      		    dual_display_status.call_back(PIPE_ON_PROCESSING);
+                 break;
+             case  PIPE_ON:
+                  ret =1;
+                 dual_display_status.pipeb_status = PIPE_OFF_PROCESSING;
+		  if(dual_display_status.call_back)
+      		  dual_display_status.call_back(PIPE_OFF_PROCESSING);
+                 break;
+             default :
+ 		printk(KERN_ERR "%s mipib pipe status error %d\n", __func__, dual_display_status.pipeb_status);
+
+		mutex_unlock(&dual_display_status.dual_display_mutex);
+		return ret;
+         }
+
+	
+     mutex_unlock(&dual_display_status.dual_display_mutex);
+     queue_work(dev_priv->wq, &dev_priv->hotplug_work);
+    return ret;
+}
+#endif
 
 static void i915_hotplug_work_func(struct work_struct *work)
 {
 	drm_i915_private_t *dev_priv = container_of(work, drm_i915_private_t,
 						    hotplug_work);
 	struct drm_device *dev = dev_priv->dev;
+	#ifndef CONFIG_DLP
 	struct drm_mode_config *mode_config = &dev->mode_config;
 	struct intel_connector *intel_connector;
 	struct intel_encoder *intel_encoder;
-	struct drm_connector *connector;
+    #endif	
+    struct drm_connector *connector;
+	#ifndef CONFIG_DLP
 	unsigned long irqflags;
 	bool hpd_disabled = false;
-	bool changed = false;
-	u32 hpd_event_bits;
+    #endif
+    bool changed = false;
+	#ifndef CONFIG_DLP
+    u32 hpd_event_bits;
 	char *envp[] = {"hdcp_hpd", NULL};
-
-	/* HPD irq before everything is fully set up. */
-	if (!dev_priv->enable_hotplug_processing)
+    #endif
+	
+    /* HPD irq before everything is fully set up. */
+    //if graphic chip suspend, just returns
+	if (!dev_priv->enable_hotplug_processing)   
 		return;
 
+    #ifndef CONFIG_DLP
 	mutex_lock(&mode_config->mutex);
 	DRM_DEBUG_KMS("running encoder hotplug functions\n");
 
@@ -773,16 +839,65 @@ static void i915_hotplug_work_func(struct work_struct *work)
 		if (hpd_event_bits & (1 << intel_encoder->hpd_pin)) {
 			if (intel_encoder->hot_plug)
 				intel_encoder->hot_plug(intel_encoder);
-			if (intel_hpd_irq_event(dev, connector))
+			if (intel_hpd_irq_event(dev, connector)) {
+				if (connector->status == connector_status_disconnected &&
+						intel_encoder->type == INTEL_OUTPUT_HDMI) {
+					/* Disable HDMI PORT immidiately for HDCP */
+					u32 temp;
+					struct intel_hdmi *intel_hdmi =
+						enc_to_intel_hdmi(&intel_encoder->base);
+					temp = I915_READ(intel_hdmi->hdmi_reg);
+					temp &= ~(SDVO_ENABLE | SDVO_AUDIO_ENABLE);
+					I915_WRITE(intel_hdmi->hdmi_reg, temp);
+					POSTING_READ(intel_hdmi->hdmi_reg);
+					dev_priv->port_disabled_on_unplug = true;
+				}
+
 				changed = true;
+			}
 		}
 	}
+
+	/* Encoder hotplug fn is suppose to use this, now clear it */
+	dev_priv->hotplug_status = 0;
 	mutex_unlock(&mode_config->mutex);
 
 	/* HDCPD needs a uevent, every time when there is a hotplug */
 	kobject_uevent_env(&dev->primary->kdev.kobj, KOBJ_CHANGE, envp);
 	if (changed)
 		drm_kms_helper_hotplug_event(dev);
+  #else
+    mutex_lock(&dev->mode_config.mutex);
+    
+    list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
+        enum drm_connector_status old_status;
+
+        printk("%s connetor_type  %d\n", __func__,  connector->connector_type); 
+
+        if(connector->connector_type == DRM_MODE_CONNECTOR_MIPI) { 
+
+            old_status = connector->status;
+
+            connector->status = connector->funcs->detect(connector, false);
+
+            printk("[CONNECTOR:%d:%s] status updated from %d to %d\n",
+                    connector->base.id,
+                    drm_get_connector_name(connector),
+                    old_status, connector->status);
+
+            if (old_status != connector->status)
+                changed = true;
+        }
+    }//list_for_each_entry
+
+    mutex_unlock(&dev->mode_config.mutex);
+   
+   if (changed) {
+        /* send a uevent + call fbdev */
+        printk("%s sending uevent\n" , __func__);
+        drm_sysfs_hotplug_event(dev); 
+    }
+  #endif
 }
 
 static void ironlake_rps_change_irq_handler(struct drm_device *dev)
@@ -1325,7 +1440,9 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 	int pipe;
 	u32 pipe_stats[I915_MAX_PIPES] = {0};
 	int lpe_stream;
-
+    #ifdef CONFIG_DLP
+     u32 reg;
+    #endif
 	atomic_inc(&dev_priv->irq_received);
 
 	while (true) {
@@ -1360,20 +1477,17 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 				I915_WRITE(reg, pipe_stats[pipe]);
 			}
 		}
+#ifdef CONFIG_DLP
+		reg = I915_READ(MIPI_INTR_STAT(1));
+		if((reg &(1<<22))){
+			I915_WRITE(MIPI_INTR_STAT(1),(1<<22));
+		}
+#endif
 		spin_unlock_irqrestore(&dev_priv->irq_lock, irqflags);
 
 		for_each_pipe(pipe) {
-			if (pipe_stats[pipe] & PIPE_VBLANK_INTERRUPT_STATUS) {
-				if (dev_priv->pf_change_status[pipe] & BPP_CHANGED_PRIMARY)
-					I915_WRITE_BITS(VLV_DDL(pipe), dev_priv->pf_change_status[pipe], DL_PRIMARY_MASK);
-				if (dev_priv->pf_change_status[pipe] & BPP_CHANGED_SPRITEA)
-					I915_WRITE_BITS(VLV_DDL(pipe), dev_priv->pf_change_status[pipe], DL_SPRITEA_MASK);
-				if (dev_priv->pf_change_status[pipe] & BPP_CHANGED_SPRITEB)
-					I915_WRITE_BITS(VLV_DDL(pipe), dev_priv->pf_change_status[pipe], DL_SPRITEB_MASK);
-
-				dev_priv->pf_change_status[pipe] = 0x0;
+			if (pipe_stats[pipe] & PIPE_VBLANK_INTERRUPT_STATUS)
 				drm_handle_vblank(dev, pipe);
-			}
 			if (pipe_stats[pipe] & PLANE_FLIPDONE_INT_STATUS_VLV) {
 				intel_prepare_page_flip(dev, pipe);
 				intel_finish_page_flip(dev, pipe);
@@ -1418,7 +1532,9 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 			if (!(hotplug_trigger & HPD_SHORT_PULSE)) {
 				DRM_DEBUG_DRIVER("hotplug event received, stat 0x%08x\n",
 					 hotplug_status);
-
+				/* Few display's cant set the status for long time. Lets save this status for
+				future references like in bottom halves */
+				dev_priv->hotplug_status = hotplug_status;
 				intel_hpd_irq_handler(dev, hotplug_trigger, hpd_status_i915);
 			}
 			I915_WRITE(PORT_HOTPLUG_STAT, hotplug_status);

@@ -136,6 +136,27 @@ config R63311_MIPI_VIDEO_MODE
 	bool "support jdi 1920x1080 MIPI panel"
 	default n
 
+config SUPPORT_OTM8018B_MIPI_480X854_DISPLAY
+	bool "Support CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY"
+	depends on DRM_MDFLD || DRM_CTP
+	default n
+	help
+	  xxxxxx
+
+config SUPPORT_DDS_MIPI_SWITCH
+        bool "Support DDS MIPI switch"
+        depends on DRM_MDFLD || DRM_CTP
+        default n
+        help
+          xxxxxx
+
+config SUPPORT_P73L_TWO_LANE
+       bool "Support pf450cl pad with two lane"
+       depends on DRM_MDFLD || DRM_CTP
+       default n
+       help
+         xxxxxx
+
 config SUPPORT_TOSHIBA_MIPI_DISPLAY
 	bool "Support Toshiba TC358762 MIPI Bridge and Toshiba JBT6K84 Panel"
 	depends on DRM_MDFLD

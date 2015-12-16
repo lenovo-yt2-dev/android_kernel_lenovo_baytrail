@@ -32,25 +32,18 @@
 
 #include "atomisp_compat.h"
 
-#ifdef CSS20
 #include "ia_css.h"
-#else /* CSS20 */
-#include <sh_css.h>
-#endif /* CSS20 */
 
 extern int dbg_level;
+extern int dbg_func;
 extern int mipicsi_flag;
 extern int pad_w;
 extern int pad_h;
 
 #define CSS_DTRACE_VERBOSITY_LEVEL	5	/* Controls trace verbosity */
 #define CSS_DTRACE_VERBOSITY_TIMEOUT	9	/* Verbosity on ISP timeout */
-#define MFLD_MAX_ZOOM_FACTOR	64
 #define MRFLD_MAX_ZOOM_FACTOR	1024
 
-#define IS_ISP24XX(isp)							\
-	(((isp)->media_dev.hw_revision & ATOMISP_HW_REVISION_MASK)	\
-	 >= (ATOMISP_HW_REVISION_ISP2400 << ATOMISP_HW_REVISION_SHIFT))
 #define IS_ISP2401(isp)							\
 	(((isp)->media_dev.hw_revision & ATOMISP_HW_REVISION_MASK)	\
 	 >= (ATOMISP_HW_REVISION_ISP2401_LEGACY << ATOMISP_HW_REVISION_SHIFT))

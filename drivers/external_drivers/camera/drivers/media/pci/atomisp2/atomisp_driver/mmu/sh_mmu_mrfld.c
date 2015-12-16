@@ -20,16 +20,7 @@
  * 02110-1301, USA.
  *
  */
-#ifndef CSS20
-#include <sh_css.h>
-#endif /* CSS20 */
-
-#ifndef CSS21
-#include <host/mmu_local.h>
-#else
 #include "type_support.h"
-#endif
-
 #include "mmu/isp_mmu.h"
 #include "memory_access/memory_access.h"
 #include "atomisp_compat.h"

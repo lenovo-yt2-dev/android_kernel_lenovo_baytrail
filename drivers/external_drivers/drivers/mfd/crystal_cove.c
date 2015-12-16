@@ -24,7 +24,6 @@
 #include <linux/acpi.h>
 #include <asm/intel_vlv2.h>
 #include <linux/version.h>
-#include <linux/debugfs.h>
 
 #define PMIC_IRQ_NUM	7
 
@@ -187,6 +186,9 @@ int intel_scu_ipc_update_register(u16 addr, u8 data, u8 mask)
 {
 	int ret;
 
+	if (!pmic->i2c)
+		return -ENODEV;
+
 	mutex_lock(&pmic->io_lock);
 
 	ret = i2c_smbus_read_byte_data(pmic->i2c, addr);
@@ -245,6 +247,9 @@ int intel_mid_pmic_readb(int reg)
 {
 	int ret;
 
+	if (!pmic->i2c)
+		return -ENODEV;
+
 	mutex_lock(&pmic->io_lock);
 	ret = i2c_smbus_read_byte_data(pmic->i2c, reg);
 	mutex_unlock(&pmic->io_lock);
@@ -255,6 +260,9 @@ EXPORT_SYMBOL(intel_mid_pmic_readb);
 int intel_mid_pmic_writeb(int reg, u8 val)
 {
 	int ret;
+
+	if (!pmic->i2c)
+		return -ENODEV;
 
 	mutex_lock(&pmic->io_lock);
 	ret = i2c_smbus_write_byte_data(pmic->i2c, reg, val);
@@ -267,6 +275,9 @@ int intel_mid_pmic_setb(int reg, u8 mask)
 {
 	int ret;
 	int val;
+
+	if (!pmic->i2c)
+		return -ENODEV;
 
 	mutex_lock(&pmic->io_lock);
 	val = i2c_smbus_read_byte_data(pmic->i2c, reg);
@@ -281,6 +292,9 @@ int intel_mid_pmic_clearb(int reg, u8 mask)
 	int ret;
 	int val;
 
+	if (!pmic->i2c)
+		return -ENODEV;
+
 	mutex_lock(&pmic->io_lock);
 	val = i2c_smbus_read_byte_data(pmic->i2c, reg);
 	val &= ~mask;
@@ -288,123 +302,6 @@ int intel_mid_pmic_clearb(int reg, u8 mask)
 	mutex_unlock(&pmic->io_lock);
 	return ret;
 }
-
-
-/*
-* add by axs for pmic bladeII hardware verification
-*/
-#ifdef CONFIG_DEBUG_FS
-
-static ssize_t pmic_debug_write(struct file *file, const char __user *ubuf,
-						size_t count, loff_t *ppos)
-{
-	char buf[32];
-	long ret;
-	int i = 0;
-	long reg, val;
-	
-	memset(buf, 0, sizeof(buf));
-
-	if (copy_from_user(&buf, ubuf, min_t(size_t, sizeof(buf) - 1, count)))
-		return -EFAULT;
-	
-	for(i = 0; i < count; i++){
-		if(buf[i] == 'r' || buf[i] == 'w')
-			break;
-	}
-
-	if(buf[i] == 'r'){
-		i++;
-		for(;i < count; i++){
-			if(buf[i] == '0'){
-				if(buf[i+1] == 'x' || buf[i+1] == 'X')
-					break;
-			}
-		}	
-		i += 2;
-		
-		ret = strict_strtol(buf + i, 16, &reg);
-		if (ret)
-			return ret;
-		
-		val = intel_mid_pmic_readb((u32)reg);
-		printk("PMIC_REG(6E): R REG[0x%02X] = 0x%02X\n", (u32)reg, (u32)val);
-	}
-	else if(buf[i] == 'w'){
-		int start = 0;
-
-		for(;i < count; i++){
-			if(buf[i] == '0'){
-				if(buf[i+1] == 'x' || buf[i+1] == 'X')
-					break;
-			}
-		}	
-
-		i += 2;
-		start = i;
-		
-		for(;i < count; i++){
-			if(buf[i] == '='){				
-				buf[i] = 0;
-				break;
-			}
-		}	
-		
-		ret = strict_strtol(buf + start, 16, &reg);
-		if (ret){
-			printk("PMIC_REG(6E): fail get register\n");
-			return ret;
-		}
-		
-		for(;i < count; i++){
-			if(buf[i] == '0'){
-				if(buf[i+1] == 'x' || buf[i+1] == 'X')
-					break;
-			}
-		}	
-		i += 2;
-		
-		ret = strict_strtol(buf + i, 16, &val);
-		if (ret){
-			printk("PMIC_REG(6E): fail get value\n");
-			return ret;
-		}
-		
-		printk("PMIC_REG(6E): W REG[0x%02X] = 0x%02X\n", (u32)reg, (u32)val);
-
-		ret = intel_mid_pmic_writeb((u32)reg, (u32)val);
-		if (ret){
-			printk("PMIC_REG(6E): write failed ret = %d\n", ret);
-			return ret;
-		}
-	}
-	else
-		printk("PMIC_REG(6E): invalid parameter!\n");
-
-	return count;
-}
-
-
-static const struct file_operations pmic_reg_operations = {
-	.owner		= THIS_MODULE,
-	.open		= simple_open,
-	.write		= pmic_debug_write,
-};
-
-struct debug_entry *pmic_entry = NULL;
-
-void pmic_create_debug_fs(char *item, void *ops){
-	
-	if(!pmic_entry)
-		pmic_entry = debugfs_create_dir("intel_pmic", NULL);
-
-	debugfs_create_file(item, S_IFREG | S_IRUGO,
-				pmic_entry, NULL, (struct file_operations *)ops);
-}
-
-EXPORT_SYMBOLE(pmic_create_debug_fs);
-
-#endif
 
 static void pmic_irq_enable(struct irq_data *data)
 {
@@ -504,7 +401,11 @@ static int pmic_irq_init(void)
 	int ret;
 
 	pmic->irq_mask = 0xff;
-	intel_mid_pmic_writeb(MIRQLVL1, pmic->irq_mask);
+	ret = intel_mid_pmic_writeb(MIRQLVL1, pmic->irq_mask);
+	if (ret) {
+		dev_err(pmic->dev, "Failed to communicate with PMIC.");
+		return ret;
+	}
 	pmic->irq_mask = intel_mid_pmic_readb(MIRQLVL1);
 	pmic->irq_base = irq_alloc_descs(VV_PMIC_IRQBASE, 0, PMIC_IRQ_NUM, 0);
 	if (pmic->irq_base < 0) {
@@ -545,7 +446,7 @@ static int pmic_irq_init(void)
 static int pmic_i2c_probe(struct i2c_client *i2c,
 			    const struct i2c_device_id *id)
 {
-	int i;
+	int i, ret;
 	struct mfd_cell *cell_dev = crystal_cove_data;
 
 	mutex_init(&pmic->io_lock);
@@ -557,12 +458,12 @@ static int pmic_i2c_probe(struct i2c_client *i2c,
 	pmic->i2c = i2c;
 	pmic->dev = &i2c->dev;
 	pmic->irq = i2c->irq;
-	pmic_irq_init();
+	ret = pmic_irq_init();
+	if (ret)
+		return ret;
+
 	dev_info(&i2c->dev, "Crystal Cove: ID 0x%02X, VERSION 0x%02X\n",
 		intel_mid_pmic_readb(CHIPID), intel_mid_pmic_readb(CHIPVER));
-
-	pmic_create_debug_fs("pmic_6e", &pmic_reg_operations);
-
 	for (i = 0; cell_dev[i].name != NULL; i++)
 		;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 1))

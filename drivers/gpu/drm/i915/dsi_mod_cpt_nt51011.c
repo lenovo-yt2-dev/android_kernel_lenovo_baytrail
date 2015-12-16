@@ -35,7 +35,8 @@
 #include "dsi_mod_cpt_nt51011.h"
 #include "lenovo_lcd_panel.h"
 
-static unsigned char ce_status = 0x55;
+static unsigned char ce_status = 0x1E;
+static unsigned char ce_cabc = 0x03;//bit1:ce  bit0:cabc  1:on  0:off
 static void  cpt_nt51011_vid_get_panel_info(int pipe, struct drm_connector *connector)
 {
 	if (!connector)
@@ -61,36 +62,64 @@ static int cpt_nt51011_get_effect_index(char *name)
 }
 static int cpt_nt51011_set_effect(struct hal_panel_ctrl_data *hal_panel_ctrl, struct intel_dsi *dsi)
 {
-	int i = 0, ret = 0;
-	int effect_index = hal_panel_ctrl->index;
-	int level = hal_panel_ctrl->level;
-	struct lcd_effect_data *effect_data= cpt_nt51011_data.lcd_effects;
-	struct lcd_effect effect = effect_data->lcd_effects[effect_index];
-	struct lcd_effect_cmd effect_cmd = effect.lcd_effect_cmds[level];
-	int cmd_nums = effect_cmd.cmd_nums;
-	struct lcd_cmd cmd;
-	dsi->hs = true;
+    int ret = 0;
+    int effect_index = hal_panel_ctrl->index;
+    int level = hal_panel_ctrl->level;
+    struct lcd_effect_data *effect_data= cpt_nt51011_data.lcd_effects;
+    struct lcd_effect effect = effect_data->lcd_effects[effect_index];
+    dsi->hs = true;
 
-	if(level < 0 || level > effect.max_level)
-		return -EINVAL;
+    if(level < 0 || level > effect.max_level)
+        return -EINVAL;
 
-	for(i = 0; i < cmd_nums; i++){
-		cmd = effect_cmd.lcd_cmds[i];
-		dsi_vc_dcs_write(dsi, 0, cmd.cmds, cmd.len);
-	}
-
-	//store the effect level
-	effect_data->lcd_effects[effect_index].current_level = level;
-    if(effect_index == 1)
+    if(effect_index == 0)//cabc
     {
         if(level == 0)
-            ce_status = 0xAA;
+        {
+            ce_cabc = ce_cabc&0x02; 
+        }
         else
-            ce_status = 0x55;
+        {
+            ce_cabc = ce_cabc|0x01;
+        }
+    }
+    else//ce
+    {
+        if(level == 0)
+        {
+            ce_cabc = ce_cabc&0x01; 
+        }
+        else
+        {
+            ce_cabc = ce_cabc|0x02;
+        }
     }
 
-    printk("[LCD]:==jinjt==%s line=%d effect_index=%d level=%d\n",__func__,__LINE__,effect_index,level);
-	return ret;
+    if(ce_cabc == 0x00)
+    {
+        ceon_cmd1[1] = 0x06;
+    }
+    else if(ce_cabc == 0x01)
+    {
+        ceon_cmd1[1] = 0x0E;
+    }
+    else if(ce_cabc == 0x02)
+    {
+        ceon_cmd1[1] = 0x16;
+    }
+    else
+    {
+        ceon_cmd1[1] = 0x1E;
+    }
+    printk("==jinjt==%s line =%d ceon_cmd1[1]=0x%x ce_cabc=0x%x\n",__func__,__LINE__,ceon_cmd1[1],ce_cabc);
+    ////dsi_vc_generic_write(dsi, 0, page_cmd1, ARRAY_SIZE(page_cmd1));
+    dsi_vc_generic_write(dsi, 0, ceon_cmd1, ARRAY_SIZE(ceon_cmd1));
+    ////dsi_vc_generic_write(dsi, 0, page_cmd2, 0);
+
+    //store the effect level
+    effect_data->lcd_effects[effect_index].current_level = level;
+    ce_status = ceon_cmd1[1];
+    return ret;
 
 }
 
@@ -114,7 +143,7 @@ static int cpt_nt51011_get_current_level(struct hal_panel_ctrl_data *hal_panel_c
 }
 
 static struct lcd_panel_dev cpt_nt51011_panel_device = {
-	.name = "cpt_nt51011_1920x1200_panel",
+	.name = "NT71410_CLAA101FP08_CPT_1200x1920_10",
 	.status = OFF,
 	.set_effect = cpt_nt51011_set_effect,
 	.get_current_level = cpt_nt51011_get_current_level,
@@ -123,8 +152,6 @@ static struct lcd_panel_dev cpt_nt51011_panel_device = {
 static bool cpt_nt51011_init(struct intel_dsi_device *dsi)
 {
 	struct intel_dsi *intel_dsi = container_of(dsi, struct intel_dsi, dev);
-    struct drm_device *dev = intel_dsi->base.base.dev;
-    struct drm_i915_private *dev_priv = dev->dev_private;
 
 	/* create private data, slam to dsi->dev_priv. could support many panels
 	 * based on dsi->name. This panal supports both command and video mode,
@@ -158,12 +185,11 @@ static bool cpt_nt51011_init(struct intel_dsi_device *dsi)
 	intel_dsi->video_frmt_cfg_bits = 0;
 	intel_dsi->panel_on_delay = 100;
 	intel_dsi->dphy_reg = 0x3c1fc51f;
-
+       intel_dsi->port = 0; /* PORT_A by default */
+	intel_dsi->burst_mode_ratio = 100;
 	intel_dsi->backlight_off_delay = 20;
 	intel_dsi->send_shutdown = true;
 	intel_dsi->shutdown_pkt_delay = 20;
-
-    dev_priv->mipi.panel_bpp = PIPE_24BPP;
 
     cpt_nt51011_panel_device.dsi = intel_dsi;
 	lenovo_lcd_panel_register(&cpt_nt51011_panel_device);
@@ -204,6 +230,9 @@ static bool cpt_nt51011_mode_fixup(struct intel_dsi_device *dsi,
 		    const struct drm_display_mode *mode,
 		    struct drm_display_mode *adjusted_mode)
 {
+        struct intel_dsi *intel_dsi = container_of(dsi, struct intel_dsi, dev);
+    intel_dsi->pclk = adjusted_mode->clock;
+     DRM_DEBUG_KMS("pclk : %d\n", intel_dsi->pclk);
 	return true;
 }
 
@@ -262,10 +291,39 @@ static void cpt_enable(struct intel_dsi_device *dsi)
 	printk("[LCD]:%s\n",__func__);
 	mdelay(250);
 	intel_dsi->hs=0;
-    dsi_vc_dcs_write_1(intel_dsi, 0, 0X15, 0X55);
-	/*dsi_vc_dcs_write_1(intel_dsi, 0, 0X15, 0XAA);*/
-	/*dsi_vc_dcs_write_1(intel_dsi, 0, 0X16, 0X55);*/
-	dsi_vc_dcs_write_1(intel_dsi, 0, 0X16, ce_status);
+
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd1, ARRAY_SIZE(page_cmd1));*/
+    /*dsi_vc_generic_read(intel_dsi, 0, cabcon_cmd1,1, buf,2);*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, 0);*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, ARRAY_SIZE(page_cmd2));*/
+   /*printk("==jinjt== %s berfore set cabc 0x0E =0x%x,  0x%x  \n",__func__,buf[0],buf[1]); */
+
+   ////dsi_vc_generic_write(intel_dsi, 0, page_cmd1, ARRAY_SIZE(page_cmd1));
+    /*cabcon_cmd1[1]= buf[0]|0x0E;*/
+    /*cabcon_cmd1[1]= 0x0E;*/
+    cabcon_cmd1[1]= ce_status;
+   /*printk("==jinjt== %s berfore2 set cabc 0x0E =0x%x,  0x%x  \n",__func__,buf[0],buf[1]); */
+    dsi_vc_generic_write(intel_dsi, 0, cabcon_cmd1, ARRAY_SIZE(cabcon_cmd1));
+    ////dsi_vc_generic_write(intel_dsi, 0, page_cmd2, 0);
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, ARRAY_SIZE(page_cmd2));*/
+
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd1, ARRAY_SIZE(page_cmd1));*/
+    /*dsi_vc_generic_read(intel_dsi, 0, cabcon_cmd1,1, buf,2);*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, 0);*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, ARRAY_SIZE(page_cmd2));*/
+   /*printk("==jinjt== %s after set cabc reg 0x0E =0x%x ,  0x%x\n",__func__,buf[0],buf[1]); */
+   
+   /*ceon_cmd1[1]=buf[0]|ce_status;*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd1, ARRAY_SIZE(page_cmd1));*/
+    /*dsi_vc_generic_write(intel_dsi, 0, ceon_cmd1, ARRAY_SIZE(ceon_cmd1));*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, 0);*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, ARRAY_SIZE(page_cmd2));*/
+    
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd1, ARRAY_SIZE(page_cmd1));*/
+    /*dsi_vc_generic_read(intel_dsi, 0, cabcon_cmd1,1, buf,2);*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, 0);*/
+    /*dsi_vc_generic_write(intel_dsi, 0, page_cmd2, ARRAY_SIZE(page_cmd2));*/
+   /*printk("==jinjt== %s after set ce reg 0x0E =0x%x ,0x%x\n",__func__,buf[0],buf[1]); */
 
 	cpt_nt51011_panel_device.status = ON;
 }

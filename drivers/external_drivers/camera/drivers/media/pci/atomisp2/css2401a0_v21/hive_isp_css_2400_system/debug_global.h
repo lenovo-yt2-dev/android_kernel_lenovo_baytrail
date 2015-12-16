@@ -41,10 +41,13 @@
 
 #define DEBUG_BUFFER_ISP_DMEM_ADDR       0x0
 
-/* Enable HAS_WATCHDOG_SP_THREAD_DEBUG for additional SP thread and
-   pipe information on watchdog output */
-//#define HAS_WATCHDOG_SP_THREAD_DEBUG
-#undef HAS_WATCHDOG_SP_THREAD_DEBUG
+/*
+ * Enable HAS_WATCHDOG_SP_THREAD_DEBUG for additional SP thread and
+ * pipe information on watchdog output
+ * #undef HAS_WATCHDOG_SP_THREAD_DEBUG
+ * #define HAS_WATCHDOG_SP_THREAD_DEBUG
+ */
+
 
 /*
  * The linear buffer mode will accept data until the first

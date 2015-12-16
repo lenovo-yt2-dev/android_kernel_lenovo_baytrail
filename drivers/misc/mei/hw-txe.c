@@ -987,12 +987,13 @@ irqreturn_t mei_txe_irq_thread_handler(int irq, void *dev_id)
 	}
 	/* Input Ready: Detection if host can write to SeC */
 	if (test_and_clear_bit(TXE_INTR_IN_READY_BIT, &hw->intr_cause))
-		dev->hbuf_is_ready = true;
+		dev->hbuf_is_ready = mei_txe_is_input_ready(dev);
 
 	if (hw->aliveness && dev->hbuf_is_ready) {
 		/* if SeC did not complete reading the written data by host */
 		if (!mei_txe_is_input_ready(dev)) {
 			dev_dbg(&dev->pdev->dev, "got Input Ready Int, but SEC_IPC_INPUT_STATUS_RDY is 0.\n");
+			dev->hbuf_is_ready = false;
 			goto end;
 		}
 

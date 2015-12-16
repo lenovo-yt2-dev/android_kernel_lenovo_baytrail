@@ -138,9 +138,16 @@
 enum sys_state {
 	SYS_STATE_S0I0,
 	SYS_STATE_S0I1,
-	SYS_STATE_LPMP3,
+	SYS_STATE_S0I1_LPMP3,
+	SYS_STATE_S0I1_PSH,
+	SYS_STATE_S0I1_DISP,
+	SYS_STATE_S0I1_LPMP3_PSH,
+	SYS_STATE_S0I1_LPMP3_DISP,
+	SYS_STATE_S0I1_PSH_DISP,
+	SYS_STATE_S0I1_LPMP3_PSH_DISP,
 	SYS_STATE_S0I2,
 	SYS_STATE_S0I3,
+	SYS_STATE_S0I3_PSH_RET,
 	SYS_STATE_S3,
 	SYS_STATE_S5,
 	SYS_STATE_MAX
@@ -171,10 +178,26 @@ enum pmu_ss_state {
 	SS_STATE_D0I3 = 3
 };
 
+enum pmu_mrfl_nc_device_name {
+	GFXSLC = 0,
+	GSDKCK,
+	GRSCD,
+	VED,
+	VEC,
+	DPA,
+	DPB,
+	DPC,
+	VSP,
+	ISP,
+	MIO,
+	HDMIO,
+	GFXSLCLDO
+};
+
 
 struct pmu_ss_states {
-	unsigned long pmu1_states;
-	unsigned long pmu2_states[4];
+	u32 pmu1_states;
+	u32 pmu2_states[4];
 };
 
 struct pci_dev_info {
@@ -189,9 +212,9 @@ struct pci_dev_info {
 };
 
 struct pmu_wake_ss_states {
-	unsigned long wake_enable[2];
-	unsigned long pmu1_wake_states;
-	unsigned long pmu2_wake_states[4];
+	u32 wake_enable[2];
+	u32 pmu1_wake_states;
+	u32 pmu2_wake_states[4];
 };
 
 struct pmu_suspend_config {
@@ -319,6 +342,14 @@ struct mid_pmu_dev {
 	u32 __iomem *emergency_emmc_up_addr;
 	u64 pmu_init_time;
 
+	u32 d0i0_count[MAX_LSS_POSSIBLE];
+	u64 d0i0_prev_time[MAX_LSS_POSSIBLE];
+	u64 d0i0_time[MAX_LSS_POSSIBLE];
+
+	u32 nc_d0i0_count[OSPM_MAX_POWER_ISLANDS];
+	u64 nc_d0i0_time[OSPM_MAX_POWER_ISLANDS];
+	u64 nc_d0i0_prev_time[OSPM_MAX_POWER_ISLANDS];
+
 	int cmd_error_int;
 	int s0ix_possible;
 	int s0ix_entered;
@@ -355,8 +386,6 @@ struct mid_pmu_dev {
 	struct pci_dev *pmu_dev;
 	struct pm_qos_request *nc_restrict_qos;
 
-	spinlock_t nc_ready_lock;
-
 	int s3_hint;
 };
 
@@ -369,8 +398,10 @@ struct platform_pmu_ops {
 	pci_power_t (*pci_choose_state) (int);
 	void (*set_power_state_ops) (int);
 	void (*set_s0ix_complete) (void);
+	void (*set_s0i1_disp_vote) (bool);
 	int (*nc_set_power_state) (int, int, int, int *);
 	bool (*check_nc_sc_status) (void);
+	bool (*is_dev_power_manageable) (struct pci_dev *);
 };
 
 extern char s0ix[5];
@@ -390,7 +421,8 @@ extern int pmu_pci_to_indexes(struct pci_dev *pdev, int *index,
 				int *pmu_num, int *ss_idx, int *ss_pos);
 extern struct mid_pmu_dev *mid_pmu_cxt;
 extern void platform_set_pmu_ops(void);
-extern void pmu_read_sss(struct pmu_ss_states *pm_ssc);
+extern void pmu_read_ssc(struct pmu_ss_states *pm_ss);
+extern void pmu_read_sss(struct pmu_ss_states *pm_ss);
 extern int pmu_issue_interactive_command(struct pmu_ss_states *pm_ssc,
 				bool ioc, bool d3_cold);
 extern int _pmu2_wait_not_busy(void);
@@ -502,4 +534,11 @@ static inline bool nc_device_state(void)
 	return !mid_pmu_cxt->display_off || !mid_pmu_cxt->camera_off;
 }
 
+#ifdef CONFIG_X86_INTEL_OSC_CLK
+extern int ccu_osc_clk_init(void __iomem *ccubase);
+extern int ccu_osc_clk_uninit(void);
+#else
+static inline int ccu_osc_clk_init(void __iomem *ccubase) {return 0; }
+static inline int ccu_osc_clk_uninit(void) {return 0; }
+#endif /* CONFIG_X86_INTEL_OSC_CLK */
 #endif

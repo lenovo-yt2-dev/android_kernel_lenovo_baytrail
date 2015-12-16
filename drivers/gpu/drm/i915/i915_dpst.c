@@ -68,14 +68,15 @@ get_internal_display_resolution(struct drm_device *dev)
 		if (intel_connector && intel_connector->encoder
 			&& (intel_connector->encoder->type == INTEL_OUTPUT_EDP
 			|| intel_connector->encoder->type == INTEL_OUTPUT_DSI)) {
-				encoder = intel_connector->base.encoder;
-				if (encoder != NULL) {
-					pipe = to_intel_crtc(encoder->crtc)->pipe;
-					tmp = I915_READ(PIPESRC(pipe));
-					vdisplay = (tmp & 0xffff) + 1;
-					hdisplay = ((tmp >> 16) & 0xffff) + 1;
-					res = vdisplay * hdisplay;
-				}
+			encoder = intel_connector->base.encoder;
+			if (encoder != NULL) {
+				pipe = to_intel_crtc(encoder->crtc)->pipe;
+				tmp = I915_READ(PIPESRC(pipe));
+				vdisplay = (tmp & 0xffff) + 1;
+				hdisplay = ((tmp >> 16) & 0xffff) + 1;
+				res = vdisplay * hdisplay;
+			}
+
 		}
 	}
 	return res;
@@ -85,20 +86,10 @@ static u32
 i915_dpst_update(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
-	u32 blm_hist_guard, blm_hist_ctl;
+	u32 blm_hist_guard;
 	u32 panel_res = 0, gb_val = 0;
 
-	/* Disable histogram interrupts. It is OK to clear pending interrupts
-	 * and disable interrupts at the same time. */
-	blm_hist_guard = I915_READ(BLC_HIST_GUARD);
-	blm_hist_guard |= HISTOGRAM_EVENT_STATUS; /* clear pending interrupts */
-	blm_hist_guard &= ~HISTOGRAM_INTERRUPT_ENABLE;
-	I915_WRITE(BLC_HIST_GUARD, blm_hist_guard);
-
-	/* Disable histogram logic */
-	blm_hist_ctl = I915_READ(BLC_HIST_CTL);
-	blm_hist_ctl &= ~IE_HISTOGRAM_ENABLE;
-	I915_WRITE(BLC_HIST_CTL, blm_hist_ctl);
+	i915_dpst_disable_hist_interrupt(dev, false);
 
 	/* Get the new resolution and update the histogram registers*/
 	panel_res = get_internal_display_resolution(dev);
@@ -117,7 +108,7 @@ i915_dpst_update(struct drm_device *dev)
 	I915_WRITE(BLC_HIST_GUARD, blm_hist_guard);
 
 	/* Enable the Interrupt */
-	i915_dpst_enable_hist_interrupt(dev);
+	i915_dpst_enable_hist_interrupt(dev, false);
 
 	return panel_res;
 }
@@ -133,12 +124,15 @@ i915_dpst_clear_hist_interrupt(struct drm_device *dev)
 }
 
 int
-i915_dpst_enable_hist_interrupt(struct drm_device *dev)
+i915_dpst_enable_hist_interrupt(struct drm_device *dev, bool reset_adjustment)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 blm_hist_ctl;
 
-	dev_priv->dpst.enabled = true;
+	if (reset_adjustment) {
+		dev_priv->dpst.enabled = true;
+		dev_priv->dpst.blc_adjustment = DPST_MAX_FACTOR;
+	}
 
 	/* Enable histogram logic to collect data */
 	blm_hist_ctl = I915_READ(BLC_HIST_CTL);
@@ -163,13 +157,10 @@ i915_dpst_enable_hist_interrupt(struct drm_device *dev)
 }
 
 int
-i915_dpst_disable_hist_interrupt(struct drm_device *dev)
+i915_dpst_disable_hist_interrupt(struct drm_device *dev, bool reset_adjustment)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 blm_hist_guard, blm_hist_ctl;
-
-	dev_priv->dpst.enabled = false;
-	dev_priv->dpst.blc_adjustment = DPST_MAX_FACTOR;
 
 	/* Disable histogram interrupts. It is OK to clear pending interrupts
 	 * and disable interrupts at the same time. */
@@ -183,9 +174,13 @@ i915_dpst_disable_hist_interrupt(struct drm_device *dev)
 	blm_hist_ctl &= ~IE_HISTOGRAM_ENABLE;
 	I915_WRITE(BLC_HIST_CTL, blm_hist_ctl);
 
+	if (reset_adjustment) {
+		dev_priv->dpst.enabled = false;
+		dev_priv->dpst.blc_adjustment = DPST_MAX_FACTOR;
 	/* Setting blc level to what it would be without dpst adjustment */
-	intel_panel_actually_set_backlight(dev,
+		intel_panel_actually_set_backlight(dev,
 					dev_priv->backlight.level);
+	}
 
 	return 0;
 }
@@ -221,7 +216,6 @@ i915_dpst_apply_luma(struct drm_device *dev,
 	ioctl_data->ie_container.dpst_blc_factor;
 
 	level = i915_dpst_compute_brightness(dev, dev_priv->backlight.level);
-    
 	if (dev_priv->is_mipi)
 		intel_panel_actually_set_mipi_backlight(dev, level);
 	else
@@ -294,6 +288,7 @@ i915_dpst_init(struct drm_device *dev,
 	ioctl_data->init_data.image_res = panel_res;
 
 	dev_priv->dpst.default_res = panel_res;
+	dev_priv->dpst.blc_adjustment = DPST_MAX_FACTOR;
 
 	/* Store info needed to talk to user mode */
 	dev_priv->dpst.task = current;
@@ -306,7 +301,7 @@ i915_dpst_init(struct drm_device *dev,
 	I915_WRITE(BLC_HIST_GUARD, blm_hist_guard);
 
 	/* Enable histogram interrupts */
-	i915_dpst_enable_hist_interrupt(dev);
+	i915_dpst_enable_hist_interrupt(dev, true);
 
 	return 0;
 }
@@ -355,7 +350,7 @@ int i915_dpst_set_default_luma(struct drm_device *dev)
 	blm_hist_ctl &= ~BIN_REGISTER_INDEX_MASK;
 	I915_WRITE(BLC_HIST_CTL, blm_hist_ctl);
 
-	/* Program the image enhancement data passed from user mode. */
+	/* Program the image enhancement data with default values. */
 	for (i = 0; i < DPST_DIET_ENTRY_COUNT; i++) {
 		diet_factor =  0x200;
 		I915_WRITE(BLC_HIST_BIN, diet_factor);
@@ -401,11 +396,11 @@ i915_dpst_context(struct drm_device *dev, void *data,
 	ioctl_data = (struct dpst_initialize_context *) data;
 	switch (ioctl_data->dpst_ioctl_type) {
 	case DPST_ENABLE:
-		ret = i915_dpst_enable_hist_interrupt(dev);
+		ret = i915_dpst_enable_hist_interrupt(dev, true);
 	break;
 
 	case DPST_DISABLE:
-		ret = i915_dpst_disable_hist_interrupt(dev);
+		ret = i915_dpst_disable_hist_interrupt(dev, true);
 	break;
 
 	case DPST_INIT_DATA:

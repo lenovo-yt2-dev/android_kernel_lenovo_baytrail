@@ -38,6 +38,9 @@
 static struct regulator_consumer_supply redhookbay_vprog1_consumer[] = {
 	REGULATOR_SUPPLY("vprog1", "4-0048"), /* lm3554 */
 	REGULATOR_SUPPLY("vprog1", "4-0036"), /* ov8830 */
+	REGULATOR_SUPPLY("vprog1", "4-003C"),
+	REGULATOR_SUPPLY("vprog1", "4-0021"),
+	REGULATOR_SUPPLY("vprog1", "4-001A"),
 	/*
 	 * Begin Scaleht / VV board consumers
 	 *
@@ -60,7 +63,7 @@ static struct regulator_consumer_supply redhookbay_vprog1_consumer[] = {
 
 static struct regulator_init_data redhookbay_vprog1_data = {
 	.constraints = {
-		.min_uV			= 2800000,
+		.min_uV			= 1200000,
 		.max_uV			= 2800000,
 		.apply_uV		= 1,
 		.valid_ops_mask		= REGULATOR_CHANGE_STATUS
@@ -214,6 +217,11 @@ static void __init atom_regulator_victoriabay_init(void)
 /*** Clovertrail SoC specific regulators ***/
 
 static struct regulator_consumer_supply vprog2_consumer[] = {
+	REGULATOR_SUPPLY("vprog2", "4-0048"),
+	REGULATOR_SUPPLY("vprog2", "4-0036"),
+	REGULATOR_SUPPLY("vprog2", "4-003C"),
+	REGULATOR_SUPPLY("vprog2", "4-001A"),
+	REGULATOR_SUPPLY("vprog2", "4-0021"),
 };
 
 static struct regulator_init_data vprog2_data = {
@@ -244,6 +252,42 @@ static struct platform_device vprog2_device = {
 	},
 };
 
+static struct regulator_consumer_supply vemmc1_consumer[] = {
+	REGULATOR_SUPPLY("vemmc1", "4-003C"),
+	REGULATOR_SUPPLY("vemmc1", "4-0036"),
+	REGULATOR_SUPPLY("vemmc1", "4-001A"),
+};
+
+static struct regulator_init_data vemmc1_data = {
+	.constraints = {
+		.min_uV			= 2850000,
+		.max_uV			= 2850000,
+		.apply_uV		= 1,
+		.valid_ops_mask		= REGULATOR_CHANGE_STATUS
+			| REGULATOR_CHANGE_MODE | REGULATOR_CHANGE_VOLTAGE,
+		.valid_modes_mask	= REGULATOR_MODE_NORMAL
+			| REGULATOR_MODE_STANDBY | REGULATOR_MODE_FAST,
+	},
+	.num_consumer_supplies		= ARRAY_SIZE(vemmc1_consumer),
+	.consumer_supplies		= vemmc1_consumer,
+};
+
+static struct intel_pmic_info vemmc1_info = {
+	.pmic_reg   = VEMMC1CNT_ADDR,
+	.init_data  = &vemmc1_data,
+	.table_len  = ARRAY_SIZE(VEMMC1_VSEL_table),
+	.table      = VEMMC1_VSEL_table,
+};
+
+static struct platform_device vemmc1_device = {
+	.name = "intel_regulator",
+	.id = VEMMC1,
+	.dev = {
+		.platform_data = &vemmc1_info,
+	},
+};
+
+/***********VEMMC2 REGUATOR platform data*************/
 static struct regulator_consumer_supply vemmc2_consumer[] = {
 };
 
@@ -296,6 +340,7 @@ static int __init regulator_init(void)
 		atom_regulator_redhookbay_init();
 
 	platform_device_register(&vprog2_device);
+	platform_device_register(&vemmc1_device);
 	platform_device_register(&vemmc2_device);
 
 	return 0;

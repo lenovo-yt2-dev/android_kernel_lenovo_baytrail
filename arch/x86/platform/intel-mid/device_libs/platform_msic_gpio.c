@@ -50,7 +50,9 @@ void __init *msic_gpio_platform_data(void *info)
 		msic_gpio_pdata.gpio0_lv_ctli = 0x58;
 		msic_gpio_pdata.gpio0_hv_ctlo = 0x6D;
 		msic_gpio_pdata.gpio0_hv_ctli = 0x75;
-	} else if (INTEL_MID_BOARD(1, PHONE, MRFL)) {
+	} else if (INTEL_MID_BOARD(1, PHONE, MRFL) ||
+		INTEL_MID_BOARD(1, PHONE, MOFD) ||
+		INTEL_MID_BOARD(1, TABLET, MOFD)) {
 		/* Basincove PMIC GPIO has total 8 GPIO pins,
 		 * GPIO[5:2,0] support 1.8V, GPIO[7:6,1] support 1.8V and 3.3V,
 		 * We group GPIO[5:2] to low voltage and GPIO[7:6] to
@@ -64,13 +66,6 @@ void __init *msic_gpio_platform_data(void *info)
 		msic_gpio_pdata.gpio0_lv_ctli = 0x8E;
 		msic_gpio_pdata.gpio0_hv_ctlo = 0x84;
 		msic_gpio_pdata.gpio0_hv_ctli = 0x94;
-	} else if (INTEL_MID_BOARD(1, PHONE, MOFD)) {
-		msic_gpio_pdata.ngpio_lv = 6;
-		msic_gpio_pdata.ngpio_hv = 2;
-		msic_gpio_pdata.gpio0_lv_ctlo = 0x107E;
-		msic_gpio_pdata.gpio0_lv_ctli = 0x108E;
-		msic_gpio_pdata.gpio0_hv_ctlo = 0x1084;
-		msic_gpio_pdata.gpio0_hv_ctli = 0x1094;
 	}
 
 	msic_gpio_pdata.can_sleep = 1;

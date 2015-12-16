@@ -76,10 +76,8 @@ static struct synaptics_dsx_board_data dsx_board_data = {
  	.gpio_config = synaptics_gpio_setup,
  	.regulator_name = regulator_name,
  	.cap_button_map = &cap_button_map,
-#ifdef SYNAPTICS_SPI_DEVICE
-	.byte_delay_us = DSX_SPI_BYTE_DELAY_US,
-	.block_delay_us = DSX_SPI_BLOCK_DELAY_US,
-#endif
+	//.x_flip = true,
+	//.swap_axes = true,
 };
 
 

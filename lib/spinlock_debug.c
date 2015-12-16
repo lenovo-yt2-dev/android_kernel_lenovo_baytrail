@@ -132,18 +132,20 @@ static void __spin_lock_debug(raw_spinlock_t *lock)
 
 void do_raw_spin_lock(raw_spinlock_t *lock)
 {
-	debug_spin_lock_before(lock);
+	if (unlikely(debug_locks))
+		debug_spin_lock_before(lock);
 	if (unlikely(!arch_spin_trylock(&lock->raw_lock)))
 		__spin_lock_debug(lock);
-	debug_spin_lock_after(lock);
+	if (unlikely(debug_locks))
+		debug_spin_lock_after(lock);
 }
 
 int do_raw_spin_trylock(raw_spinlock_t *lock)
 {
 	int ret = arch_spin_trylock(&lock->raw_lock);
 
-	if (ret)
-		debug_spin_lock_after(lock);
+	if ((ret) && unlikely(debug_locks))
+			debug_spin_lock_after(lock);
 #ifndef CONFIG_SMP
 	/*
 	 * Must not happen on UP:
@@ -155,7 +157,8 @@ int do_raw_spin_trylock(raw_spinlock_t *lock)
 
 void do_raw_spin_unlock(raw_spinlock_t *lock)
 {
-	debug_spin_unlock(lock);
+	if (unlikely(debug_locks))
+		debug_spin_unlock(lock);
 	arch_spin_unlock(&lock->raw_lock);
 }
 

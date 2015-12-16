@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_YNR_TYPES_H
 #define __IA_CSS_YNR_TYPES_H
 
+/** @file
+* CSS-API header file for Noise Reduction (BNR) and YCC Noise Reduction (YNR,CNR).
+*/
+
 /** Configuration used by Bayer Noise Reduction (BNR) and
  *  YCC Noise Reduction (YNR,CNR).
  *

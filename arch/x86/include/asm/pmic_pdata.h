@@ -24,6 +24,7 @@ extern int pmic_set_cc(int);
 extern int pmic_set_cv(int);
 extern int pmic_set_ilimma(int);
 extern int pmic_enable_vbus(bool enable);
+extern int pmic_handle_otgmode(bool enable);
 /* WA for ShadyCove VBUS removal detect issue */
 extern int pmic_handle_low_supply(void);
 

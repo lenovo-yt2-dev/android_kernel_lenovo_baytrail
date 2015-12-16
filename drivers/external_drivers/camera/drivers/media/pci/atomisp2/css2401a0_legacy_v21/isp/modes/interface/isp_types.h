@@ -29,12 +29,6 @@
    without this extra decl. */
 struct ia_css_3a_output;
 
-/* Binary independent types */
-//#include <ia_css_binary.h>
-#include "isp_const.h"
-
-//-------------------
-
 #if defined(__ISP) || defined(__SP)
 struct isp_uds_config {
 	int      hive_dx;
@@ -51,7 +45,7 @@ struct s_isp_gdcac_config {
 
 /* output.hive.c request information */
 typedef enum {
-  output_y_channel, 
+  output_y_channel,
   output_c_channel,
   OUTPUT_NUM_CHANNELS
 } output_channel_type;
@@ -92,6 +86,10 @@ struct s_isp_frames {
 	char *xmem_base_addr_uv;
 	char *xmem_base_addr_u;
 	char *xmem_base_addr_v;
+	/* 2nd output frame */
+	char *xmem_base_addr_second_out_y;
+	char *xmem_base_addr_second_out_u;
+	char *xmem_base_addr_second_out_v;
 	/* input yuv frame */
 	char *xmem_base_addr_y_in;
 	char *xmem_base_addr_u_in;
@@ -100,16 +98,6 @@ struct s_isp_frames {
 	char *xmem_base_addr_raw;
 	/* output raw frame */
 	char *xmem_base_addr_raw_out;
-	/* reference input frame */
-	char *xmem_base_addr_ref_in_y;
-	char *xmem_base_addr_ref_in_uv;
-	/* reference output frame */
-	char *xmem_base_addr_ref_out_y;
-	char *xmem_base_addr_ref_out_uv;
-	/* tnr input frame */
-	char *xmem_base_addr_tnr_in;
-	/* tnr output frame */
-	char *xmem_base_addr_tnr_out;
 	/* viewfinder output (vf_veceven) */
 	char *xmem_base_addr_vfout_y;
 	char *xmem_base_addr_vfout_u;

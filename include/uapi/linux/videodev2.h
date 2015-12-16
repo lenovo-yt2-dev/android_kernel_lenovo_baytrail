@@ -429,6 +429,9 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_SE401      v4l2_fourcc('S', '4', '0', '1') /* se401 janggu compressed rgb */
 #define V4L2_PIX_FMT_S5C_UYVY_JPG v4l2_fourcc('S', '5', 'C', 'I') /* S5C73M3 interleaved UYVY/JPEG */
 
+/* Unusual bus standard formats */
+#define V4L2_PIX_FMT_MIPI_CSI2	v4l2_fourcc('M', 'I', 'C', '2') /* Raw MIPI CSI-2 data. */
+
 /*
  *	F O R M A T   E N U M E R A T I O N
  */
@@ -638,7 +641,6 @@ struct v4l2_plane {
  * @length:	size in bytes of the buffer (NOT its payload) for single-plane
  *		buffers (when type != *_MPLANE); number of elements in the
  *		planes array for multi-plane buffers
- * @input:	input number from which the video data has has been captured
  *
  * Contains data exchanged by application and driver using one of the Streaming
  * I/O methods.

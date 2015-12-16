@@ -452,6 +452,8 @@ static void emmc_panic_notify_add(void)
 	if (!ctx->ipanic_proc_entry[PROC_HEADER_INDEX])
 		pr_err("%s: failed creating proc file\n", __func__);
 	else {
+		proc_set_size(ctx->ipanic_proc_entry[PROC_HEADER_INDEX],
+			      ctx->hdr.log_size);
 		proc_entry_created = 1;
 		pr_info("%s: proc entry created: %s\n", __func__,
 			ctx->ipanic_proc_entry_name[PROC_HEADER_INDEX]);
@@ -511,6 +513,8 @@ static void emmc_panic_notify_add(void)
 			pr_err("%s: failed creating proc file\n",
 				__func__);
 		else {
+			proc_set_size(ctx->ipanic_proc_entry[idx_proc],
+				      ctx->curr.log_length[idx_log]);
 			proc_entry_created = 1;
 			pr_info("%s: proc entry created: %s\n",
 				__func__,
@@ -975,6 +979,9 @@ static int emmc_ipanic(struct notifier_block *this, unsigned long event,
 		emmc_ipanic_write_loginfo(emmc, log);
 		log++;
 	}
+	/* Writeback invalidation to ensure that CPU flush cache into DRAM */
+	asm("cli;wbinvd;sti");
+
 	pr_info("Panic log data written done!\n");
 
 	ipanic_dumper.active = 0;
@@ -1001,10 +1008,16 @@ DEFINE_SIMPLE_ATTRIBUTE(panic_dbg_fops, NULL, panic_dbg_set, "%llu\n");
 
 static int match_dev_panic_part(struct device *dev, const void *data)
 {
-	struct hd_struct *part = dev_to_part(dev);
+	struct hd_struct *part;
 	const char *name = (char *)data;
 
-	return part->info && !strcmp(name, part->info->volname);
+	if (!name || !dev || dev->class != &block_class)
+		return 0;
+
+	part = dev_to_part(dev);
+
+	return part->info && part->info->volname &&
+		!strcmp(name, part->info->volname);
 }
 
 static int emmc_panic_partition_notify(struct notifier_block *nb,

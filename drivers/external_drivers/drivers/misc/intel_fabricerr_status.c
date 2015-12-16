@@ -1066,6 +1066,7 @@ static char *ScuBoot_ErrorTypes[] = {
 	"Kernel WDT expired",
 	"SCU CHAABI watchdog expired",
 	"FabricError xml request reset",
+	"CHAABI WDT expired",
 };
 
 static char *ScuRuntime_ErrorTypes[] = {
@@ -1082,6 +1083,26 @@ static char *ScuRuntime_ErrorTypes[] = {
 	"Invalid KWDT IPC"
 };
 
+static char *ScuFabric_ErrorTypes[] = {
+	"Unknown",				/* 00 */
+	"Unknown",				/* 01 */
+	"Unknown",				/* 02 */
+	"Unknown",				/* 03 */
+	"Unknown",				/* 04 */
+	"Unknown",				/* 05 */
+	"Punit force reset",			/* 06 */
+	"Unknown",				/* 07 */
+	"Unknown",				/* 08 */
+	"Unknown",				/* 09 */
+	"Unsupported command error",		/* 0A */
+	"Address hole error",			/* 0B */
+	"Protection error",			/* 0C */
+	"Memory error assertion detected",	/* 0D */
+	"Request Timeout, Not acccepted",	/* 0E */
+	"Request Timeout, No response",		/* 0F */
+	"Request Timeout, Data not accepted",	/* 10 */
+};
+
 #define BEGIN_MAIN_FABRIC_REGID		16
 #define SC_FABRIC_ARC_I0_REGID		18
 #define SC_FABRIC_PSH_I0_REGID		17
@@ -1094,7 +1115,17 @@ static char *ScuRuntime_ErrorTypes[] = {
 #define END_AUDIO_FABRIC_REGID		38
 #define BEGIN_SEC_FABRIC_REGID		39
 #define END_SEC_FABRIC_REGID		48
-#define END_FABRIC_REGID		49
+#define BEGIN_PM_MAIN_FABRIC_REGID	49
+#define END_PM_MAIN_FABRIC_REGID	59
+#define BEGIN_PM_AUDIO_FABRIC_REGID	60
+#define END_PM_AUDIO_FABRIC_REGID	68
+#define BEGIN_PM_SEC_FABRIC_REGID	69
+#define END_PM_SEC_FABRIC_REGID		76
+#define BEGIN_PM_SC_FABRIC_REGID	77
+#define END_PM_SC_FABRIC_REGID		97
+#define BEGIN_PM_GP_FABRIC_REGID	98
+#define END_PM_GP_FABRIC_REGID		109
+#define END_FABRIC_REGID		110
 
 static char *FabricFlagStatusErrLogDetail_tng[] = {
 	"Main Fabric Flag Status",
@@ -1146,7 +1177,68 @@ static char *FabricFlagStatusErrLogDetail_tng[] = {
 	"IA ERROR LOG Register for the initiator gpf2sdf_i0 in Secondary Fabric @100MHz{sdf}",	/*46*/
 	"IA ERROR LOG Register for the initiator scf2sdf_i0 in Secondary Fabric @100MHz{sdf}",	/*47*/
 	"IA ERROR LOG Register for the initiator adf2sdf_i0 in Secondary Fabric @100MHz{sdf}",	/*48*/
-	""
+	"PM ERROR LOG register mnf_rt in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG register iosf2ocp_t0 in Main Fabric @200MHz{mnf}",			/*50*/
+	"PM ERROR LOG Register usb3_t0 in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG Register ptistm_t0 in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG Register ptistm_t0_regon0 in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG Register ptistm_t2 in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG Register mfth_t0 in Main Fabric @200MHz{mnf}",				/*55*/
+	"PM ERROR LOG Register cha_t0 in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG Register otg_t0 in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG Register runctl_t0 in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG Register UBS3PHY_t0 in Main Fabric @200MHz{mnf}",
+	"PM ERROR LOG Register adf_rt in Audio Fabric @50MHz{adf}",				/*60*/
+	"PM ERROR LOG Register ssp0_t0 in Audio Fabric @50MHz{adf}",
+	"PM ERROR LOG Register ssp1_t0 in Audio Fabric @50MHz{adf}",
+	"PM ERROR LOG Register ssp2_t0 in Audio Fabric @50MHz{adf}",
+	"PM ERROR LOG Register slim1_t0 in Audio Fabric @50MHz{adf}",
+	"PM ERROR LOG Register pifocp_t0 in Audio Fabric @50MHz{adf}",				/*65*/
+	"PM ERROR LOG Register adma0_t0 in Audio Fabric @50MHz{adf}",
+	"PM ERROR LOG Register adma1_t0 in Audio Fabric @50MHz{adf}",
+	"PM ERROR LOG Register mboxram_t0 in Audio Fabric @50MHz{adf}",
+	"PM ERROR LOG Register sdf_rt in Secondary Fabric @100MHz{adf}",
+	"PM ERROR LOG Register sram_t0 in Secondary Fabric @100MHz{adf}",			/*70*/
+	"PM ERROR LOG Register sdio0_t0 in Secondary Fabric @100MHz{adf}",
+	"PM ERROR LOG Register emmc01_t1 in Secondary Fabric @100MHz{adf}",
+	"PM ERROR LOG Register sdio1_t0 in Secondary Fabric @100MHz{adf}",
+	"PM ERROR LOG Register hsi_t0 in Secondary Fabric @100MHz{adf}",
+	"PM ERROR LOG Register mph_t0 in Secondary Fabric @100MHz{adf}",			/*75*/
+	"PM ERROR LOG Register sfth_t0 in Secondary Fabric @100MHz{adf}",
+	"PM ERROR LOG Register scf_rt in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register ilb_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register ipc1_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register ipc2_t0 in SC Fabric @100MHz{adf}",				/*80*/
+	"PM ERROR LOG Register mbb_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register spi4_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register scdma_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register kbd_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register sccb_t0 in SC Fabric @100MHz{adf}",				/*85*/
+	"PM ERROR LOG Register timers_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register pmu_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register arc_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register gpio192_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register i2c0_t0 in SC Fabric @100MHz{adf}",				/*90*/
+	"PM ERROR LOG Register uart_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register ssc_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register pwm_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register psh_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register pcache_t0 in SC Fabric @100MHz{adf}",				/*95*/
+	"PM ERROR LOG Register ii2c89_t0 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register ii2c89_t1 in SC Fabric @100MHz{adf}",
+	"PM ERROR LOG Register gpf_rt in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register spi5_t0 in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register ssp6_t0 in GP Fabric @100MHz{adf}",				/*100*/
+	"PM ERROR LOG Register gpdma_t0 in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register i2c12_t0 in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register i2c12_t1 in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register i2c3_t0 in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register i2c45_t0 in GP Fabric @100MHz{adf}",				/*105*/
+	"PM ERROR LOG Register i2c45_t1 in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register i2c67_t0 in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register ic267_t1 in GP Fabric @100MHz{adf}",
+	"PM ERROR LOG Register ssp3_t0 in GP Fabric @100MHz{adf}",				/*109*/
+	""											/*110*/
 };
 
 #define CLV_BEGIN_MAIN_FABRIC_REGID		16
@@ -1417,6 +1509,27 @@ char *get_element_errorlog_detail_tng(u8 id, u32 *fabric_type)
 			id == SC_FABRIC_PSH_I0_REGID ||
 			id == SC_FABRIC_ARC_I0_REGID)
 		*fabric_type = FAB_ID_SC;
+
+	else if (id >= BEGIN_PM_MAIN_FABRIC_REGID &&
+		 id <= END_PM_MAIN_FABRIC_REGID)
+		*fabric_type = FAB_ID_PM_FULLCHIP;
+
+	else if (id >= BEGIN_PM_AUDIO_FABRIC_REGID &&
+		 id <= END_PM_AUDIO_FABRIC_REGID)
+		*fabric_type = FAB_ID_PM_AUDIO;
+
+	else if (id >= BEGIN_PM_SEC_FABRIC_REGID &&
+		 id <= END_PM_SEC_FABRIC_REGID)
+		*fabric_type = FAB_ID_PM_SECONDARY;
+
+	else if (id >= BEGIN_PM_SC_FABRIC_REGID &&
+		 id <= END_PM_SC_FABRIC_REGID)
+		*fabric_type = FAB_ID_PM_SC;
+
+	else if (id >= BEGIN_PM_GP_FABRIC_REGID &&
+		 id <= END_PM_GP_FABRIC_REGID)
+		*fabric_type = FAB_ID_PM_GP;
+
 	else
 		*fabric_type = FAB_ID_UNKNOWN;
 
@@ -1435,6 +1548,9 @@ char *get_errortype_str(u16 error_type)
 {
 	u16 error = error_type & 0xFF;
 
+	if (!error_type)
+		return "Not set";
+
 	switch(error_type & 0xFF00) {
 
 	case 0xE100 :
@@ -1449,6 +1565,12 @@ char *get_errortype_str(u16 error_type)
 			return ScuRuntime_ErrorTypes[error];
 		return "Unknown";
 
+	case 0xF000 :
+
+		if (error < ARRAY_SIZE(ScuFabric_ErrorTypes))
+			return ScuFabric_ErrorTypes[error];
+		return "Unknown";
+
 	default :
 
 		return "Unknown";
@@ -1459,6 +1581,7 @@ char *get_initiator_id_str(int init_id, u32 fabric_id)
 {
 	switch (fabric_id) {
 
+	case FAB_ID_PM_FULLCHIP:
 	case FAB_ID_FULLCHIP:
 
 		if (init_id > MAX_FULLCHIP_INITID_VAL)
@@ -1466,6 +1589,7 @@ char *get_initiator_id_str(int init_id, u32 fabric_id)
 
 		return init_id_str_fullchip_tng[init_id];
 
+	case FAB_ID_PM_AUDIO:
 	case FAB_ID_AUDIO:
 
 		if (init_id > MAX_AUDIO_INITID_VAL)
@@ -1473,6 +1597,7 @@ char *get_initiator_id_str(int init_id, u32 fabric_id)
 
 		return init_id_str_audio_tng[init_id];
 
+	case FAB_ID_PM_SECONDARY:
 	case FAB_ID_SECONDARY:
 
 		if (init_id > MAX_SECONDARY_INITID_VAL)
@@ -1480,6 +1605,7 @@ char *get_initiator_id_str(int init_id, u32 fabric_id)
 
 		return init_id_str_secondary_tng[init_id];
 
+	case FAB_ID_PM_GP:
 	case FAB_ID_GP:
 
 		if (init_id > MAX_GP_INITID_VAL)
@@ -1487,6 +1613,7 @@ char *get_initiator_id_str(int init_id, u32 fabric_id)
 
 		return init_id_str_gp_tng[init_id];
 
+	case FAB_ID_PM_SC:
 	case FAB_ID_SC:
 
 		if (init_id > MAX_SC_INITID_VAL)

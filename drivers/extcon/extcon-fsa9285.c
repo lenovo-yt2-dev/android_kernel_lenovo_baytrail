@@ -17,15 +17,19 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
  */
-
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/slab.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
+#include <linux/kthread.h>
 #include <linux/err.h>
 #include <linux/device.h>
+#include <linux/printk.h>
+#include <linux/fs.h>
+#include <linux/serial_core.h>
+#include <linux/lnw_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/workqueue.h>
 #include <linux/usb/phy.h>
@@ -37,7 +41,7 @@
 #include <linux/power_supply.h>
 #include <linux/extcon/extcon-fsa9285.h>
 #include <linux/wakelock.h>
-
+#include <linux/proc_fs.h> 
 /* FSA9285 I2C registers */
 #define FSA9285_REG_DEVID		0x01
 #define FSA9285_REG_CTRL		0x02
@@ -91,7 +95,7 @@
 #define DEVTYPE_DCP		(1 << 2)
 #define DEVTYPE_CDP		(1 << 1)
 #define DEVTYPE_SDP		(1 << 0)
-
+#define DEVTYPE_HCP		(1 << 3)
 /*
  * Manual Switch
  * D- [7:5] / D+ [4:2]
@@ -129,6 +133,17 @@
 
 #define MAX_RETRY			3
 
+#define LC8x_SWITCH_SET_MODE (0)
+#define SOC_USB_SWITCH_INT (131)
+int  flag =0; //liulc1
+int  mousetype=0; //liulc1 add
+int fs_ok = 0;
+int lenovo_charger_flag = 0;
+int lenovo_h_charger_kthread_running =0; 
+//extern int console_flag;
+int swmode = 0; 
+static struct file* lenovo_h_charger_uart_file = 0;
+static int saved_loglevel=0; 
 static const char *fsa9285_extcon_cable[] = {
 	FSA9285_EXTCON_SDP,
 	FSA9285_EXTCON_DCP,
@@ -152,12 +167,17 @@ struct fsa9285_chip {
 
 	bool	vbus_drive;
 	bool	a_bus_drop;
-
+	struct delayed_work fsa9285_wrkr; //liulc1
 	struct wake_lock wakelock;
 };
 
 static struct fsa9285_chip *chip_ptr;
 extern void *fsa9285_platform_data(void);
+extern  unsigned int read_vbus(); //liulc1
+//void lenovo_charger_log_on(void);
+static int lenovo_h_charger_uart_config(int baud_level);
+static void lenovo_h_charger_uart_close(void);
+static int lenovo_charger_detection(struct fsa9285_chip *chip);
 
 static int fsa9285_write_reg(struct i2c_client *client,
 		int reg, int value)
@@ -219,18 +239,547 @@ static void fsa9285_vbus_cntl_state(struct usb_phy *phy)
 			"pmic vbus control failed\n");
 }
 
+static void usb_otg(struct fsa9285_chip *chip)
+{
+    struct i2c_client *client = chip->client;
+    int otg_vbus_mask = 1 ; //liulc1
+    atomic_notifier_call_chain(&chip->otg->notifier,USB_EVENT_DRIVE_VBUS, &otg_vbus_mask); //liulc1
+    mdelay(10); //liulc1
+
+    printk("%s, USB-OTG, DP/DN switch to HOST\n", __func__);
+    fsa9285_write_reg(client, 0x2, 0xEC);
+}
+//liulc1  add
+static void usb_plug_out_otg_vbus(struct fsa9285_chip *chip)
+{
+    struct i2c_client *client = chip->client;
+   int otg_vbus_mask = 0 ; //liulc1
+   atomic_notifier_call_chain(&chip->otg->notifier,USB_EVENT_DRIVE_VBUS, &otg_vbus_mask); //liulc1
+   mdelay(10); //liulc1
+
+    fsa9285_write_reg(client, 0x2, 0xF8);
+    fsa9285_write_reg(client, 0x5, 0x7F);
+    fsa9285_write_reg(client, 0x5, 0x00);
+
+    fsa9285_write_reg(client, 0x6, 0x6C); //liulc1 add
+
+}
+
+//liulc1 end
+static void get_id(struct fsa9285_chip *chip)
+{
+    struct i2c_client *client = chip->client;
+    int id;
+    
+    printk("%s\n", __func__);
+    
+    // ADC always ON
+    fsa9285_write_reg(client, 0x7, 0x44); //liulc1 add
+    // ID read
+    id = fsa9285_read_reg(client, 0x3);
+    // ADC normal
+    fsa9285_write_reg(client, 0x7, 0x40); //liulc1 add
+    
+    if(id == 0x10)
+    {
+        usb_otg(chip);
+	flag=1;
+    }
+    
+}
+
+static void charger_detect_retry(struct fsa9285_chip *chip)
+{
+    struct i2c_client *client = chip->client;
+    
+    printk("%s\n", __func__);
+    
+    // interrupt mask
+    fsa9285_write_reg(client, 0x6, 0x7F);
+    // charger re-detection OFF
+    fsa9285_write_reg(client, 0x8, 0x0);
+    // OVP, VBUS, CHG, ID mask off
+    fsa9285_write_reg(client, 0x6, 0x6C); //liulc1 add
+    //charger re-detection ON
+    fsa9285_write_reg(client, 0x8, 0x1);
+}
+
+static void usb_plug_out(struct fsa9285_chip *chip)
+{
+    struct i2c_client *client = chip->client;
+    
+    printk("%s\n", __func__);
+   
+if(swmode==0)  
+{ 
+    fsa9285_write_reg(client, 0x2, 0xF8);
+    fsa9285_write_reg(client, 0x5, 0x7F);
+    fsa9285_write_reg(client, 0x5, 0x00);
+    
+    fsa9285_write_reg(client, 0x6, 0x6C); //liulc1 add
+    if (lenovo_charger_flag == 1)
+    {
+        lnw_gpio_set_alt(57, 1);
+        lnw_gpio_set_alt(61, 1);
+        //lenovo_h_charger_uart_config(115200);
+        //lenovo_charger_log_on();
+        //console_flag = 0;
+        //lenovo_h_charger_uart_close();
+        lenovo_charger_flag = 0;
+	 //cancel_delayed_work_sync(&chip->fsa9285_wrkr); //liulc1
+    }
+
+}
+
+}
+
+static int lenovo_h_charger_uart_config(int baud_level)
+{
+        struct termios settings;
+        mm_segment_t oldfs;
+        printk("%s\n", __func__);
+        struct file* temp=0;
+        lenovo_h_charger_uart_file = filp_open("/dev/ttyS0", O_RDWR|O_NDELAY, 0664); //open file
+        if(lenovo_h_charger_uart_file <= 0)
+        {
+                printk("%s Open /dev/console failed\n", __func__);
+                return -1;
+        }
+        printk("%s Open /dev/ttyS0 sucessed\n", __func__);
+        oldfs = get_fs();
+        set_fs(KERNEL_DS);
+
+        printk("Begin to set baudrate.\n");
+        //set baud test
+
+        lenovo_h_charger_uart_file->f_op->unlocked_ioctl(lenovo_h_charger_uart_file, TCGETS, (unsigned long)&settings);
+        settings.c_cflag &= ~CBAUD;
+        switch(baud_level)
+        {
+                case 300:
+                        settings.c_cflag |= B300;
+                        break;
+                case 600:
+                        settings.c_cflag |= B600;
+                        break;
+                case 0:
+                case 921600:
+                        settings.c_cflag |= B921600;
+                        break;
+                default:
+                        settings.c_cflag |= B115200;
+                        break;
+        }
+
+//	settings.c_cflag &= ~PARENB;
+//	settings.c_cflag &= ~CSTOPB;
+//	settings.c_cflag &= CSIZE;
+//	settings.c_cflag |= CS8;
+        settings.c_lflag &= ~ECHO;
+        settings.c_lflag &= ~ICANON;
+//	settings.c_lflag &= ~ECHOE;
+//	settings.c_lflag &= ~ISIG;
+//	settings.c_oflag &= ~OPOST;
+        lenovo_h_charger_uart_file->f_op->unlocked_ioctl(lenovo_h_charger_uart_file, TCSETS, (unsigned long)&settings);
+        set_fs(oldfs);
+        return 1;
+
+}
+
+static int lenovo_h_charger_uart_write(unsigned char *data, int len)
+{
+        int num;
+        mm_segment_t oldfs;
+        {
+                oldfs = get_fs();
+                set_fs(KERNEL_DS);
+                //write to TX
+                num = lenovo_h_charger_uart_file->f_op->write(lenovo_h_charger_uart_file, data, len, &lenovo_h_charger_uart_file->f_pos);
+                set_fs(oldfs);
+                if(num != len)
+                {
+                        printk("write_byte_test error: len =%d, num = %d", len,num);
+                }
+        }
+
+        return num;
+}
+
+static int lenovo_h_charger_uart_read(unsigned char *data)
+{
+        int len;
+        mm_segment_t oldfs;
+        struct termios settings;
+        {
+                oldfs = get_fs();
+                set_fs(KERNEL_DS);
+                len = lenovo_h_charger_uart_file->f_op->read(lenovo_h_charger_uart_file, data, 1024, &lenovo_h_charger_uart_file->f_pos);
+                set_fs(oldfs);
+        }
+        return len;
+}
+#if 0
+void lenovo_charger_log_on(void)
+{
+	console_flag = 0;
+	return;
+}
+void lenovo_charger_log_off(void)
+{
+	console_flag = 1;
+        return;
+}
+
+#endif
+
+static void lenovo_h_charger_uart_close()
+{
+        if(lenovo_h_charger_uart_file >0)
+        {
+                filp_close(lenovo_h_charger_uart_file, NULL);
+                lenovo_h_charger_uart_file = 0 ;
+        }
+}
+static int lenovo_h_charger_switch(int val,struct fsa9285_chip *chip)
+{
+    struct i2c_client *client = chip->client;
+
+    printk("%s\n", __func__);
+    if (val ==0)
+    {
+	fsa9285_write_reg(client,0x0,0x1);
+	fsa9285_write_reg(client, 0x2, 0xf8);
+    }
+    else
+    {
+	fsa9285_write_reg(client,0x0,0x1);
+	fsa9285_write_reg(client, 0x2, 0xC8);
+    }
+    return 0;
+}
+
+static int lenovo_h_charger_config()
+{
+    printk("%s\n", __func__);
+    return 0;
+}
+
+static int lenovo_h_charger_kthread(void *x)
+{
+    static char *cable;
+    static struct power_supply_cable_props cable_props;
+	lenovo_h_charger_kthread_running =1;
+        while (fs_ok == 0)
+        {
+                msleep(100);
+                printk("waiting for the user space file system......\n");
+        }
+        {
+            if(lenovo_charger_detection(chip_ptr))
+            {
+		/*
+                cable = FSA9285_EXTCON_DCP;
+                cable_props.chrg_evt = POWER_SUPPLY_CHARGER_EVENT_CONNECT;
+                cable_props.chrg_type = POWER_SUPPLY_CHARGER_TYPE_USB_DCP;
+                cable_props.ma = FSA_CHARGE_CUR_DCP;
+                if (!wake_lock_active(&chip_ptr->wakelock))
+                        wake_lock(&chip_ptr->wakelock);
+                atomic_notifier_call_chain(&power_supply_notifier,
+                                        POWER_SUPPLY_CABLE_EVENT, &cable_props);
+		*/
+            }
+        }
+	
+
+	lenovo_h_charger_kthread_running =0;
+    return 1;
+}
+
+static int lenovo_charger_detection(struct fsa9285_chip *chip)
+{
+    int cnt = 0;
+    int i;
+    struct i2c_client *client = chip->client;
+    int devtype =0;
+    printk("%s\n", __func__);
+
+    //Mute the debug infomations
+    //lenovo_charger_log_off(); 
+    //msleep(100);
+    lenovo_h_charger_switch(1,chip); //switch the USB path to MIC-ON
+    if(lenovo_h_charger_uart_config(600)==-1)
+	return 1;
+    mdelay(10);
+            int len = 0;
+            unsigned char buf[1024];
+            int ret = 0;
+            printk("Before ww_debug tx %d cnt=%d\n", len, i);
+            len = lenovo_h_charger_uart_write("SC", 2);
+	    mdelay(50);
+	    lenovo_h_charger_uart_close();
+            lnw_gpio_set_alt(57, 0);
+            lnw_gpio_set_alt(61, 0);
+            gpio_direction_output(57, 1);
+            gpio_direction_output(61, 1);
+	    lenovo_charger_flag =1;
+	    return 1;
+    
+}
+
+static int normal_charger_detection(struct fsa9285_chip *chip)
+{
+    struct i2c_client *client = chip->client;
+    int charger_type;
+    int cdp_det;
+    int devtype;
+    charger_type = fsa9285_read_reg(client, 0x9);
+    mousetype=charger_type; 
+    printk("%s, charger_type=0x%x\n", __func__, charger_type);
+    if(charger_type==0x0)   return 0;
+    if(charger_type == 0x4)
+    {
+        cdp_det = fsa9285_read_reg(client, 0x8);
+        cdp_det = (cdp_det & 0xFD) | 0x2; // read back -> clear bit[1] -> set bit[1] to 1 
+        printk("%s, [W]cdp_det=0x%x\n", __func__, cdp_det);
+        fsa9285_write_reg(client, 0x8, cdp_det);
+        
+        mdelay(100);
+        cdp_det = fsa9285_read_reg(client, 0x8);
+        
+        printk("%s, [R]cdp_det=0x%x\n", __func__, cdp_det);
+        
+        if( (cdp_det & 0x04) == 0x04)
+        {
+            printk("%s, CDP detection\n", __func__);
+	    devtype = DEVTYPE_CDP;
+        }
+        else
+        {
+            printk("%s, SDP detection\n", __func__);
+	    devtype = DEVTYPE_SDP;
+        }
+        // CDP detection OFF
+        cdp_det = fsa9285_read_reg(client, 0x8);
+        cdp_det = (cdp_det & 0xFD); // 0b1111_1101 
+        printk("%s, [W]cdp_det=0x%x\n", __func__, cdp_det);
+        fsa9285_write_reg(client, 0x8, cdp_det);
+        
+        //Switch USB1-ON
+        printk("%s DP/DM switch to USB-OTG-DEVICE\n", __func__);
+	if(swmode!=1)
+        fsa9285_write_reg(client, 0x2, 0xFC);
+    }
+    
+    if (charger_type == 0x1)
+    {
+        printk("%s, DCP detection\n", __func__);
+	devtype = DEVTYPE_DCP;
+	//if (lenovo_charger_detection(chip)!=0)
+	//	devtype = DEVTYPE_DCP;
+	//if (lenovo_h_charger_kthread_running ==0)
+	//	kthread_run(lenovo_h_charger_kthread, NULL, "lenovo_h_charger_kthread");
+	
+	schedule_delayed_work(&chip->fsa9285_wrkr,HZ*0); //liulc1
+    }
+
+    return devtype; 
+}
+
+static int charger_detect(struct fsa9285_chip *chip)
+{
+    struct i2c_client *client = chip->client;
+    int charger_type;
+    
+    charger_type = fsa9285_read_reg(client, 0x9);
+  
+    printk("%s, charger_type=0x%x\n", __func__, charger_type);
+    charger_type = normal_charger_detection(chip);
+ 
+    return charger_type;
+    
+}
+
+
+
+static void ovp_accessory(struct fsa9285_chip *chip)
+{
+
+}
+
+void dcp_plug_out(struct fsa9285_chip *chip)
+{
+    static struct power_supply_cable_props cable_props;
+
+
+    cable_props.ma = 0;
+    cable_props.chrg_evt = POWER_SUPPLY_CHARGER_EVENT_DISCONNECT;
+    cable_props.chrg_type = POWER_SUPPLY_CHARGER_TYPE_USB_DCP;
+
+    usb_plug_out(chip);
+    atomic_notifier_call_chain(&power_supply_notifier,POWER_SUPPLY_CABLE_EVENT, &cable_props);
+
+}
+
 static int fsa9285_detect_dev(struct fsa9285_chip *chip)
 {
-	struct i2c_client *client = chip->client;
-	static bool notify_otg, notify_charger;
-	static char *cable;
-	static struct power_supply_cable_props cable_props;
-	int stat, devtype, ohm_code, cntl, intmask, ret;
-	u8 w_man_sw, w_man_chg_cntl;
-	bool discon_evt = false, drive_vbus = false;
-	int vbus_mask = 0;
-	int usb_switch = 1;
+    struct i2c_client *client = chip->client;
+    static bool notify_otg, notify_charger; 
+    static char *cable;
+    static struct power_supply_cable_props cable_props;
+    int stat, devtype, ohm_code, cntl, intmask, ret;
+    u8 w_man_sw, w_man_chg_cntl;
+    bool discon_evt = false, drive_vbus = false;
+    int vbus_mask = 0;
+    int usb_switch = 1;
+    unsigned int intr_status;
+    unsigned int switch_status;
+    
+    // interrupt status read
+    intr_status = fsa9285_read_reg(client, 0x4);
+    
+    // interrupt clear
+    //fsa9285_write_reg(client, 0x5, intr_status);
+    fsa9285_write_reg(client, 0x5, 0x7f); //liulc1 modify
+    fsa9285_write_reg(client, 0x5, 0);
+    
+    //switch status read
+    switch_status = fsa9285_read_reg(client, 0x1);
+  
+    printk("%s, intr_status=0x%x, switch_status=0x%x \n", __func__, 
+                                                        intr_status, 
+                                                        switch_status);
+    devtype = 0;
 
+
+    if(switch_status == 0xF8)
+    {
+		 /* disconnect event */
+                discon_evt = true;
+                /* usb switch off per nothing attached */
+                usb_switch = 0;
+                cable_props.ma = 0;
+                cable_props.chrg_evt = POWER_SUPPLY_CHARGER_EVENT_DISCONNECT;
+    	 if(flag==1)
+  	 {
+		flag=0;
+		usb_plug_out_otg_vbus(chip);
+	}
+	else
+	{	
+        	usb_plug_out(chip);
+	} 
+   }
+    else if(switch_status == 0xF9)
+    {
+        printk("OVP accessory\n", __func__);
+        ovp_accessory(chip);
+    }
+    else if(switch_status == 0x80)
+    {
+        //Note: Reserve USB_ID pin to PHY, OTG handle device enumerate, LC8x handle USB DP/DM switch
+        usb_otg(chip);
+  	flag=1;
+    }
+    else
+    {
+        printk("%s, charge=0x%x, 0x%x\n", __func__, (switch_status>>3), (switch_status &0x4) );
+        if( (switch_status >> 3) == 0x1F)
+        {
+            if( (switch_status & 0x05) == 0x4) //liulc1 add 
+            {
+                devtype = charger_detect(chip);
+		if(mousetype==0x06)
+               {
+                       mousetype==0;
+                       flag=0;
+                       usb_plug_out_otg_vbus(chip);
+                       return;
+               }
+
+            }
+        }
+    }
+
+
+
+    if (devtype & DEVTYPE_SDP) {
+		dev_info(&chip->client->dev,
+				"SDP cable connecetd\n");
+		/* select Host2 */
+		notify_otg = true;
+		vbus_mask = 1;
+		notify_charger = true;
+	        cable = FSA9285_EXTCON_SDP;
+		cable_props.chrg_evt = POWER_SUPPLY_CHARGER_EVENT_CONNECT;
+		cable_props.chrg_type = POWER_SUPPLY_CHARGER_TYPE_USB_SDP;
+		cable_props.ma = FSA_CHARGE_CUR_SDP;
+	} else if (devtype & DEVTYPE_CDP) {
+		dev_info(&chip->client->dev,
+				"CDP cable connecetd\n");
+		/* select Host2 */
+		notify_otg = true;
+		vbus_mask = 1;
+		notify_charger = true;
+		cable = FSA9285_EXTCON_CDP;
+		cable_props.chrg_evt = POWER_SUPPLY_CHARGER_EVENT_CONNECT;
+		cable_props.chrg_type = POWER_SUPPLY_CHARGER_TYPE_USB_CDP;
+		cable_props.ma = FSA_CHARGE_CUR_CDP;
+	} else if (devtype & DEVTYPE_DCP) {
+		dev_info(&chip->client->dev,
+				"DCP cable connecetd\n");
+		notify_charger = true;
+		cable = FSA9285_EXTCON_DCP;
+		cable_props.chrg_evt = POWER_SUPPLY_CHARGER_EVENT_CONNECT;
+		cable_props.chrg_type = POWER_SUPPLY_CHARGER_TYPE_USB_DCP;
+		cable_props.ma = FSA_CHARGE_CUR_DCP;
+		if (!wake_lock_active(&chip->wakelock))
+			wake_lock(&chip->wakelock);
+	} else if (devtype & DEVTYPE_HCP){
+                dev_info(&chip->client->dev,
+                              "HCP cable connecetd\n");
+                notify_charger = true;
+                cable = FSA9285_EXTCON_DCP;
+                cable_props.chrg_evt = POWER_SUPPLY_CHARGER_EVENT_CONNECT;
+                cable_props.chrg_type = POWER_SUPPLY_CHARGER_TYPE_USB_HCP;
+                cable_props.ma = FSA_CHARGE_CUR_DCP;
+                if (!wake_lock_active(&chip->wakelock))
+                        wake_lock(&chip->wakelock);
+
+	}
+
+        printk("%s, discon_evt=%d, notify_otg=%d, notify_charger=%d, vbus_mask=%d\n", 
+                                                                   __func__, 
+                                                                   discon_evt, 
+                                                                   notify_otg, 
+                                                                   notify_charger,
+                                                                   vbus_mask);
+    
+    if (discon_evt) {
+		if (notify_otg) {
+			atomic_notifier_call_chain(&chip->otg->notifier,
+						USB_EVENT_VBUS, &vbus_mask);
+			notify_otg = false;
+		}
+		if (notify_charger) {
+			atomic_notifier_call_chain(&power_supply_notifier,
+					POWER_SUPPLY_CABLE_EVENT, &cable_props);
+			notify_charger = false;
+			cable = NULL;
+		}
+		if (wake_lock_active(&chip->wakelock))
+			wake_unlock(&chip->wakelock);
+	} else {
+		if (notify_otg)
+			atomic_notifier_call_chain(&chip->otg->notifier,
+						USB_EVENT_VBUS, &vbus_mask);
+		if (notify_charger) {
+			atomic_notifier_call_chain(&power_supply_notifier,
+					POWER_SUPPLY_CABLE_EVENT, &cable_props);
+		}
+	}
+
+ 
+#if 0
 	/* read status registers */
 	ret = fsa9285_read_reg(client, FSA9285_REG_CTRL);
 	if (ret < 0)
@@ -441,6 +990,7 @@ static int fsa9285_detect_dev(struct fsa9285_chip *chip)
 					POWER_SUPPLY_CABLE_EVENT, &cable_props);
 		}
 	}
+#endif 
 
 	return 0;
 
@@ -454,25 +1004,39 @@ static irqreturn_t fsa9285_irq_handler(int irq, void *data)
 	struct fsa9285_chip *chip = data;
 	struct i2c_client *client = chip->client;
 	int ret;
-
+        int intr_status;
+    
+#if 1
 	pm_runtime_get_sync(&chip->client->dev);
+	
+        /* clear interrupt */
+	//ret = fsa9285_read_reg(client, FSA9285_REG_INTR);
+        printk("%s\n", __func__);
+        // interrupt factor: 0x4H
+        intr_status = fsa9285_read_reg(client, 0x4);
+    
+        if(intr_status == 0)
+        {
+            printk("%s, false alarm\n", __func__);
+            goto isr_ret;
+        }
+        else
+        {
+            printk("%s intr_status=0x%x\n", __func__, intr_status);
+        }
 
-	/* clear interrupt */
-	ret = fsa9285_read_reg(client, FSA9285_REG_INTR);
-	if (ret <= 0) {
-		dev_info(&client->dev, "invalid intr:%x\n", ret);
-		goto isr_ret;
-	} else
-		dev_info(&client->dev, "clear intr:%x\n", ret);
-
-	mdelay(10);
+	//mdelay(10);
+    
 	/* device detection */
 	ret = fsa9285_detect_dev(chip);
+    
 	if (ret < 0)
 		dev_err(&chip->client->dev,
 				"fsa9285 detecting devices failed:%d\n", ret);
 isr_ret:
 	pm_runtime_put_sync(&chip->client->dev);
+#endif 
+
 	return IRQ_HANDLED;
 }
 
@@ -481,72 +1045,38 @@ static int fsa9285_irq_init(struct fsa9285_chip *chip)
 	struct i2c_client *client = chip->client;
 	int ret, gpio_num, cntl, man_sw, man_chg_cntl;
 	struct acpi_gpio_info gpio_info;
+	int irq_gpio;
+	int irq;
+	int intr_status;
 
-	/* clear interrupt */
-	ret = fsa9285_read_reg(client, FSA9285_REG_INTR);
-	if (ret < 0)
-		goto irq_i2c_failed;
+	fsa9285_write_reg(client, 0x0, 0x01);
+        fsa9285_write_reg(client, 0x2, 0xF8);
+	fsa9285_write_reg(client, 0x10, 0x0); //liulc1 add
+        mdelay(100);
 
-	/* Mask unused interrupts */
-	ret = fsa9285_write_reg(client, FSA9285_REG_INTR_MASK, 0xFF &
-		~(INTR_OHM_CHANGE | INTR_BC12_DONE | INTR_VBUS_CHANGE));
-	if (ret < 0)
-		goto irq_i2c_failed;
+    	fsa9285_write_reg(client, 0x5, 0x7F);
+	fsa9285_write_reg(client, 0x5, 0x0);
+	fsa9285_write_reg(client, 0x6, 0x6C); //liulc1 add
+	
+    // interrupt factor: 0x4H
+    intr_status = fsa9285_read_reg(client, 0x4);
 
-	/*
-	 * unmask INT line to SOC and
-	 * also enable manual switching
-	 */
-	ret = fsa9285_read_reg(client, FSA9285_REG_CTRL);
-	if (ret < 0)
-		goto irq_i2c_failed;
-	else
-		cntl = ret;
-	cntl = (cntl | CTRL_EM_MAN_SW) & ~(CTRL_INT_MASK | CTRL_EN_DCD_TOUT);
-	ret = fsa9285_write_reg(client, FSA9285_REG_CTRL, cntl);
-	if (ret < 0)
-		goto irq_i2c_failed;
-	chip->cntl = cntl;
+	printk("%s, clear and enable interrupt, intr_status=0x%x\n", __func__, intr_status);
 
-	/* select the switch */
-	ret = fsa9285_read_reg(client, FSA9285_REG_MAN_SW);
-	if (ret < 0)
-		goto irq_i2c_failed;
-	else
-		man_sw = ret;
-	/* select HOST1 by default */
-	ret = fsa9285_write_reg(client, FSA9285_REG_MAN_SW,
-				(man_sw & 0x3) | MAN_SW_DPDM_HOST1);
-	if (ret < 0)
-		goto irq_i2c_failed;
-	chip->man_sw = man_sw;
-
-	/* get charge control setting */
-	ret = fsa9285_read_reg(client, FSA9285_REG_MAN_CHGCTRL);
-	if (ret < 0)
-		goto irq_i2c_failed;
-	else
-		man_chg_cntl = ret;
-	chip->man_chg_cntl = man_chg_cntl;
-
-	/* get kernel GPIO number */
-	gpio_num = acpi_get_gpio_by_index(&client->dev, 0, &gpio_info);
-	/* get irq number */
-	chip->client->irq = gpio_to_irq(gpio_num);
-	if (client->irq) {
-		ret = request_threaded_irq(client->irq, NULL,
+	irq_gpio = SOC_USB_SWITCH_INT; 
+	irq = gpio_to_irq(irq_gpio);
+	client->irq = irq ;  //liulc1
+	ret = request_threaded_irq(irq, NULL,
 				fsa9285_irq_handler,
-				IRQF_TRIGGER_LOW | IRQF_ONESHOT,
-				"fsa9285", chip);
-		if (ret) {
+				IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+				"lc8260204", chip);
+
+	if (ret) {
 			dev_err(&client->dev, "failed to reqeust IRQ\n");
 			return ret;
-		}
-		enable_irq_wake(client->irq);
-	} else {
-		dev_err(&client->dev, "IRQ not set\n");
-		return -EINVAL;
 	}
+	
+	enable_irq_wake(client->irq);
 
 	return 0;
 
@@ -554,6 +1084,152 @@ irq_i2c_failed:
 	dev_err(&chip->client->dev, "i2c read failed:%d\n", ret);
 	return ret;
 }
+//liulc1  add for  proc
+
+
+static ssize_t
+read_proc(struct file *file, char __user *buf,
+                  size_t size, loff_t *ppos)
+{     
+         *ppos=1;
+       printk("%d\n",size);
+	size = 1 ;
+	//*buf = '1';
+	copy_to_user(buf,"1",1);
+	printk("liulc1 enable  UART3  mode OK\n");
+	return size;
+}
+
+static ssize_t
+write_proc(struct file *file, const char __user * buffer,
+                   size_t count, loff_t *ppos)
+{
+        struct fsa9285_chip *chip = PDE_DATA(file_inode(file));
+        struct i2c_client *client = chip->client;
+
+        if(*buffer=='1')
+	{
+	   swmode = 1;
+	   fsa9285_write_reg(client,0x0,0x1);
+	   fsa9285_write_reg(client, 0x2, 0xC8);
+           printk("liulc1 enable  UART3  mode\n");
+	}
+	else if(*buffer=='0')
+	{  
+	   swmode = 0;
+	   fsa9285_write_reg(client, 0x2, 0xFC);
+           printk("liulc1 enable  USB1  mode\n");
+	}
+        else if (*buffer =='3')
+        {
+                printk("FS OK\n");
+                fs_ok = 1;
+        }
+
+
+    
+        return count;
+}
+
+static const struct file_operations fops = {
+        //.read = read_proc,
+        .write = write_proc,
+};
+
+
+
+//liulc1 end
+
+
+#if 1
+
+static void fsa9285_detection_worker(struct work_struct *work)
+{
+        struct fsa9285_chip *chip =
+            container_of(work, struct  fsa9285_chip, fsa9285_wrkr.work);
+       struct i2c_client *client = chip->client;
+       int i=0,ch;
+      unsigned int sw_status;
+       lenovo_charger_flag =1;
+       if(lenovo_h_charger_kthread_running==1)
+               return;
+       else
+               lenovo_h_charger_kthread_running=1;
+
+       if(fs_ok == 0)
+         {
+               lenovo_h_charger_kthread_running=0;
+                printk("waiting for the user space file system......\n");
+               schedule_delayed_work(&chip->fsa9285_wrkr,HZ*1);
+               return ;
+         }
+
+
+       if(read_vbus()<10500)
+       {
+               while(i<5)
+               {
+                       i++;
+                       lnw_gpio_set_alt(57, 1);
+                       lnw_gpio_set_alt(61, 1);
+                       mdelay(10);
+                       lenovo_h_charger_switch(1,chip); //switch the USB path to MIC-ON
+                       if(lenovo_h_charger_uart_config(600)==-1)
+                       {
+				lenovo_h_charger_kthread_running=0;  
+			        return;
+			}
+                       mdelay(10);
+		
+		        ch = fsa9285_read_reg(client, 0x08); //liulc1 add
+			fsa9285_write_reg(client, 0x8, (ch & 0xfe)); //liulc1 add 
+                       int len = 0;
+                       len = lenovo_h_charger_uart_write("SC", 2);
+                       printk("Before ww_debug tx %d len=%d\n", len, i);
+                       mdelay(100);
+
+                       lenovo_h_charger_uart_close();
+                       lnw_gpio_set_alt(57, 0);
+                       lnw_gpio_set_alt(61, 0);
+                       gpio_direction_output(57, 1);
+                       gpio_direction_output(61, 1);
+                       msleep(1000);
+			ch = fsa9285_read_reg(client, 0x08); //liulc1 add
+                        fsa9285_write_reg(client, 0x8, (ch | 0x01)); //liulc1 add
+			ch=read_vbus();
+			if(ch < 4000)
+			 {
+				lenovo_h_charger_kthread_running=0;
+				dcp_plug_out(chip);
+                                return;				
+
+			 }
+                       if(ch > 10500)
+                               break;
+		       sw_status=fsa9285_read_reg(client, 0x01);
+                       if(sw_status==0xf8)
+			{
+				lenovo_h_charger_kthread_running=0;
+                                lenovo_h_charger_switch(0,chip); //switch the USB path to MIC-ON
+				return;
+			}
+               }
+
+               lenovo_h_charger_kthread_running=0;
+               //schedule_delayed_work(&chip->fsa9285_wrkr,HZ*60);
+       }
+       else
+       {
+               printk("==liulc1===switch to 12V  OK\n");
+               lenovo_h_charger_kthread_running=0;
+               //schedule_delayed_work(&chip->fsa9285_wrkr,HZ*300);
+       }
+
+}
+
+
+#endif
+
 
 static int fsa9285_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
@@ -562,22 +1238,20 @@ static int fsa9285_probe(struct i2c_client *client,
 	struct device *dev = &client->dev;
 	struct fsa9285_chip *chip;
 	int ret = 0;
+	int irq_gpio = 0;
+	struct proc_dir_entry *entry; 
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
 
-	ret = fsa9285_read_reg(client, FSA9285_REG_DEVID);
-	if (ret < 0 || ret != DEVID_VALUE) {
-		dev_err(&client->dev,
-			"fsa chip ID check failed:%d\n", ret);
-		return -ENODEV;
-	}
-
+	ret = fsa9285_read_reg(client, LC8x_SWITCH_SET_MODE);
+        printk("%s, SWITCH_SET_MODE=0x%x\n", __func__, ret);
 
 	chip = kzalloc(sizeof(struct fsa9285_chip), GFP_KERNEL);
+
 	if (!chip) {
-		dev_err(&client->dev, "failed to allocate driver data\n");
-		return -ENOMEM;
+	    dev_err(&client->dev, "failed to allocate driver data\n");
+	    return -ENOMEM;
 	}
 
 	chip->client = client;
@@ -588,15 +1262,19 @@ static int fsa9285_probe(struct i2c_client *client,
 
 	/* register with extcon */
 	chip->edev = kzalloc(sizeof(struct extcon_dev), GFP_KERNEL);
+
 	if (!chip->edev) {
 		dev_err(&client->dev, "mem alloc failed\n");
 		ret = -ENOMEM;
 		goto extcon_mem_failed;
 	}
+ 
 	chip->edev->name = "fsa9285";
 	chip->edev->supported_cable = fsa9285_extcon_cable;
+#if 1
 	ret = extcon_dev_register(chip->edev, &client->dev);
-	if (ret) {
+	
+        if (ret) {
 		dev_err(&client->dev, "extcon registration failed!!\n");
 		goto extcon_reg_failed;
 	}
@@ -607,31 +1285,42 @@ static int fsa9285_probe(struct i2c_client *client,
 		dev_warn(&client->dev, "Failed to get otg transceiver!!\n");
 		goto otg_reg_failed;
 	}
-	chip->otg->a_bus_drop = fsa9285_vbus_cntl_state;
-
+#endif 	
+        //chip->otg->a_bus_drop = fsa9285_vbus_cntl_state;
+	INIT_DELAYED_WORK(&chip->fsa9285_wrkr, fsa9285_detection_worker);  //liulc1 
 	ret = fsa9285_irq_init(chip);
+    
+        get_id(chip);
+        charger_detect_retry(chip);
+    
 	if (ret)
-		goto intr_reg_failed;
+	    goto intr_reg_failed;
 
 	wake_lock_init(&chip->wakelock, WAKE_LOCK_SUSPEND,
 						"fsa_charger_wakelock");
 	/* device detection */
-	ret = fsa9285_detect_dev(chip);
+        ret = fsa9285_detect_dev(chip);
+    
 	if (ret < 0)
 		dev_warn(&client->dev, "probe: detection failed\n");
 
 	/* Init Runtime PM State */
 	pm_runtime_put_noidle(&chip->client->dev);
 	pm_schedule_suspend(&chip->client->dev, MSEC_PER_SEC);
-
+//liulc1  add 
+	entry = proc_create_data("driver/switch", S_IWUGO, NULL, &fops, chip);
+        if (!entry) {
+                printk("unable to create /proc entry-liulc2\n");
+        }	
+//liulc1 end
 	return 0;
 
 intr_reg_failed:
 	if (client->irq)
 		free_irq(client->irq, chip);
 /* WA for FFRD8 */
-	if (chip->pdata->mux_gpio != -1)
-		gpio_free(chip->pdata->mux_gpio);
+//	if (chip->pdata->mux_gpio != -1)
+//		gpio_free(chip->pdata->mux_gpio);
 /* gpio_req_failed: */
 	usb_put_phy(chip->otg);
 otg_reg_failed:
@@ -640,6 +1329,7 @@ extcon_reg_failed:
 	kfree(chip->edev);
 extcon_mem_failed:
 	kfree(chip);
+
 	return ret;
 }
 
@@ -718,24 +1408,24 @@ static const struct dev_pm_ops fsa9285_pm_ops = {
 };
 
 static const struct i2c_device_id fsa9285_id[] = {
-	{"fsa9285", 0},
-	{"SFSA9285", 0},
+	{"lc824206", 0},
+//	{"SFSA9285", 0},
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, fsa9285_id);
 
 static const struct acpi_device_id acpi_fsa9285_id[] = {
-	{"SFSA9285", 0},
+//	{"SFSA9285", 0},
 	{}
 };
 MODULE_DEVICE_TABLE(acpi, acpi_fsa9285_id);
 
 static struct i2c_driver fsa9285_i2c_driver = {
 	.driver = {
-		.name = "fsa9285",
+		.name = "lc824206",
 		.owner	= THIS_MODULE,
 		.pm	= &fsa9285_pm_ops,
-		.acpi_match_table = ACPI_PTR(acpi_fsa9285_id),
+		//.acpi_match_table = ACPI_PTR(acpi_fsa9285_id),
 	},
 	.probe = fsa9285_probe,
 	.remove = fsa9285_remove,
@@ -746,17 +1436,69 @@ static struct i2c_driver fsa9285_i2c_driver = {
 /*
  * Module stuff
  */
-
-static int __init fsa9285_extcon_init(void)
+static int __init fsa9285_extcon_early_init(void)
 {
-	int ret = i2c_add_driver(&fsa9285_i2c_driver);
-	if (ret)
-		printk(KERN_ERR "Unable to register ULPMC i2c driver\n");
+    int i2c_busnum = 3;
+    struct i2c_board_info i2c_info;
+    void *pdata = NULL;
+    int ret;
 
-	return ret;
+    memset(&i2c_info, 0, sizeof(i2c_info));
+    strlcpy(i2c_info.type, "lc824206", sizeof("lc824206"));
+
+    i2c_info.addr = 0x48;
+
+    pr_info("%s, I2C bus = %d, name = %16.16s, irq = 0x%2x, addr = 0x%x\n",
+                __func__, 
+                i2c_busnum,
+                i2c_info.type,
+                i2c_info.irq,
+                i2c_info.addr);
+
+    ret = i2c_register_board_info(i2c_busnum, &i2c_info, 1);
+
+    printk("%s,ret = %d\n" ,__func__,ret );
+
+    return ret;
 }
-late_initcall(fsa9285_extcon_init);
 
+static int __init fsa9285_extcon_late_init(void)
+{
+    int i2c_busnum = 3;
+    struct i2c_board_info i2c_info;
+    void *pdata = NULL;
+
+    printk("-%s\n", __func__);
+    
+    int ret = i2c_add_driver(&fsa9285_i2c_driver);
+
+    if (ret)
+	printk(KERN_ERR "Unable to register ULPMC i2c driver\n");
+
+#if 0    
+    memset(&i2c_info, 0, sizeof(i2c_info));
+    strlcpy(i2c_info.type, "lc824206", sizeof("lc824206"));
+
+    i2c_info.addr = 0x48;
+
+    pr_info("I2C bus = %d, name = %16.16s, irq = 0x%2x, addr = 0x%x\n",
+                i2c_busnum,
+                i2c_info.type,
+                i2c_info.irq,
+                i2c_info.addr);
+
+    i2c_register_board_info(i2c_busnum, &i2c_info, 1);
+
+#endif
+    printk("-%s\n", __func__);
+ 
+    return ret;
+
+}
+
+fs_initcall(fsa9285_extcon_early_init);
+late_initcall(fsa9285_extcon_late_init);
+//module_init(fsa9285_extcon_init);
 static void __exit fsa9285_extcon_exit(void)
 {
 	i2c_del_driver(&fsa9285_i2c_driver);

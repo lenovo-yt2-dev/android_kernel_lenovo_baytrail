@@ -52,40 +52,45 @@ struct atomisp_dvs2_statistics32 {
 };
 
 struct atomisp_dis_statistics32 {
-#ifdef CSS20
 	struct atomisp_dvs2_statistics32 dvs2_stat;
 	uint32_t exp_id;
-#else /* CSS20 */
-	struct atomisp_grid_info grid_info;
-	compat_uptr_t vertical_projections;
-	compat_uptr_t horizontal_projections;
-#endif
 };
 
 struct atomisp_dis_coefficients32 {
-#ifdef CSS20
 	struct atomisp_dvs_grid_info grid_info;
 	struct atomisp_dvs2_coef_types32 hor_coefs;
 	struct atomisp_dvs2_coef_types32 ver_coefs;
-#else /* CSS20 */
-	struct atomisp_grid_info grid_info;
-	compat_uptr_t vertical_coefficients;
-	compat_uptr_t horizontal_coefficients;
-#endif /* CSS20 */
 };
 
 struct atomisp_3a_statistics32 {
 	struct atomisp_grid_info  grid_info;
 	compat_uptr_t data;
-#ifdef CSS20
 	compat_uptr_t rgby_data;
-#endif
+	uint32_t exp_id;
+};
+
+struct atomisp_metadata_with_type32 {
+	/* to specify which type of metadata to get */
+	enum atomisp_metadata_type type;
+	compat_uptr_t data;
+	uint32_t width;
+	uint32_t height;
+	uint32_t stride; /* in bytes */
+	uint32_t exp_id; /* exposure ID */
+	compat_uptr_t effective_width;
+};
+
+struct atomisp_metadata32 {
+	compat_uptr_t data;
+	uint32_t width;
+	uint32_t height;
+	uint32_t stride;
+	uint32_t exp_id;
+	compat_uptr_t effective_width;
 };
 
 struct atomisp_morph_table32 {
-#ifdef CSS20
 	unsigned int enabled;
-#endif
 	unsigned int height;
 	unsigned int width;	/* number of valid elements per line */
 	compat_uptr_t coordinates_x[ATOMISP_MORPH_TABLE_NUM_PLANES];
@@ -157,12 +162,7 @@ struct v4l2_private_int_data32 {
 };
 
 struct atomisp_shading_table32 {
-#ifdef CSS20
 	__u32 enable;
-#else
-	__u8 flags;
-	__u8 enable;
-#endif
 	__u32 sensor_width;
 	__u32 sensor_height;
 	__u32 width;
@@ -187,7 +187,6 @@ struct atomisp_acc_s_mapped_arg32 {
 	compat_ulong_t css_ptr;
 };
 
-#ifdef CSS20
 struct atomisp_parameters32 {
 	compat_uptr_t wb_config;  /* White Balance config */
 	compat_uptr_t cc_config;  /* Color Correction config */
@@ -195,6 +194,7 @@ struct atomisp_parameters32 {
 	compat_uptr_t ecd_config; /* Eigen Color Demosaicing */
 	compat_uptr_t ynr_config; /* Y(Luma) Noise Reduction */
 	compat_uptr_t fc_config;  /* Fringe Control */
+	compat_uptr_t formats_config;  /* Formats Control */
 	compat_uptr_t cnr_config; /* Chroma Noise Reduction */
 	compat_uptr_t macc_config;  /* MACC */
 	compat_uptr_t ctc_config; /* Chroma Tone Control */
@@ -230,28 +230,39 @@ struct atomisp_parameters32 {
 	compat_uptr_t dvs2_coefs; /* DVS 2.0 coefficients */
 	compat_uptr_t capture_config;
 	compat_uptr_t anr_thres;
+
+	compat_uptr_t	lin_2500_config;       /* Skylake: Linearization config */
+	compat_uptr_t	obgrid_2500_config;    /* Skylake: OBGRID config */
+	compat_uptr_t	bnr_2500_config;       /* Skylake: bayer denoise config */
+	compat_uptr_t	shd_2500_config;       /* Skylake: shading config */
+	compat_uptr_t	dm_2500_config;        /* Skylake: demosaic config */
+	compat_uptr_t	rgbpp_2500_config;     /* Skylake: RGBPP config */
+	compat_uptr_t	dvs_stat_2500_config;  /* Skylake: DVS STAT config */
+	compat_uptr_t	lace_stat_2500_config; /* Skylake: LACE STAT config */
+	compat_uptr_t	yuvp1_2500_config;     /* Skylake: yuvp1 config */
+	compat_uptr_t	yuvp2_2500_config;     /* Skylake: yuvp2 config */
+	compat_uptr_t	tnr_2500_config;       /* Skylake: TNR config */
+	compat_uptr_t	dpc_2500_config;       /* Skylake: DPC config */
+	compat_uptr_t	awb_2500_config;       /* Skylake: auto white balance config */
+	compat_uptr_t	awb_fr_2500_config;    /* Skylake: auto white balance filter response config */
+	compat_uptr_t	anr_2500_config;       /* Skylake: ANR config */
+	compat_uptr_t	af_2500_config;        /* Skylake: auto focus config */
+	compat_uptr_t	ae_2500_config;        /* Skylake: auto exposure config */
+	compat_uptr_t	bds_2500_config;       /* Skylake: bayer downscaler config */
+	compat_uptr_t	dvs_2500_config;       /* Skylake: digital video stabilization config */
+	compat_uptr_t	res_mgr_2500_config;
+
+	/*
+	 * Output frame pointer the config is to be applied to (optional),
+	 * set to NULL to make this config is applied as global.
+	 */
+	compat_uptr_t	output_frame;
+	/*
+	 * Unique ID to track which config was actually applied to a particular
+	 * frame, driver will send this id back with output frame together.
+	 */
+	uint32_t	isp_config_id;
 };
-#else /* CSS20 */
-struct atomisp_parameters32 {
-	compat_uptr_t wb_config;
-	compat_uptr_t cc_config;
-	compat_uptr_t ob_config;
-	compat_uptr_t de_config;
-	compat_uptr_t ce_config;
-	compat_uptr_t dp_config;
-	compat_uptr_t nr_config;
-	compat_uptr_t ee_config;
-	compat_uptr_t tnr_config;
-	compat_uptr_t shading_table;
-	compat_uptr_t morph_table;
-	compat_uptr_t macc_config;
-	compat_uptr_t gamma_table;
-	compat_uptr_t ctc_table;
-	compat_uptr_t xnr_config;
-	compat_uptr_t gc_config;
-	compat_uptr_t a3a_config;
-};
-#endif /* CSS20 */
 
 struct atomisp_acc_fw_load_to_pipe32 {
 	__u32 flags;			/* Flags, see below for valid values */
@@ -274,69 +285,83 @@ struct atomisp_dvs_6axis_config32 {
 	compat_uptr_t ycoords_uv;
 };
 
+struct atomisp_sensor_ae_bracketing_lut32 {
+	compat_uptr_t lut;
+	unsigned int lut_size;
+};
+
 #define ATOMISP_IOC_G_HISTOGRAM32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 6, struct atomisp_histogram32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 3, struct atomisp_histogram32)
 #define ATOMISP_IOC_S_HISTOGRAM32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 7, struct atomisp_histogram32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 3, struct atomisp_histogram32)
 
 #define ATOMISP_IOC_G_DIS_STAT32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 14, struct atomisp_dis_statistics32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 6, struct atomisp_dis_statistics32)
 #define ATOMISP_IOC_S_DIS_COEFS32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 15, struct atomisp_dis_coefficients32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 6, struct atomisp_dis_coefficients32)
 
 #define ATOMISP_IOC_S_DIS_VECTOR32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 16, struct atomisp_dvs_6axis_config32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 6, struct atomisp_dvs_6axis_config32)
 
 #define ATOMISP_IOC_G_3A_STAT32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 17, struct atomisp_3a_statistics32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 7, struct atomisp_3a_statistics32)
 
 #define ATOMISP_IOC_G_ISP_GDC_TAB32 \
-	_IOR('v', BASE_VIDIOC_PRIVATE + 22, struct atomisp_morph_table32)
+	_IOR('v', BASE_VIDIOC_PRIVATE + 10, struct atomisp_morph_table32)
 #define ATOMISP_IOC_S_ISP_GDC_TAB32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 23, struct atomisp_morph_table32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 10, struct atomisp_morph_table32)
 
 #define ATOMISP_IOC_S_ISP_FPN_TABLE32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 35, struct v4l2_framebuffer32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 17, struct v4l2_framebuffer32)
 
 #define ATOMISP_IOC_G_ISP_OVERLAY32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 36, struct atomisp_overlay32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 18, struct atomisp_overlay32)
 #define ATOMISP_IOC_S_ISP_OVERLAY32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 37, struct atomisp_overlay32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 18, struct atomisp_overlay32)
 
 #define ATOMISP_IOC_G_SENSOR_CALIBRATION_GROUP32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 41, struct atomisp_calibration_group32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 22, struct atomisp_calibration_group32)
 
 #define ATOMISP_IOC_ACC_LOAD32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 44, struct atomisp_acc_fw_load32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 24, struct atomisp_acc_fw_load32)
 
 #define ATOMISP_IOC_ACC_S_ARG32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 46, struct atomisp_acc_fw_arg32)
-
-#define ATOMISP_IOC_G_SENSOR_PRIV_INT_DATA32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 50, struct v4l2_private_int_data32)
-
-#define ATOMISP_IOC_S_ISP_SHD_TAB32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 51, struct atomisp_shading_table32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 24, struct atomisp_acc_fw_arg32)
 
 #define ATOMISP_IOC_ACC_DESTAB32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 54, struct atomisp_acc_fw_arg32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 25, struct atomisp_acc_fw_arg32)
+
+#define ATOMISP_IOC_G_SENSOR_PRIV_INT_DATA32 \
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 26, struct v4l2_private_int_data32)
+
+#define ATOMISP_IOC_S_ISP_SHD_TAB32 \
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 27, struct atomisp_shading_table32)
 
 #define ATOMISP_IOC_G_MOTOR_PRIV_INT_DATA32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 57, struct v4l2_private_int_data32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 29, struct v4l2_private_int_data32)
 
 #define ATOMISP_IOC_ACC_MAP32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 58, struct atomisp_acc_map32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 30, struct atomisp_acc_map32)
 
 #define ATOMISP_IOC_ACC_UNMAP32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 59, struct atomisp_acc_map32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 30, struct atomisp_acc_map32)
 
 #define ATOMISP_IOC_ACC_S_MAPPED_ARG32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 60, struct atomisp_acc_s_mapped_arg32)
-
-#define ATOMISP_IOC_S_PARAMETERS32 \
-	_IOW('v', BASE_VIDIOC_PRIVATE + 61, struct atomisp_parameters32)
+	_IOW('v', BASE_VIDIOC_PRIVATE + 30, struct atomisp_acc_s_mapped_arg32)
 
 #define ATOMISP_IOC_ACC_LOAD_TO_PIPE32 \
-	_IOWR('v', BASE_VIDIOC_PRIVATE + 63, struct atomisp_acc_fw_load_to_pipe32)
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 31, struct atomisp_acc_fw_load_to_pipe32)
+
+#define ATOMISP_IOC_S_PARAMETERS32 \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 32, struct atomisp_parameters32)
+
+#define ATOMISP_IOC_G_METADATA32 \
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 34, struct atomisp_metadata32)
+
+#define ATOMISP_IOC_G_METADATA_BY_TYPE32 \
+	_IOWR('v', BASE_VIDIOC_PRIVATE + 34, struct atomisp_metadata_with_type32)
+
+#define ATOMISP_IOC_S_SENSOR_AE_BRACKETING_LUT32 \
+	_IOW('v', BASE_VIDIOC_PRIVATE + 43, struct atomisp_sensor_ae_bracketing_lut32)
 
 #endif /* __ATOMISP_COMPAT_IOCTL32_H__ */

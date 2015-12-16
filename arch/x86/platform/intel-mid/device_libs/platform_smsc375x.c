@@ -10,6 +10,7 @@
 #include <asm/intel_crystalcove_pwrsrc.h>
 #include <asm/intel_bytcr_bcntl.h>
 #include <asm/dc_xpwr_pwrsrc.h>
+#include <linux/dc_ti_pwrsrc.h>
 #include <asm/intel_em_config.h>
 
 #define EM_CONFIG_USB_COMP_MASK (1 << 0)
@@ -50,6 +51,10 @@ void *smsc375x_platform_data(void)
 			pmic_acpi_parse, NULL, NULL)) && valid_entry) {
 		pr_info("X-Power PMIC ACPI entry[INT33F4] found\n");
 		smsc_pdata.is_vbus_online = dc_xpwr_vbus_on_status;
+	} else if (ACPI_SUCCESS(acpi_get_devices("INT33F5",
+			pmic_acpi_parse, NULL, NULL)) && valid_entry) {
+		pr_info("TI PMIC ACPI entry[INT33F5] found\n");
+		smsc_pdata.is_vbus_online = dc_ti_vbus_on_status;
 	} else {
 		pr_info("default Crytsal Cove PMIC path\n");
 		smsc_pdata.is_vbus_online = crystal_cove_vbus_on_status;

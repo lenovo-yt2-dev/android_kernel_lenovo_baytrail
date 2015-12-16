@@ -346,10 +346,27 @@ static const struct file_operations monza_misc_fops = {
 	.release = monza_misc_release,
 };
 
+static const struct i2c_device_id i2c_monza_ids[] = {
+	{ "MNZX2000", MONZAX_2K_ADDR_NUM },
+	{ "MNZX8000", MONZAX_8K_ADDR_NUM },
+	{ "IMPJ0003", MONZAX_8K_ADDR_NUM },
+	{ /* END OF LIST */ }
+};
+MODULE_DEVICE_TABLE(i2c, i2c_monza_ids);
+
+static const struct acpi_device_id acpi_monza_ids[] = {
+	{ "MNZX2000", MONZAX_2K_ADDR_NUM },
+	{ "MNZX8000", MONZAX_8K_ADDR_NUM },
+	{ "IMPJ0003", MONZAX_8K_ADDR_NUM },
+	{}
+};
+MODULE_DEVICE_TABLE(acpi, acpi_monza_ids);
+
 static int monza_probe(struct i2c_client *client,
 		const struct i2c_device_id *id)
 {
 	struct monza_data *monza;
+	const struct acpi_device_id *aid;
 	int err;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
@@ -365,7 +382,23 @@ static int monza_probe(struct i2c_client *client,
 	}
 
 	mutex_init(&monza->lock);
-	monza->num_addr = id->driver_data;
+
+	if (id)
+		monza->num_addr = id->driver_data;
+	else {
+		/* acpi id detect */
+		for (aid = acpi_monza_ids; aid->id[0]; aid++)
+			if (!strncmp(aid->id, client->name, strlen(aid->id))) {
+				monza->num_addr = aid->driver_data;
+				dev_info(&client->dev, "acpi id: %s\n", client->name);
+			}
+	}
+	if (!monza->num_addr) {
+		dev_err(&client->dev, "Invalid id driver data error.\n");
+		err = -ENODEV;
+		goto err_struct;
+	}
+
 	monza->client[0] = client;
 	/* use dummy device, since monzax-2k has 2 slave address */
 	if (monza->num_addr == MONZAX_2K_ADDR_NUM) {
@@ -400,7 +433,7 @@ static int monza_probe(struct i2c_client *client,
 	 */
 	sysfs_bin_attr_init(&monza->bin);
 	monza->bin.attr.name = "monzax_data";
-	monza->bin.attr.mode = S_IRUGO | S_IWUSR;
+	monza->bin.attr.mode = S_IRUSR | S_IWUSR;
 	monza->bin.read = monza_bin_read;
 	monza->bin.write = monza_bin_write;
 	if (monza->num_addr == MONZAX_2K_ADDR_NUM)
@@ -449,7 +482,6 @@ err_out:
 static int monza_remove(struct i2c_client *client)
 {
 	struct monza_data *monza;
-	int i;
 
 	monza = i2c_get_clientdata(client);
 	misc_deregister(&monza->miscdev);
@@ -462,33 +494,16 @@ static int monza_remove(struct i2c_client *client)
 	kfree(monza);
 	return 0;
 }
-/*-------------------------------------------------------------------------*/
-
-static const struct i2c_device_id monza_ids[] = {
-	{ "MNZX2000:00", MONZAX_2K_ADDR_NUM },
-	{ "MNZX8000:00", MONZAX_8K_ADDR_NUM },
-	{ "IMPJ0003:00", MONZAX_8K_ADDR_NUM },
-	{ /* END OF LIST */ }
-};
-MODULE_DEVICE_TABLE(i2c, monza_ids);
-
-static const struct acpi_device_id acpi_monza_id[] = {
-	{ "MNZX2000:00", MONZAX_2K_ADDR_NUM },
-	{ "MNZX8000:00", MONZAX_8K_ADDR_NUM },
-	{ "IMPJ0003:00", MONZAX_8K_ADDR_NUM },
-	{}
-};
-MODULE_DEVICE_TABLE(acpi, acpi_monza_id);
 
 static struct i2c_driver monza_driver = {
 	.driver = {
 		.name = "monzax",
 		.owner = THIS_MODULE,
-		.acpi_match_table = ACPI_PTR(acpi_monza_id),
+		.acpi_match_table = ACPI_PTR(acpi_monza_ids),
 	},
 	.probe = monza_probe,
 	.remove = monza_remove,
-	.id_table = monza_ids,
+	.id_table = i2c_monza_ids,
 };
 
 static int __init monza_init(void)

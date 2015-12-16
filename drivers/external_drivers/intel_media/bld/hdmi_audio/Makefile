@@ -29,6 +29,7 @@ endif
 
 $(DRIVER_NAME)-objs += \
 	$(HDMI_AUDIO_SRC)/intel_mid_hdmi_audio.o \
-	$(HDMI_AUDIO_SRC)/intel_mid_hdmi_audio_if.o
+	$(HDMI_AUDIO_SRC)/intel_mid_hdmi_audio_if.o \
+	$(HDMI_AUDIO_SRC)/intel_mid_hdmi_audio_debug.o
 
 obj-m += $(DRIVER_NAME).o

@@ -185,6 +185,21 @@ static const char * const iio_ev_dir_text[] = {
 	[IIO_EV_DIR_FALLING] = "falling"
 };
 
+static enum iio_event_direction iio_ev_attr_dir(struct iio_dev_attr *attr)
+{
+	return attr->c->event_spec[attr->address & 0xffff].dir;
+}
+
+static enum iio_event_type iio_ev_attr_type(struct iio_dev_attr *attr)
+{
+	return attr->c->event_spec[attr->address & 0xffff].type;
+}
+
+static enum iio_event_info iio_ev_attr_info(struct iio_dev_attr *attr)
+{
+	return (attr->address >> 16) & 0xffff;
+}
+
 static ssize_t iio_ev_state_store(struct device *dev,
 				  struct device_attribute *attr,
 				  const char *buf,
@@ -226,14 +241,16 @@ static ssize_t iio_ev_value_show(struct device *dev,
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
-	int val, ret;
+	int val, val2;
+	int ret;
 
 	ret = indio_dev->info->read_event_value(indio_dev,
-						this_attr->address, &val);
+		this_attr->c, iio_ev_attr_type(this_attr),
+		iio_ev_attr_dir(this_attr), iio_ev_attr_info(this_attr),
+		&val, &val2);
 	if (ret < 0)
 		return ret;
-
-	return sprintf(buf, "%d\n", val);
+	return iio_format_value(buf, ret, val, val2);
 }
 
 static ssize_t iio_ev_value_store(struct device *dev,
@@ -243,18 +260,19 @@ static ssize_t iio_ev_value_store(struct device *dev,
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
-	int val;
+	int val, val2;
 	int ret;
 
 	if (!indio_dev->info->write_event_value)
 		return -EINVAL;
 
-	ret = kstrtoint(buf, 10, &val);
+	ret = iio_str_to_fixpoint(buf, 100000, &val, &val2);
 	if (ret)
 		return ret;
-
-	ret = indio_dev->info->write_event_value(indio_dev, this_attr->address,
-						 val);
+	ret = indio_dev->info->write_event_value(indio_dev,
+		this_attr->c, iio_ev_attr_type(this_attr),
+		iio_ev_attr_dir(this_attr), iio_ev_attr_info(this_attr),
+		val, val2);
 	if (ret < 0)
 		return ret;
 

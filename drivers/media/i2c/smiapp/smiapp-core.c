@@ -31,8 +31,9 @@
 #include <linux/device.h>
 #include <linux/gpio.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/regulator/consumer.h>
+#include <linux/slab.h>
+#include <linux/smiapp.h>
 #include <linux/v4l2-mediabus.h>
 #include <media/v4l2-device.h>
 
@@ -58,6 +59,9 @@ static const struct smiapp_module_ident smiapp_module_idents[] = {
 	SMIAPP_IDENT_LQ(0x0c, 0x560f, -1, "jt8ew9", &smiapp_jt8ew9_quirk),
 	SMIAPP_IDENT_LQ(0x10, 0x4141, -1, "jt8ev1", &smiapp_jt8ev1_quirk),
 	SMIAPP_IDENT_LQ(0x10, 0x4241, -1, "imx125es", &smiapp_imx125es_quirk),
+	SMIAPP_IDENT_LQ(0x00, 0x0135, -1, "imx135", &smiapp_imx135_quirk),
+	SMIAPP_IDENT_LQ(0x0b, 0x0132, -1, "imx132", &smiapp_imx132_quirk),
+	SMIAPP_IDENT_LQ(0x0b, 0x0214, -1, "imx214", &smiapp_imx214_quirk),
 };
 
 /*
@@ -297,7 +301,7 @@ static int smiapp_pll_update(struct smiapp_sensor *sensor)
 	if (rval < 0)
 		return rval;
 
-	sensor->pixel_rate_parray->cur.val64 = pll->vt_pix_clk_freq_hz;
+	sensor->pixel_rate_parray->cur.val64 = pll->pixel_rate_pixel_array;
 	sensor->pixel_rate_csi->cur.val64 = pll->pixel_rate_csi;
 
 	return 0;
@@ -399,11 +403,18 @@ static void smiapp_update_mbus_formats(struct smiapp_sensor *sensor)
 
 	BUG_ON(max(internal_csi_format_idx, csi_format_idx) + pixel_order
 	       >= ARRAY_SIZE(smiapp_csi_data_formats));
-	BUG_ON(min(internal_csi_format_idx, csi_format_idx) < 0);
 
 	dev_dbg(&client->dev, "new pixel order %s\n",
 		pixel_order_str[pixel_order]);
 }
+
+static const char * const smiapp_test_patterns[] = {
+	"Disabled",
+	"Solid Colour",
+	"Eight Vertical Colour Bars",
+	"Colour Bars With Fade to Grey",
+	"Pseudorandom Sequence (PN9)",
+};
 
 static int smiapp_set_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -478,6 +489,35 @@ static int smiapp_set_ctrl(struct v4l2_ctrl *ctrl)
 
 		return smiapp_pll_update(sensor);
 
+	case V4L2_CID_TEST_PATTERN: {
+		unsigned int i;
+
+		for (i = 0; i < ARRAY_SIZE(sensor->test_data); i++)
+			v4l2_ctrl_activate(
+				sensor->test_data[i],
+				ctrl->val ==
+				V4L2_SMIAPP_TEST_PATTERN_MODE_SOLID_COLOUR);
+
+		return smiapp_write(
+			sensor, SMIAPP_REG_U16_TEST_PATTERN_MODE, ctrl->val);
+	}
+
+	case V4L2_CID_TEST_PATTERN_RED:
+		return smiapp_write(
+			sensor, SMIAPP_REG_U16_TEST_DATA_RED, ctrl->val);
+
+	case V4L2_CID_TEST_PATTERN_GREENR:
+		return smiapp_write(
+			sensor, SMIAPP_REG_U16_TEST_DATA_GREENR, ctrl->val);
+
+	case V4L2_CID_TEST_PATTERN_BLUE:
+		return smiapp_write(
+			sensor, SMIAPP_REG_U16_TEST_DATA_BLUE, ctrl->val);
+
+	case V4L2_CID_TEST_PATTERN_GREENB:
+		return smiapp_write(
+			sensor, SMIAPP_REG_U16_TEST_DATA_GREENB, ctrl->val);
+
 	default:
 		return -EINVAL;
 	}
@@ -490,10 +530,10 @@ static const struct v4l2_ctrl_ops smiapp_ctrl_ops = {
 static int smiapp_init_controls(struct smiapp_sensor *sensor)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&sensor->src->sd);
-	unsigned int max;
+	unsigned int max, i;
 	int rval;
 
-	rval = v4l2_ctrl_handler_init(&sensor->pixel_array->ctrl_handler, 7);
+	rval = v4l2_ctrl_handler_init(&sensor->pixel_array->ctrl_handler, 12);
 	if (rval)
 		return rval;
 	sensor->pixel_array->ctrl_handler.lock = &sensor->mutex;
@@ -503,7 +543,8 @@ static int smiapp_init_controls(struct smiapp_sensor *sensor)
 		V4L2_CID_ANALOGUE_GAIN,
 		sensor->limits[SMIAPP_LIMIT_ANALOGUE_GAIN_CODE_MIN],
 		sensor->limits[SMIAPP_LIMIT_ANALOGUE_GAIN_CODE_MAX],
-		max(sensor->limits[SMIAPP_LIMIT_ANALOGUE_GAIN_CODE_STEP], 1U),
+		max_t(uint32_t,
+		      sensor->limits[SMIAPP_LIMIT_ANALOGUE_GAIN_CODE_STEP], 1U),
 		sensor->limits[SMIAPP_LIMIT_ANALOGUE_GAIN_CODE_MIN]);
 
 	/* Exposure limits will be updated soon, use just something here. */
@@ -535,6 +576,20 @@ static int smiapp_init_controls(struct smiapp_sensor *sensor)
 	sensor->pixel_rate_parray = v4l2_ctrl_new_std(
 		&sensor->pixel_array->ctrl_handler, &smiapp_ctrl_ops,
 		V4L2_CID_PIXEL_RATE, 0, 0, 1, 0);
+
+	v4l2_ctrl_new_std_menu_items(&sensor->pixel_array->ctrl_handler,
+				     &smiapp_ctrl_ops, V4L2_CID_TEST_PATTERN,
+				     ARRAY_SIZE(smiapp_test_patterns) - 1,
+				     0, 0, smiapp_test_patterns);
+
+	for (i = 0; i < ARRAY_SIZE(sensor->test_data); i++) {
+		int max_value = (1 << sensor->csi_format->width) - 1;
+		sensor->test_data[i] =
+			v4l2_ctrl_new_std(
+				&sensor->pixel_array->ctrl_handler,
+				&smiapp_ctrl_ops, V4L2_CID_TEST_PATTERN_RED + i,
+				0, max_value, 1, max_value);
+	}
 
 	if (sensor->pixel_array->ctrl_handler.error) {
 		dev_err(&client->dev,
@@ -607,7 +662,7 @@ static int smiapp_get_limits(struct smiapp_sensor *sensor, int const *limit,
 		if (rval)
 			return rval;
 		sensor->limits[limit[i]] = val;
-		dev_dbg(&client->dev, "0x%8.8x \"%s\" = %d, 0x%x\n",
+		dev_dbg(&client->dev, "0x%8.8x \"%s\" = %u, 0x%x\n",
 			smiapp_reg_limits[limit[i]].addr,
 			smiapp_reg_limits[limit[i]].what, val, val);
 	}
@@ -680,7 +735,7 @@ static int smiapp_get_limits_binning(struct smiapp_sensor *sensor)
 
 	for (i = 0; i < ARRAY_SIZE(limits); i++) {
 		dev_dbg(&client->dev,
-			"replace limit 0x%8.8x \"%s\" = %d, 0x%x\n",
+			"replace limit 0x%8.8x \"%s\" = %llu, 0x%llx\n",
 			smiapp_reg_limits[limits[i]].addr,
 			smiapp_reg_limits[limits[i]].what,
 			sensor->limits[limits_replace[i]],
@@ -742,8 +797,8 @@ static int smiapp_get_mbus_formats(struct smiapp_sensor *sensor)
 		if (rval)
 			return rval;
 
-		dev_dbg(&client->dev, "bpp %d, compressed %d\n",
-			fmt >> 8, (u8)fmt);
+		dev_dbg(&client->dev, "%u: bpp %u, compressed %u\n",
+			i, fmt >> 8, (u8)fmt);
 
 		for (j = 0; j < ARRAY_SIZE(smiapp_csi_data_formats); j++) {
 			const struct smiapp_csi_data_format *f =
@@ -865,7 +920,7 @@ static int smiapp_update_mode(struct smiapp_sensor *sensor)
 	dev_dbg(&client->dev, "hblank\t\t%d\n", sensor->hblank->val);
 
 	dev_dbg(&client->dev, "real timeperframe\t100/%d\n",
-		sensor->pll.vt_pix_clk_freq_hz /
+		sensor->pll.pixel_rate_pixel_array /
 		((sensor->pixel_array->crop[SMIAPP_PA_PAD_SRC].width
 		  + sensor->hblank->val) *
 		 (sensor->pixel_array->crop[SMIAPP_PA_PAD_SRC].height
@@ -1111,7 +1166,11 @@ static int smiapp_power_on(struct smiapp_sensor *sensor)
 	unsigned int sleep;
 	int rval;
 
-	rval = regulator_enable(sensor->vana);
+	if (!sensor->platform_data->set_power)
+		rval = regulator_enable(sensor->vana);
+	else
+		rval = sensor->platform_data->set_power(&sensor->src->sd, true);
+
 	if (rval) {
 		dev_err(&client->dev, "failed to enable vana regulator\n");
 		return rval;
@@ -1122,9 +1181,9 @@ static int smiapp_power_on(struct smiapp_sensor *sensor)
 		rval = sensor->platform_data->set_xclk(
 			&sensor->src->sd, sensor->platform_data->ext_clk);
 	else
-		rval = clk_enable(sensor->ext_clk);
+		rval = clk_prepare_enable(sensor->ext_clk);
 	if (rval < 0) {
-		dev_dbg(&client->dev, "failed to set xclk\n");
+		dev_dbg(&client->dev, "failed to enable xclk\n");
 		goto out_xclk_fail;
 	}
 	usleep_range(1000, 1000);
@@ -1244,10 +1303,13 @@ out_cci_addr_fail:
 	if (sensor->platform_data->set_xclk)
 		sensor->platform_data->set_xclk(&sensor->src->sd, 0);
 	else
-		clk_disable(sensor->ext_clk);
+		clk_disable_unprepare(sensor->ext_clk);
 
 out_xclk_fail:
-	regulator_disable(sensor->vana);
+	if (!sensor->platform_data->set_power)
+		regulator_disable(sensor->vana);
+	else
+		sensor->platform_data->set_power(&sensor->src->sd, false);
 	return rval;
 }
 
@@ -1270,9 +1332,14 @@ static void smiapp_power_off(struct smiapp_sensor *sensor)
 	if (sensor->platform_data->set_xclk)
 		sensor->platform_data->set_xclk(&sensor->src->sd, 0);
 	else
-		clk_disable(sensor->ext_clk);
+		clk_disable_unprepare(sensor->ext_clk);
 	usleep_range(5000, 5000);
-	regulator_disable(sensor->vana);
+
+	if (!sensor->platform_data->set_power)
+		regulator_disable(sensor->vana);
+	else
+		sensor->platform_data->set_power(&sensor->src->sd, false);
+
 	sensor->streaming = 0;
 }
 
@@ -1671,17 +1738,34 @@ static int smiapp_set_format(struct v4l2_subdev *subdev,
 	if (fmt->pad == ssd->source_pad) {
 		u32 code = fmt->format.code;
 		int rval = __smiapp_get_format(subdev, fh, fmt);
+		bool range_changed = false;
+		unsigned int i;
 
 		if (!rval && subdev == &sensor->src->sd) {
 			const struct smiapp_csi_data_format *csi_format =
 				smiapp_validate_csi_data_format(sensor, code);
-			if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+
+			if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
+				if (csi_format->width !=
+				    sensor->csi_format->width)
+					range_changed = true;
+
 				sensor->csi_format = csi_format;
+			}
+
 			fmt->format.code = csi_format->code;
 		}
 
 		mutex_unlock(&sensor->mutex);
-		return rval;
+		if (rval || !range_changed)
+			return rval;
+
+		for (i = 0; i < ARRAY_SIZE(sensor->test_data); i++)
+			v4l2_ctrl_modify_range(
+				sensor->test_data[i],
+				0, (1 << sensor->csi_format->width) - 1, 1, 0);
+
+		return 0;
 	}
 
 	/* Sink pad. Width and height are changeable here. */
@@ -1690,13 +1774,13 @@ static int smiapp_set_format(struct v4l2_subdev *subdev,
 	fmt->format.height &= ~1;
 
 	fmt->format.width =
-		clamp(fmt->format.width,
-		      sensor->limits[SMIAPP_LIMIT_MIN_X_OUTPUT_SIZE],
-		      sensor->limits[SMIAPP_LIMIT_MAX_X_OUTPUT_SIZE]);
+		clamp_t(uint32_t, fmt->format.width,
+			sensor->limits[SMIAPP_LIMIT_MIN_X_OUTPUT_SIZE],
+			sensor->limits[SMIAPP_LIMIT_MAX_X_OUTPUT_SIZE]);
 	fmt->format.height =
-		clamp(fmt->format.height,
-		      sensor->limits[SMIAPP_LIMIT_MIN_Y_OUTPUT_SIZE],
-		      sensor->limits[SMIAPP_LIMIT_MAX_Y_OUTPUT_SIZE]);
+		clamp_t(uint32_t, fmt->format.height,
+			sensor->limits[SMIAPP_LIMIT_MIN_Y_OUTPUT_SIZE],
+			sensor->limits[SMIAPP_LIMIT_MAX_Y_OUTPUT_SIZE]);
 
 	smiapp_get_crop_compose(subdev, fh, crops, NULL, fmt->which);
 
@@ -1767,7 +1851,7 @@ static void smiapp_set_compose_binner(struct v4l2_subdev *subdev,
 	struct smiapp_sensor *sensor = to_smiapp_sensor(subdev);
 	unsigned int i;
 	unsigned int binh = 1, binv = 1;
-	unsigned int best = scaling_goodness(
+	int best = scaling_goodness(
 		subdev,
 		crops[SMIAPP_PAD_SINK]->width, sel->r.width,
 		crops[SMIAPP_PAD_SINK]->height, sel->r.height, sel->flags);
@@ -1835,12 +1919,13 @@ static void smiapp_set_compose_scaler(struct v4l2_subdev *subdev,
 		* sensor->limits[SMIAPP_LIMIT_SCALER_N_MIN]
 		/ sensor->limits[SMIAPP_LIMIT_MIN_X_OUTPUT_SIZE];
 
-	a = min(sensor->limits[SMIAPP_LIMIT_SCALER_M_MAX],
-		max(a, sensor->limits[SMIAPP_LIMIT_SCALER_M_MIN]));
-	b = min(sensor->limits[SMIAPP_LIMIT_SCALER_M_MAX],
-		max(b, sensor->limits[SMIAPP_LIMIT_SCALER_M_MIN]));
-	max_m = min(sensor->limits[SMIAPP_LIMIT_SCALER_M_MAX],
-		    max(max_m, sensor->limits[SMIAPP_LIMIT_SCALER_M_MIN]));
+	a = clamp_t(uint32_t, a, sensor->limits[SMIAPP_LIMIT_SCALER_M_MIN],
+		    sensor->limits[SMIAPP_LIMIT_SCALER_M_MAX]);
+	b = clamp_t(uint32_t, b, sensor->limits[SMIAPP_LIMIT_SCALER_M_MIN],
+		    sensor->limits[SMIAPP_LIMIT_SCALER_M_MAX]);
+	max_m = clamp_t(uint32_t, max_m,
+			sensor->limits[SMIAPP_LIMIT_SCALER_M_MIN],
+			sensor->limits[SMIAPP_LIMIT_SCALER_M_MAX]);
 
 	dev_dbg(&client->dev, "scaling: a %d b %d max_m %d\n", a, b, max_m);
 
@@ -2356,18 +2441,18 @@ static int smiapp_registered(struct v4l2_subdev *subdev)
 	unsigned int i;
 	int rval;
 
-	sensor->vana = devm_regulator_get(&client->dev, "VANA");
-	if (IS_ERR(sensor->vana)) {
-		dev_err(&client->dev, "could not get regulator for vana\n");
-		return -ENODEV;
+	if (!sensor->platform_data->set_power) {
+		sensor->vana = devm_regulator_get(&client->dev, "VANA");
+		if (IS_ERR(sensor->vana)) {
+			dev_err(&client->dev, "could not get regulator for vana\n");
+			return -ENODEV;
+		}
 	}
 
 	if (!sensor->platform_data->set_xclk) {
-		sensor->ext_clk = devm_clk_get(&client->dev,
-					sensor->platform_data->ext_clk_name);
+		sensor->ext_clk = devm_clk_get(&client->dev, "ext_clk");
 		if (IS_ERR(sensor->ext_clk)) {
-			dev_err(&client->dev, "could not get clock %s\n",
-				sensor->platform_data->ext_clk_name);
+			dev_err(&client->dev, "could not get clock\n");
 			return -ENODEV;
 		}
 
@@ -2375,16 +2460,16 @@ static int smiapp_registered(struct v4l2_subdev *subdev)
 				    sensor->platform_data->ext_clk);
 		if (rval < 0) {
 			dev_err(&client->dev,
-				"unable to set clock %s freq to %u\n",
-				sensor->platform_data->ext_clk_name,
+				"unable to set clock freq to %u\n",
 				sensor->platform_data->ext_clk);
 			return -ENODEV;
 		}
 	}
 
 	if (sensor->platform_data->xshutdown != SMIAPP_NO_XSHUTDOWN) {
-		if (gpio_request_one(sensor->platform_data->xshutdown, 0,
-				     "SMIA++ xshutdown") != 0) {
+		if (devm_gpio_request_one(&client->dev,
+					  sensor->platform_data->xshutdown, 0,
+					  "SMIA++ xshutdown") != 0) {
 			dev_err(&client->dev,
 				"unable to acquire reset gpio %d\n",
 				sensor->platform_data->xshutdown);
@@ -2393,10 +2478,8 @@ static int smiapp_registered(struct v4l2_subdev *subdev)
 	}
 
 	rval = smiapp_power_on(sensor);
-	if (rval) {
-		rval = -ENODEV;
-		goto out_smiapp_power_on;
-	}
+	if (rval)
+		return -ENODEV;
 
 	rval = smiapp_identify_module(subdev);
 	if (rval) {
@@ -2427,6 +2510,12 @@ static int smiapp_registered(struct v4l2_subdev *subdev)
 	    SMIAPP_MODULE_BOARD_ORIENT_180)
 		sensor->hvflip_inv_mask = SMIAPP_IMAGE_ORIENTATION_HFLIP |
 					  SMIAPP_IMAGE_ORIENTATION_VFLIP;
+
+	rval = smiapp_call_quirk(sensor, limits);
+	if (rval) {
+		dev_err(&client->dev, "limits quirks failed\n");
+		goto out_power_off;
+	}
 
 	rval = smiapp_get_mbus_formats(sensor);
 	if (rval) {
@@ -2488,12 +2577,6 @@ static int smiapp_registered(struct v4l2_subdev *subdev)
 		}
 	}
 
-	rval = smiapp_call_quirk(sensor, limits);
-	if (rval) {
-		dev_err(&client->dev, "limits quirks failed\n");
-		goto out_nvm_release;
-	}
-
 	/* We consider this as profile 0 sensor if any of these are zero. */
 	if (!sensor->limits[SMIAPP_LIMIT_MIN_OP_SYS_CLK_DIV] ||
 	    !sensor->limits[SMIAPP_LIMIT_MAX_OP_SYS_CLK_DIV] ||
@@ -2548,8 +2631,9 @@ static int smiapp_registered(struct v4l2_subdev *subdev)
 		}
 
 		snprintf(this->sd.name,
-			 sizeof(this->sd.name), "%s %s",
-			 sensor->minfo.name, _this->name);
+			 sizeof(this->sd.name), "%s %s %d-%4.4x",
+			 sensor->minfo.name, _this->name,
+			 i2c_adapter_id(client->adapter), client->addr);
 
 		this->sink_fmt.width =
 			sensor->limits[SMIAPP_LIMIT_X_ADDR_MAX] + 1;
@@ -2621,12 +2705,11 @@ static int smiapp_registered(struct v4l2_subdev *subdev)
 	pll->bus_type = SMIAPP_PLL_BUS_TYPE_CSI2;
 	pll->csi2.lanes = sensor->platform_data->lanes;
 	pll->ext_clk_freq_hz = sensor->platform_data->ext_clk;
+	pll->flags = smiapp_call_quirk(sensor, pll_flags);
+
 	/* Profile 0 sensors have no separate OP clock branch. */
 	if (sensor->minfo.smiapp_profile == SMIAPP_PROFILE_0)
 		pll->flags |= SMIAPP_PLL_FLAG_NO_OP_CLOCKS;
-	if (smiapp_needs_quirk(sensor,
-			       SMIAPP_QUIRK_FLAG_OP_PIX_CLOCK_PER_LANE))
-		pll->flags |= SMIAPP_PLL_FLAG_OP_PIX_CLOCK_PER_LANE;
 	pll->scale_n = sensor->limits[SMIAPP_LIMIT_SCALER_N_MIN];
 
 	rval = smiapp_update_mode(sensor);
@@ -2656,11 +2739,6 @@ out_ident_release:
 
 out_power_off:
 	smiapp_power_off(sensor);
-
-out_smiapp_power_on:
-	if (sensor->platform_data->xshutdown != SMIAPP_NO_XSHUTDOWN)
-		gpio_free(sensor->platform_data->xshutdown);
-
 	return rval;
 }
 
@@ -2845,7 +2923,7 @@ static int smiapp_remove(struct i2c_client *client)
 		if (sensor->platform_data->set_xclk)
 			sensor->platform_data->set_xclk(&sensor->src->sd, 0);
 		else
-			clk_disable(sensor->ext_clk);
+			clk_disable_unprepare(sensor->ext_clk);
 		sensor->power_count = 0;
 	}
 
@@ -2854,12 +2932,10 @@ static int smiapp_remove(struct i2c_client *client)
 		device_remove_file(&client->dev, &dev_attr_nvm);
 
 	for (i = 0; i < sensor->ssds_used; i++) {
-		media_entity_cleanup(&sensor->ssds[i].sd.entity);
 		v4l2_device_unregister_subdev(&sensor->ssds[i].sd);
+		media_entity_cleanup(&sensor->ssds[i].sd.entity);
 	}
 	smiapp_free_controls(sensor);
-	if (sensor->platform_data->xshutdown != SMIAPP_NO_XSHUTDOWN)
-		gpio_free(sensor->platform_data->xshutdown);
 
 	return 0;
 }

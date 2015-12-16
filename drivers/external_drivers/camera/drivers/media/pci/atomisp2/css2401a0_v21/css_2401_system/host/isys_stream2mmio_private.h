@@ -27,6 +27,7 @@
 #include "device_access.h"	/* ia_css_device_load_uint32 */
 
 #include "assert_support.h" /* assert */
+#include "print_support.h" /* print */
 
 #define STREAM2MMIO_COMMAND_REG_ID             0
 #define STREAM2MMIO_ACKNOWLEDGE_REG_ID         1
@@ -96,6 +97,43 @@ STORAGE_CLASS_STREAM2MMIO_C void stream2mmio_get_sid_state(
 	state->block_when_no_cmd =
 		stream2mmio_reg_load(ID, sid_id, STREAM2MMIO_BLOCK_WHEN_NO_CMD_REG_ID);
 
+}
+
+/**
+ * @brief Dump the state of the stream2mmio-controller sidess.
+ * Refer to "stream2mmio_public.h" for details.
+ */
+STORAGE_CLASS_STREAM2MMIO_C void stream2mmio_print_sid_state(
+		stream2mmio_sid_state_t	*state)
+{
+	ia_css_print("\t \t Receive acks 0x%x\n", state->rcv_ack);
+	ia_css_print("\t \t Pixel width 0x%x\n", state->pix_width_id);
+	ia_css_print("\t \t Startaddr 0x%x\n", state->start_addr);
+	ia_css_print("\t \t Endaddr 0x%x\n", state->end_addr);
+	ia_css_print("\t \t Strides 0x%x\n", state->strides);
+	ia_css_print("\t \t Num Items 0x%x\n", state->num_items);
+	ia_css_print("\t \t block when no cmd 0x%x\n", state->block_when_no_cmd);
+
+}
+/**
+ * @brief Dump the ibuf-controller state.
+ * Refer to "stream2mmio_public.h" for details.
+ */
+STORAGE_CLASS_STREAM2MMIO_C void stream2mmio_dump_state(
+		const stream2mmio_ID_t ID,
+		stream2mmio_state_t *state)
+{
+	uint32_t i;
+
+	/*
+	 * Get the values of the register-set per
+	 * stream2mmio-controller sids.
+	 */
+	for (i = 0; i < N_STREAM2MMIO_SID_PROCS[ID]; i++) {
+		ia_css_print("StREAM2MMIO ID %d SID %d\n", ID, i);
+		stream2mmio_print_sid_state(
+				&(state->sid_state[i]));
+	}
 }
 /** end of NCI */
 

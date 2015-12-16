@@ -19,9 +19,10 @@
  *
  */
 
-#include "assert_support.h"
+#include <math_support.h>
 #include "sh_css_param_shading.h"
-#include "ia_css.h"
+#include "ia_css_shading.h"
+#include "assert_support.h"
 #include "sh_css_defs.h"
 #include "sh_css_internal.h"
 #include "ia_css_debug.h"
@@ -189,14 +190,16 @@ crop_and_interpolate(unsigned int cropped_width,
 			s_ll = in_ptr[(table_width*src_y1)+src_x0];
 			s_lr = in_ptr[(table_width*src_y1)+src_x1];
 
-			*out_ptr = (unsigned short) ((dx0*dy0*s_lr + dx0*dy1*s_ur + dx1*dy0*s_ll + dx1*dy1*s_ul) / (divx*divy));
+			*out_ptr = (unsigned short) ((dx0*dy0*s_lr + dx0*dy1*s_ur + dx1*dy0*s_ll + dx1*dy1*s_ul) /
+					(divx*divy));
 		}
 	}
 }
 
-static void
-generate_id_shading_table(struct ia_css_shading_table **target_table,
-			  const struct ia_css_binary *binary)
+void
+sh_css_params_shading_id_table_generate(
+	struct ia_css_shading_table **target_table,
+	const struct ia_css_binary *binary)
 {
 	/* initialize table with ones, shift becomes zero */
 	unsigned int i, j, table_width, table_height;
@@ -240,7 +243,7 @@ prepare_shading_table(const struct ia_css_shading_table *in_table,
 	assert(binary != NULL);
 
 	if (!in_table) {
-		generate_id_shading_table(target_table, binary);
+		sh_css_params_shading_id_table_generate(target_table, binary);
 		return;
 	}
 
@@ -298,15 +301,18 @@ ia_css_shading_table_alloc(
 	unsigned int height)
 {
 	unsigned int i;
-	struct ia_css_shading_table *me = sh_css_malloc(sizeof(*me));
+	struct ia_css_shading_table *me;
 
-	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "ia_css_shading_table_alloc() enter:\n");
+	IA_CSS_ENTER("");
 
+	me = sh_css_malloc(sizeof(*me));
 	if (me == NULL) {
+		IA_CSS_ERROR("out of memory");
 		return me;
 	}
-	me->width		 = width;
-	me->height		= height;
+
+	me->width         = width;
+	me->height        = height;
 	me->sensor_width  = 0;
 	me->sensor_height = 0;
 	me->fraction_bits = 0;
@@ -322,8 +328,7 @@ ia_css_shading_table_alloc(
 		}
 	}
 
-	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "ia_css_shading_table_alloc() leave:\n");
-
+	IA_CSS_LEAVE("");
 	return me;
 }
 
@@ -332,12 +337,13 @@ ia_css_shading_table_free(struct ia_css_shading_table *table)
 {
 	unsigned int i;
 
-	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "ia_css_shading_table_free() enter:\n");
-
-	if (table == NULL) {
-		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "ia_css_shading_table_free() leave:\n");
+	if (table == NULL)
 		return;
-	}
+
+	/* We only output logging when the table is not NULL, otherwise
+	 * logs will give the impression that a table was freed.
+	 * */
+	IA_CSS_ENTER("");
 
 	for (i = 0; i < IA_CSS_SC_NUM_COLORS; i++) {
 		if (table->data[i])
@@ -345,6 +351,6 @@ ia_css_shading_table_free(struct ia_css_shading_table *table)
 	}
 	sh_css_free(table);
 
-	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "ia_css_shading_table_free() leave:\n");
+	IA_CSS_LEAVE("");
 }
 

@@ -64,6 +64,9 @@ i915-y := i915_drv.o i915_dma.o i915_irq.o \
 	  dsi_mod_vbt_generic.o        \
 	  dsi_mod_auo_b101uan01e.o	\
 	  dsi_mod_cmi_nt51021.o   	\
+          dsi_mod_cmi_nt51021.o         \
+          dsi_mod_ti_dpp3430.o          \
+          dsi_mod_dummy.o		\
 	  dsi_mod_boe_nt51021.o   	\
 	  dsi_mod_inx_nt51021.o   	\
 	  dsi_mod_cpt_nt51011.o		\

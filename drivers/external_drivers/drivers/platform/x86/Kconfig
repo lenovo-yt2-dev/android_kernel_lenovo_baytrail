@@ -12,7 +12,7 @@ config GPIO_INTEL_MSIC
 
 config INTEL_MID_OSNIB_ILB
         tristate "cmos osnib driver for Intel BYT platforms"
-	depends on INTEL_REBOOT_TARGET && INTEL_MID_OSIP
+	depends on INTEL_REBOOT_TARGET
         default n
         ---help---
 			This driver adds OSNIB support using CMOS.

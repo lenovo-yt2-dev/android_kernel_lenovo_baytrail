@@ -17,8 +17,8 @@
 #include <linux/atomisp_platform.h>
 #include <linux/mfd/intel_mid_pmic.h>
 #include <linux/acpi_gpio.h>
-#ifdef CONFIG_VLV2_PLAT_CLK
-#include <linux/vlv2_plat_clock.h>
+#ifdef CONFIG_INTEL_SOC_PMC
+#include <asm/intel_soc_pmc.h>
 #endif
 #include <media/v4l2-subdev.h>
 
@@ -27,6 +27,8 @@
 
 #define OSC_CAM_CLK 0x1
 #define CLK_19P2MHz 0x1
+#define CLK_ON	0x1
+#define CLK_OFF	0x2
 
 #define VPROG_2P8V 0x5D
 #define VPROG_ENABLE 0x63
@@ -57,14 +59,14 @@ static int ap1302_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 {
 /* Platform clock driver for CHT is not ready yet.
    Need to revise this part after the API is ready. */
-#ifdef CONFIG_VLV2_PLAT_CLK
+#ifdef CONFIG_INTEL_SOC_PMC
 	if (flag) {
 		int ret;
-		ret = vlv2_plat_set_clock_freq(OSC_CAM_CLK, CLK_19P2MHz);
+		ret = pmc_pc_set_freq(OSC_CAM_CLK, CLK_19P2MHz);
 		if (ret)
 			return ret;
 	}
-	return vlv2_plat_configure_clock(OSC_CAM_CLK, flag);
+	return pmc_pc_configure(OSC_CAM_CLK, flag ? CLK_ON : CLK_OFF);
 #elif defined(CONFIG_INTEL_SCU_IPC_UTIL)
 	static const unsigned int clock_khz = 19200;
 	return intel_scu_ipc_osc_clk(OSC_CAM_CLK,

@@ -58,9 +58,8 @@ Revision 1-0-5 2013/10/23
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 #include <linux/earlysuspend.h>
-//#include <linux/input/lsm303d.h>
+#include <linux/tablet_config.h>
 #include "lsm303d.h"
-extern int board_id3;
 
 #define	I2C_AUTO_INCREMENT	(0x80)
 #define MS_TO_NS(x)		(x*1000000L)
@@ -395,15 +394,15 @@ static struct status_registers {
 	.cntrl5.address=REG_CNTRL5_ADDR, .cntrl5.default_value=REG_DEF_CNTRL5,
 	.cntrl6.address=REG_CNTRL6_ADDR, .cntrl6.default_value=REG_DEF_CNTRL6,
 	.cntrl7.address=REG_CNTRL7_ADDR, .cntrl7.default_value=REG_DEF_CNTRL7,
-	.int_ctrl_reg_m.address=REG_GEN_MAG_ADDR, 
+	.int_ctrl_reg_m.address=REG_GEN_MAG_ADDR,
 		.int_ctrl_reg_m.default_value=REG_DEF_INT_CNTRL_MAG,
 	.int_mag_threshold_low.address=REG_GEN_MAG_THR_ADDR,
 		.int_mag_threshold_low.default_value=REG_DEF_MIG_THRESHOLD_L,
 	.int_mag_threshold_low.address=MIG_THRESHOLD_ADDR_H,
 		.int_mag_threshold_low.default_value=REG_DEF_MIG_THRESHOLD_H,
-	.int_gen1_reg.address=REG_GEN1_AXIS_ADDR, 
+	.int_gen1_reg.address=REG_GEN1_AXIS_ADDR,
 		.int_gen1_reg.default_value=REG_DEF_INT_GEN1,
-	.int_gen2_reg.address=REG_GEN2_AXIS_ADDR, 
+	.int_gen2_reg.address=REG_GEN2_AXIS_ADDR,
 		.int_gen2_reg.default_value=REG_DEF_INT_GEN2,
 	.int_gen1_duration.address=REG_GEN1_DUR_ADDR,
 		.int_gen1_duration.default_value=REG_DEF_IIG1_DURATION,
@@ -540,7 +539,7 @@ static int lsm303d_hw_init(struct lsm303d_status *stat)
 
 	buf[0] = status_registers.who_am_i.address;
 	err = lsm303d_i2c_read(stat, buf, 1);
-	
+
 	if (err < 0) {
 		dev_warn(&stat->client->dev, "Error reading WHO_AM_I: is device"
 		" available/working?\n");
@@ -556,47 +555,47 @@ static int lsm303d_hw_init(struct lsm303d_status *stat)
 		goto err_unknown_device;
 	}
 
-	status_registers.cntrl1.resume_value = 
+	status_registers.cntrl1.resume_value =
 					status_registers.cntrl1.default_value;
-	status_registers.cntrl2.resume_value = 
+	status_registers.cntrl2.resume_value =
 					status_registers.cntrl2.default_value;
-	status_registers.cntrl3.resume_value = 
+	status_registers.cntrl3.resume_value =
 					status_registers.cntrl3.default_value;
-	status_registers.cntrl4.resume_value = 
+	status_registers.cntrl4.resume_value =
 					status_registers.cntrl4.default_value;
-	status_registers.cntrl5.resume_value = 
+	status_registers.cntrl5.resume_value =
 					status_registers.cntrl5.default_value;
-	status_registers.cntrl6.resume_value = 
+	status_registers.cntrl6.resume_value =
 					status_registers.cntrl6.default_value;
-	status_registers.cntrl7.resume_value = 
+	status_registers.cntrl7.resume_value =
 					status_registers.cntrl7.default_value;
 
-	status_registers.int_ctrl_reg_m.resume_value = 
+	status_registers.int_ctrl_reg_m.resume_value =
 			status_registers.int_ctrl_reg_m.default_value;
-	status_registers.int_mag_threshold_low.resume_value = 
+	status_registers.int_mag_threshold_low.resume_value =
 			status_registers.int_mag_threshold_low.default_value;
-	status_registers.int_mag_threshold_high.resume_value = 
+	status_registers.int_mag_threshold_high.resume_value =
 			status_registers.int_mag_threshold_high.default_value;
-	status_registers.int_gen1_reg.resume_value = 
+	status_registers.int_gen1_reg.resume_value =
 			status_registers.int_gen1_reg.default_value;
-	status_registers.int_gen2_reg.resume_value = 
+	status_registers.int_gen2_reg.resume_value =
 			status_registers.int_gen2_reg.default_value;
-	status_registers.int_gen1_duration.resume_value = 
+	status_registers.int_gen1_duration.resume_value =
 			status_registers.int_gen1_duration.default_value;
-	status_registers.int_gen2_duration.resume_value = 
+	status_registers.int_gen2_duration.resume_value =
 			status_registers.int_gen2_duration.default_value;
-	status_registers.int_gen1_threshold.resume_value = 
+	status_registers.int_gen1_threshold.resume_value =
 			status_registers.int_gen1_threshold.default_value;
-	status_registers.int_gen2_threshold.resume_value = 
+	status_registers.int_gen2_threshold.resume_value =
 			status_registers.int_gen2_threshold.default_value;
 
 
 	stat->temp_value_dec = NDTEMP;
 
-	if((stat->pdata_acc->gpio_int1 >= 0) || 
+	if((stat->pdata_acc->gpio_int1 >= 0) ||
 					(stat->pdata_acc->gpio_int2 >= 0)) {
 
-		stat->interrupt = kmalloc(sizeof(*stat->interrupt), 
+		stat->interrupt = kmalloc(sizeof(*stat->interrupt),
 								GFP_KERNEL);
 
 		if(stat->interrupt == NULL)
@@ -613,7 +612,7 @@ static int lsm303d_hw_init(struct lsm303d_status *stat)
 		stat->interrupt->gen2_duration.address = REG_GEN2_DUR_ADDR;
 		stat->interrupt->gen1_threshold.address = REG_GEN1_THR_ADDR;
 		stat->interrupt->gen2_threshold.address = REG_GEN2_THR_ADDR;
-		stat->interrupt->gen_mag_threshold.address = 
+		stat->interrupt->gen_mag_threshold.address =
 							REG_GEN_MAG_THR_ADDR;
 
 		stat->interrupt->gen1_pin1.mask = GEN1_PIN1_MASK;
@@ -639,16 +638,16 @@ static int lsm303d_hw_init(struct lsm303d_status *stat)
 		stat->interrupt->gen_mag_threshold.value = 0;
 
 		for(i=0; i<6; i++) {
-			stat->interrupt->gen1_axis[i].address = 
+			stat->interrupt->gen1_axis[i].address =
 							REG_GEN1_AXIS_ADDR;
-			stat->interrupt->gen2_axis[i].address = 
+			stat->interrupt->gen2_axis[i].address =
 							REG_GEN2_AXIS_ADDR;
 
 			atomic_set(&stat->interrupt->gen1_axis[i].enable, 0);
 			atomic_set(&stat->interrupt->gen2_axis[i].enable, 0);
 		}
 		for(i=0; i<3; i++) {
-			stat->interrupt->gen_mag_axis[i].address = 
+			stat->interrupt->gen_mag_axis[i].address =
 							REG_GEN_MAG_ADDR;
 			atomic_set(&stat->interrupt->gen_mag_axis[i].enable, 0);
 		}
@@ -720,7 +719,7 @@ static irqreturn_t lsm303d_isr2(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-static void lsm303d_interrupt_catch(struct lsm303d_status *stat, int pin ) 
+static void lsm303d_interrupt_catch(struct lsm303d_status *stat, int pin )
 {
 	u8 buf[2];
 	u8 val;
@@ -757,7 +756,7 @@ static void lsm303d_irq1_work_func(struct work_struct *work)
 	container_of(work, struct lsm303d_status, irq1_work);
 	/* TODO  add interrupt service procedure.
 		 ie:lsm303d_get_int1_source(stat); */
-	
+
 	lsm303d_interrupt_catch(stat,1);
 	pr_info("%s: IRQ1 triggered\n", LSM303D_DEV_NAME);
 //exit:
@@ -771,7 +770,7 @@ static void lsm303d_irq2_work_func(struct work_struct *work)
 	container_of(work, struct lsm303d_status, irq2_work);
 	/* TODO  add interrupt service procedure.
 		 ie:lsm303d_get_int2_source(stat); */
-	
+
 	lsm303d_interrupt_catch(stat,2);
 	pr_info("%s: IRQ2 triggered\n", LSM303D_DEV_NAME);
 //exit:
@@ -784,7 +783,7 @@ static int lsm303d_acc_device_power_off(struct lsm303d_status *stat)
 	u8 buf[2];
 
 	buf[0] = status_registers.cntrl1.address;
-	buf[1] = ((ODR_ACC_MASK & LSM303D_ACC_ODR_OFF) | 
+	buf[1] = ((ODR_ACC_MASK & LSM303D_ACC_ODR_OFF) |
 		((~ODR_ACC_MASK) & status_registers.cntrl1.resume_value));
 
 	err = lsm303d_i2c_write(stat, buf, 1);
@@ -795,7 +794,7 @@ static int lsm303d_acc_device_power_off(struct lsm303d_status *stat)
 	if (stat->pdata_acc->power_off) {
 		stat->pdata_acc->power_off();
 	}
-	
+
 	atomic_set(&stat->enabled_acc, 0);
 
 	return 0;
@@ -807,7 +806,7 @@ static int lsm303d_mag_device_power_off(struct lsm303d_status *stat)
 	u8 buf[2];
 
 	buf[0] = status_registers.cntrl7.address;
-	buf[1] = ((MSMS_MASK & POWEROFF_MAG) | 
+	buf[1] = ((MSMS_MASK & POWEROFF_MAG) |
 		((~MSMS_MASK) & status_registers.cntrl7.resume_value));
 
 	err = lsm303d_i2c_write(stat, buf, 1);
@@ -851,7 +850,7 @@ static int lsm303d_acc_device_power_on(struct lsm303d_status *stat)
 	buf[4] = status_registers.cntrl4.resume_value;
 	err = lsm303d_i2c_write(stat, buf, 4);
 	if (err < 0)
-		goto err_resume_state;	
+		goto err_resume_state;
 
 	buf[0] = status_registers.int_gen1_reg.address;
 	buf[1] = status_registers.int_gen1_reg.resume_value;
@@ -903,7 +902,7 @@ static int lsm303d_mag_device_power_on(struct lsm303d_status *stat)
 			return err;
 		}
 	}
-	
+
 	buf[0] = status_registers.cntrl0.address;
 	buf[1] = status_registers.cntrl0.resume_value;
 	err = lsm303d_i2c_write(stat, buf, 1);
@@ -918,7 +917,7 @@ static int lsm303d_mag_device_power_on(struct lsm303d_status *stat)
 
 	err = lsm303d_i2c_write(stat, buf, 4);
 	if (err < 0)
-		goto err_resume_state;	
+		goto err_resume_state;
 
 	buf[0] = status_registers.int_ctrl_reg_m.address;
 	buf[1] = status_registers.int_ctrl_reg_m.resume_value;
@@ -951,7 +950,7 @@ err_resume_state:
 	return err;
 }
 
-static int lsm303d_acc_update_filter(struct lsm303d_status *stat, 
+static int lsm303d_acc_update_filter(struct lsm303d_status *stat,
 							u8 new_bandwidth)
 {
 	int err=-1;
@@ -979,8 +978,8 @@ static int lsm303d_acc_update_filter(struct lsm303d_status *stat,
 	if (err < 0)
 		goto error;
 
-	status_registers.cntrl2.resume_value = buf[0];	
-	updated_val = ((LSM303D_ACC_FILTER_MASK & new_bandwidth) | 
+	status_registers.cntrl2.resume_value = buf[0];
+	updated_val = ((LSM303D_ACC_FILTER_MASK & new_bandwidth) |
 					((~LSM303D_ACC_FILTER_MASK) & buf[0]));
 	buf[1] = updated_val;
 	buf[0] = status_registers.cntrl2.address;
@@ -991,14 +990,14 @@ static int lsm303d_acc_update_filter(struct lsm303d_status *stat,
 	status_registers.cntrl2.resume_value = updated_val;
 
 	return err;
-	
+
 error:
 	dev_err(&stat->client->dev, "update accelerometer fs range failed "
 		"0x%02x,0x%02x: %d\n", buf[0], buf[1], err);
 	return err;
 }
 
-static int lsm303d_acc_update_fs_range(struct lsm303d_status *stat, 
+static int lsm303d_acc_update_fs_range(struct lsm303d_status *stat,
 								u8 new_fs_range)
 {
 	int err=-1;
@@ -1031,8 +1030,8 @@ static int lsm303d_acc_update_fs_range(struct lsm303d_status *stat,
 	if (err < 0)
 		goto error;
 
-	status_registers.cntrl2.resume_value = buf[0];	
-	updated_val = ((LSM303D_ACC_FS_MASK & new_fs_range) | 
+	status_registers.cntrl2.resume_value = buf[0];
+	updated_val = ((LSM303D_ACC_FS_MASK & new_fs_range) |
 					((~LSM303D_ACC_FS_MASK) & buf[0]));
 	buf[1] = updated_val;
 	buf[0] = status_registers.cntrl2.address;
@@ -1044,14 +1043,14 @@ static int lsm303d_acc_update_fs_range(struct lsm303d_status *stat,
 	stat->sensitivity_acc = sensitivity;
 
 	return err;
-	
+
 error:
 	dev_err(&stat->client->dev, "update accelerometer fs range failed "
 		"0x%02x,0x%02x: %d\n", buf[0], buf[1], err);
 	return err;
 }
 
-static int lsm303d_mag_update_fs_range(struct lsm303d_status *stat, 
+static int lsm303d_mag_update_fs_range(struct lsm303d_status *stat,
 								u8 new_fs_range)
 {
 	int err=-1;
@@ -1084,7 +1083,7 @@ static int lsm303d_mag_update_fs_range(struct lsm303d_status *stat,
 	if (err < 0)
 		goto error;
 
-	status_registers.cntrl6.resume_value = buf[0];	
+	status_registers.cntrl6.resume_value = buf[0];
 	updated_val = (LSM303D_MAG_FS_MASK & new_fs_range);
 	buf[1] = updated_val;
 	buf[0] = status_registers.cntrl6.address;
@@ -1096,7 +1095,7 @@ static int lsm303d_mag_update_fs_range(struct lsm303d_status *stat,
 	stat->sensitivity_mag = sensitivity;
 
 	return err;
-	
+
 error:
 	dev_err(&stat->client->dev, "update magnetometer fs range failed "
 		"0x%02x,0x%02x: %d\n", buf[0], buf[1], err);
@@ -1116,7 +1115,7 @@ static int lsm303d_acc_update_odr(struct lsm303d_status *stat,
 			break;
 	}
 
-	config[1] = ((ODR_ACC_MASK & lsm303d_acc_odr_table[i].value) | 
+	config[1] = ((ODR_ACC_MASK & lsm303d_acc_odr_table[i].value) |
 		((~ODR_ACC_MASK) & status_registers.cntrl1.resume_value));
 
 	if (atomic_read(&stat->enabled_acc)) {
@@ -1150,7 +1149,7 @@ static int lsm303d_mag_update_odr(struct lsm303d_status *stat,
 			break;
 	}
 
-	config[1] = ((ODR_MAG_MASK & lsm303d_mag_odr_table[i].value) | 
+	config[1] = ((ODR_MAG_MASK & lsm303d_mag_odr_table[i].value) |
 		((~ODR_MAG_MASK) & status_registers.cntrl5.resume_value));
 
 	if (atomic_read(&stat->enabled_mag)) {
@@ -1172,7 +1171,7 @@ error:
 }
 
 static void lsm303d_validate_polling(unsigned int *min_interval,
-					unsigned int *poll_interval, 
+					unsigned int *poll_interval,
 					unsigned int min,
 					struct i2c_client *client)
 {
@@ -1204,7 +1203,7 @@ static int lsm303d_acc_validate_pdata(struct lsm303d_status *stat)
 			break;
 		default:
 			dev_err(&stat->client->dev, "invalid accelerometer "
-				"bandwidth selected: %u\n", 
+				"bandwidth selected: %u\n",
 					stat->pdata_acc->aa_filter_bandwidth);
 	}
 
@@ -1315,8 +1314,8 @@ static int lsm303d_temperature_enable(struct lsm303d_status *stat)
 	if (err < 0)
 		goto error;
 
-	status_registers.cntrl5.resume_value = buf[0];	
-	updated_val = ((TEMP_MASK & TEMP_ON) | 
+	status_registers.cntrl5.resume_value = buf[0];
+	updated_val = ((TEMP_MASK & TEMP_ON) |
 					((~TEMP_MASK) & buf[0]));
 	buf[1] = updated_val;
 	buf[0] = status_registers.cntrl5.address;
@@ -1347,8 +1346,8 @@ static int lsm303d_temperature_disable(struct lsm303d_status *stat)
 	if (err < 0)
 		goto error;
 
-	status_registers.cntrl5.resume_value = buf[0];	
-	updated_val = ((TEMP_MASK & TEMP_OFF) | 
+	status_registers.cntrl5.resume_value = buf[0];
+	updated_val = ((TEMP_MASK & TEMP_OFF) |
 					((~TEMP_MASK) & buf[0]));
 	buf[1] = updated_val;
 	buf[0] = status_registers.cntrl5.address;
@@ -1749,12 +1748,13 @@ static ssize_t attr_set_cali_data_x(struct kobject *kobj,struct kobj_attribute *
 	if (strict_strtol(buf, 10, &val))
 		return -EINVAL;
 
-    printk("%s: ######val = %ld, board id is %d\n", __func__, val, board_id3);
+    printk("%s: ######val = %ld\n", __func__, val);
 	mutex_lock(&stat->lock);
-    if (board_id3 == 1)
-	    stat->pdata_acc->cali_sw[0] = -val;
-    else
-        stat->pdata_acc->cali_sw[1] = -val;
+#if defined(BLADE2_8)
+	stat->pdata_acc->cali_sw[1] = -val;
+#else
+	stat->pdata_acc->cali_sw[0] = -val;
+#endif
 
 	mutex_unlock(&stat->lock);
 	return size;
@@ -1781,12 +1781,13 @@ static ssize_t attr_set_cali_data_y(struct kobject *kobj,struct kobj_attribute *
 	if (strict_strtol(buf, 10, &val))
 		return -EINVAL;
 
-    printk("%s: ######val = %ld, board id is %d\n", __func__, val, board_id3);
+    printk("%s: ######val = %ld\n", __func__, val);
 	mutex_lock(&stat->lock);
-    if (board_id3 == 1)
-	    stat->pdata_acc->cali_sw[1] = -val;
-    else
-        stat->pdata_acc->cali_sw[0] = val;
+#if defined(BLADE2_8)
+	stat->pdata_acc->cali_sw[0] = val;
+#else
+	stat->pdata_acc->cali_sw[1] = -val;
+#endif
 
 	mutex_unlock(&stat->lock);
 	return size;
@@ -1802,6 +1803,19 @@ static ssize_t attr_get_cali_data_z(struct kobject *kobj,struct kobj_attribute *
 	cali_z =stat->pdata_acc->cali_sw[2];
 	mutex_unlock(&stat->lock);
 	return sprintf(buf, "x:%d y:%d z:%d\n", cali_x, cali_y, cali_z);
+}
+static int lsm303d_acc_get_data(struct lsm303d_status *stat, int *xyz);
+static ssize_t attr_get_gs_data(struct kobject *kobj,struct kobj_attribute *attr,char *buf)
+{
+    struct device *dev = to_dev(kobj->parent);
+	struct lsm303d_status *stat = dev_get_drvdata(dev);
+	int xyz[3] = { 0 };
+	int err;
+
+	mutex_lock(&stat->lock);
+    err = lsm303d_acc_get_data(stat, xyz);
+	mutex_unlock(&stat->lock);
+	return sprintf(buf, "%d %d %d\n", xyz[0]/1000, xyz[1]/1000, xyz[2]/1000);
 }
 
 static ssize_t attr_set_cali_data_z(struct kobject *kobj,struct kobj_attribute *attr,const char *buf, size_t size)
@@ -1831,7 +1845,7 @@ static ssize_t attr_get_temp_enable(struct device *dev,
 	return sprintf(buf, "%d\n", val);
 }
 
-static ssize_t attr_set_temp_enable(struct device *dev, 
+static ssize_t attr_set_temp_enable(struct device *dev,
 					struct device_attribute *attr,
 					const char *buf, size_t size)
 {
@@ -1865,7 +1879,7 @@ static ssize_t attr_get_temp(struct device *dev,
 
 	if(dec==NDTEMP)
 		return sprintf(buf, "n.d.\n");
-	
+
 	return sprintf(buf, "%d.%u\n", dec, flo);
 }
 
@@ -1873,7 +1887,7 @@ static struct kobj_attribute poll_attr_acc =
 __ATTR(pollrate_ms, 0644, attr_get_polling_rate_acc, attr_set_polling_rate_acc);
 static struct kobj_attribute enable_attr_acc =
 __ATTR(enable_device, 0644, attr_get_enable_acc, attr_set_enable_acc);
-static struct kobj_attribute fs_attr_acc = 
+static struct kobj_attribute fs_attr_acc =
 __ATTR(full_scale, 0644, attr_get_range_acc, attr_set_range_acc);
 static struct kobj_attribute aa_filter_attr  =
 __ATTR(anti_aliasing_frequency, 0644, attr_get_aa_filter, attr_set_aa_filter);
@@ -1885,6 +1899,8 @@ __ATTR(gsensor_cali_y, 0644, attr_get_cali_data_y, attr_set_cali_data_y);
 static struct kobj_attribute gs_cali_z =
 __ATTR(gsensor_cali_z, 0644, attr_get_cali_data_z, attr_set_cali_data_z);
 #endif
+static struct kobj_attribute gs_data =
+__ATTR(gsensor_data, 0444, attr_get_gs_data, NULL);
 static struct kobj_attribute poll_attr_mag =
 __ATTR(pollrate_ms, 0644, attr_get_polling_rate_mag, attr_set_polling_rate_mag);
 static struct kobj_attribute enable_attr_mag =
@@ -1892,7 +1908,7 @@ __ATTR(enable_device, 0644, attr_get_enable_mag, attr_set_enable_mag);
 static struct kobj_attribute fs_attr_mag =
 __ATTR(full_scale, 0644, attr_get_range_mag, attr_set_range_mag);
 
-static int write_bit_on_register(struct lsm303d_status *stat, u8 address, 
+static int write_bit_on_register(struct lsm303d_status *stat, u8 address,
 					u8 *resume_value, u8 mask, int value)
 {
 	int err;
@@ -1906,7 +1922,7 @@ static int write_bit_on_register(struct lsm303d_status *stat, u8 address,
 		return -1;
 
 	if(resume_value != NULL)
-		*resume_value = buf[0];	
+		*resume_value = buf[0];
 
 	if(mask == 0)
 		updated_val = (u8)value;
@@ -1929,8 +1945,8 @@ static int write_bit_on_register(struct lsm303d_status *stat, u8 address,
 	return err;
 }
 
-static int write_gen_int(struct lsm303d_status *stat, 
-					struct interrupt_enable *ie, int val) 
+static int write_gen_int(struct lsm303d_status *stat,
+					struct interrupt_enable *ie, int val)
 {
 	int err;
 
@@ -1947,8 +1963,8 @@ static int write_gen_int(struct lsm303d_status *stat,
 	return err;
 }
 
-static int write_duration_threshold_int(struct lsm303d_status *stat, 
-					struct interrupt_value *ie, int val) 
+static int write_duration_threshold_int(struct lsm303d_status *stat,
+					struct interrupt_value *ie, int val)
 {
 	int err;
 
@@ -1967,8 +1983,8 @@ static int write_duration_threshold_int(struct lsm303d_status *stat,
 	return err;
 }
 
-static int write_threshold_mag_int(struct lsm303d_status *stat, 
-					struct interrupt_value *ie, int val) 
+static int write_threshold_mag_int(struct lsm303d_status *stat,
+					struct interrupt_value *ie, int val)
 {
 	int err;
 	u8 high;
@@ -2027,11 +2043,11 @@ static ssize_t attr_set_gen1_status(struct kobject *kobj,
 		return -EINVAL;
 
 	if(strcmp(attr->attr.name, "pin1_enable") == 0) {
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 					&stat->interrupt->gen1_pin1, (int)val);
 	}
 	if(strcmp(attr->attr.name, "pin2_enable") == 0) {
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 					&stat->interrupt->gen1_pin2, (int)val);
 	}
 	return size;
@@ -2067,11 +2083,11 @@ static ssize_t attr_set_gen2_status(struct kobject *kobj,
 		return -EINVAL;
 
 	if(strcmp(attr->attr.name, "pin1_enable") == 0) {
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 					&stat->interrupt->gen2_pin1, (int)val);
 	}
 	if(strcmp(attr->attr.name, "pin2_enable") == 0) {
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 					&stat->interrupt->gen2_pin2, (int)val);
 	}
 	return size;
@@ -2101,9 +2117,9 @@ static ssize_t attr_set_gen1_duration(struct kobject *kobj,
 	if (strict_strtoul(buf, 10, &val))
 		return -EINVAL;
 
-	err = write_duration_threshold_int(stat, 
+	err = write_duration_threshold_int(stat,
 				&stat->interrupt->gen1_duration, (int)val);
-	
+
 	return size;
 }
 
@@ -2131,9 +2147,9 @@ static ssize_t attr_set_gen2_duration(struct kobject *kobj,
 	if (strict_strtoul(buf, 10, &val))
 		return -EINVAL;
 
-	err = write_duration_threshold_int(stat, 
+	err = write_duration_threshold_int(stat,
 				&stat->interrupt->gen2_duration, (int)val);
-	
+
 	return size;
 }
 
@@ -2161,9 +2177,9 @@ static ssize_t attr_set_gen1_threshold(struct kobject *kobj,
 	if (strict_strtoul(buf, 10, &val))
 		return -EINVAL;
 
-	err = write_duration_threshold_int(stat, 
+	err = write_duration_threshold_int(stat,
 				&stat->interrupt->gen1_threshold, (int)val);
-	
+
 	return size;
 }
 
@@ -2191,9 +2207,9 @@ static ssize_t attr_set_gen2_threshold(struct kobject *kobj,
 	if (strict_strtoul(buf, 10, &val))
 		return -EINVAL;
 
-	err = write_duration_threshold_int(stat, 
+	err = write_duration_threshold_int(stat,
 				&stat->interrupt->gen2_threshold, (int)val);
-	
+
 	return size;
 }
 
@@ -2227,20 +2243,20 @@ static ssize_t attr_set_gen_mag_status(struct kobject *kobj,
 		return -EINVAL;
 
 	if(strcmp(attr->attr.name, "pin1_enable") == 0) {
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 				&stat->interrupt->gen_mag_pin1, (int)val);
 		if(err >= 0) {
 		if((atomic_read(&stat->interrupt->gen_mag_pin2.enable))==0)
-			write_gen_int(stat, 
+			write_gen_int(stat,
 					&stat->interrupt->gen_mag, (int)val);
 		}
 	}
 	if(strcmp(attr->attr.name, "pin2_enable") == 0) {
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 				&stat->interrupt->gen_mag_pin2, (int)val);
 		if(err >= 0) {
 		if((atomic_read(&stat->interrupt->gen_mag_pin1.enable))==0)
-			write_gen_int(stat, 
+			write_gen_int(stat,
 					&stat->interrupt->gen_mag, (int)val);
 		}
 	}
@@ -2271,13 +2287,13 @@ static ssize_t attr_set_gen_mag_threshold(struct kobject *kobj,
 	if (strict_strtoul(buf, 10, &val))
 		return -EINVAL;
 
-	err = write_threshold_mag_int(stat, 
+	err = write_threshold_mag_int(stat,
 				&stat->interrupt->gen_mag_threshold, (int)val);
-	
+
 	return size;
 }
 
-static int get_axis(struct lsm303d_status *stat, 
+static int get_axis(struct lsm303d_status *stat,
 					int generator, const char *name) {
 
 	int val;
@@ -2310,8 +2326,8 @@ static int get_axis(struct lsm303d_status *stat,
 	return val;
 }
 
-static int set_axis(struct lsm303d_status *stat, int generator, 
-					const char *name, unsigned long value) 
+static int set_axis(struct lsm303d_status *stat, int generator,
+					const char *name, unsigned long value)
 {
 	int err = -1;
 	int axis;
@@ -2319,33 +2335,33 @@ static int set_axis(struct lsm303d_status *stat, int generator,
 	if(strcmp(name, "x_high_enable") == 0) {
 		axis = 3;
 	}
-	if((strcmp(name, "x_low_enable") == 0) || 
+	if((strcmp(name, "x_low_enable") == 0) ||
 					(strcmp(name, "x_enable") == 0)) {
 		axis = 0;
 	}
 	if(strcmp(name, "y_high_enable") == 0) {
 		axis = 4;
 	}
-	if((strcmp(name, "y_low_enable") == 0) || 
+	if((strcmp(name, "y_low_enable") == 0) ||
 					(strcmp(name, "y_enable") == 0)) {
 		axis = 1;
 	}
 	if(strcmp(name, "z_high_enable") == 0) {
 		axis = 5;
 	}
-	if((strcmp(name, "z_low_enable") == 0) || 
+	if((strcmp(name, "z_low_enable") == 0) ||
 					(strcmp(name, "z_enable") == 0)) {
 		axis = 2;
 	}
 
 	if(generator == 1)
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 			&(stat->interrupt->gen1_axis[axis]), (int)value);
 	if(generator == 2)
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 			&(stat->interrupt->gen2_axis[axis]), (int)value);
 	if(generator == 3)
-		err = write_gen_int(stat, 
+		err = write_gen_int(stat,
 			&(stat->interrupt->gen_mag_axis[axis]), (int)value);
 
 	if(err < 0)
@@ -2509,7 +2525,7 @@ static ssize_t attr_set_gen2_and_or(struct kobject *kobj,
 	return size;
 }
 
-static ssize_t attr_set_pin_conf(struct device *dev, 
+static ssize_t attr_set_pin_conf(struct device *dev,
 						struct device_attribute *attr,
 						const char *buf, size_t size)
 {
@@ -2521,7 +2537,7 @@ static ssize_t attr_set_pin_conf(struct device *dev,
 	if (strict_strtoul(buf, 10, &val))
 		return -EINVAL;
 
-	err = write_gen_int(stat, 
+	err = write_gen_int(stat,
 			&(stat->interrupt->interrupt_pin_conf), (int)val);
 	if(err < 0)
 		return -1;
@@ -2540,7 +2556,7 @@ static ssize_t attr_get_pin_conf(struct device *dev,
 	return sprintf(buf, "%d\n", val);
 }
 
-static ssize_t attr_set_interrupt_polarity(struct device *dev, 
+static ssize_t attr_set_interrupt_polarity(struct device *dev,
 						struct device_attribute *attr,
 						const char *buf, size_t size)
 {
@@ -2552,7 +2568,7 @@ static ssize_t attr_set_interrupt_polarity(struct device *dev,
 	if (strict_strtoul(buf, 10, &val))
 		return -EINVAL;
 
-	err = write_gen_int(stat, 
+	err = write_gen_int(stat,
 			&(stat->interrupt->interrupt_polarity), (int)val);
 	if(err < 0)
 		return -1;
@@ -2637,10 +2653,10 @@ static struct kobj_attribute gen_mag_z =
 __ATTR(z_enable, 0644, attr_get_gen_mag_axis, attr_set_gen_mag_axis);
 
 static struct kobj_attribute gen1_and_or =
-__ATTR(and(1)_or(0)_combination, 0644, attr_get_gen1_and_or, 
+__ATTR(and(1)_or(0)_combination, 0644, attr_get_gen1_and_or,
 							attr_set_gen1_and_or);
 static struct kobj_attribute gen2_and_or =
-__ATTR(and(1)_or(0)_combination, 0644, attr_get_gen2_and_or, 
+__ATTR(and(1)_or(0)_combination, 0644, attr_get_gen2_and_or,
 							attr_set_gen2_and_or);
 
 
@@ -2694,6 +2710,7 @@ static struct attribute *attributes_acc[] = {
 	&gs_cali_y.attr,
 	&gs_cali_z.attr,
 #endif
+    &gs_data.attr,
 	NULL,
 };
 
@@ -2728,15 +2745,15 @@ static struct attribute_group attr_group_int_mag = {
 };
 
 static struct device_attribute attributes_com[] = {
-	__ATTR(enable_temperature, 0644, attr_get_temp_enable, 
+	__ATTR(enable_temperature, 0644, attr_get_temp_enable,
 							attr_set_temp_enable),
 	__ATTR(read_temperature, 0444, attr_get_temp, NULL),
 };
 
 static struct device_attribute attributes_interrupt_com[] = {
-	__ATTR(interrupt_pin_configuration, 0644, attr_get_pin_conf, 
+	__ATTR(interrupt_pin_configuration, 0644, attr_get_pin_conf,
 						attr_set_pin_conf),
-	__ATTR(interrupt_polarity, 0644, attr_get_interrupt_polarity, 
+	__ATTR(interrupt_polarity, 0644, attr_get_interrupt_polarity,
 						attr_set_interrupt_polarity),
 };
 
@@ -2786,7 +2803,7 @@ static int create_sysfs_interfaces(struct device *dev)
 		if (device_create_file(dev, attributes_com + i))
 			goto error;
 
-	
+
 
 	return 0;
 
@@ -2850,7 +2867,7 @@ void lsm303d_mag_input_close(struct input_dev *dev)
 static int lsm303d_acc_get_data(struct lsm303d_status *stat, int *xyz)
 {
 	int i, err = -1;
-	u8 acc_data[6];
+	u8 acc_data[6] = { 0 };
 	s32 hw_d[3] = { 0 };
 
 	acc_data[0] = (REG_ACC_DATA_ADDR);
@@ -2914,15 +2931,21 @@ static int lsm303d_mag_get_data(struct lsm303d_status *stat, int *xyz)
 	hw_d[2] = hw_d[2] * stat->sensitivity_mag;
 
 	for (i = 0; i < 3; i++) {
+		/* Fix magnetometer bug. oujf1 */
+		/*
 		xyz[i] = stat->pdata_acc->rot_matrix[0][i] * hw_d[0] +
 				stat->pdata_acc->rot_matrix[1][i] * hw_d[1] +
 				stat->pdata_acc->rot_matrix[2][i] * hw_d[2];
+		*/
+		xyz[i] = stat->pdata_mag->rot_matrix[0][i] * hw_d[0] +
+				stat->pdata_mag->rot_matrix[1][i] * hw_d[1] +
+				stat->pdata_mag->rot_matrix[2][i] * hw_d[2];
 	}
 
 	return err;
 }
 
-static int lsm303d_temp_get_data(struct lsm303d_status *stat, 
+static int lsm303d_temp_get_data(struct lsm303d_status *stat,
 							int *dec, int *flo)
 {
 	int err = -1;
@@ -2935,7 +2958,7 @@ static int lsm303d_temp_get_data(struct lsm303d_status *stat,
 		return err;
 
 	hw_d = (s16)((temp_data[1] << 8) | (temp_data[0]));
-	
+
 
 #ifdef DEBUG
 	pr_debug("%s read T=%X %X(regH regL), T=%d(dec) [C]\n",
@@ -2986,11 +3009,11 @@ static int lsm303d_acc_input_init(struct lsm303d_status *stat)
 
 	set_bit(EV_ABS, stat->input_dev_acc->evbit);
 
-	input_set_abs_params(stat->input_dev_acc, ABS_X, 
+	input_set_abs_params(stat->input_dev_acc, ABS_X,
 				-ACC_G_MAX_NEG, ACC_G_MAX_POS, FUZZ, FLAT);
-	input_set_abs_params(stat->input_dev_acc, ABS_Y, 
+	input_set_abs_params(stat->input_dev_acc, ABS_Y,
 				-ACC_G_MAX_NEG, ACC_G_MAX_POS, FUZZ, FLAT);
-	input_set_abs_params(stat->input_dev_acc, ABS_Z, 
+	input_set_abs_params(stat->input_dev_acc, ABS_Z,
 				-ACC_G_MAX_NEG, ACC_G_MAX_POS, FUZZ, FLAT);
 
 	err = input_register_device(stat->input_dev_acc);
@@ -3031,11 +3054,11 @@ static int lsm303d_mag_input_init(struct lsm303d_status *stat)
 
 	set_bit(EV_ABS, stat->input_dev_mag->evbit);
 
-	input_set_abs_params(stat->input_dev_mag, ABS_X, 
+	input_set_abs_params(stat->input_dev_mag, ABS_X,
 				-MAG_G_MAX_NEG, MAG_G_MAX_POS, FUZZ, FLAT);
-	input_set_abs_params(stat->input_dev_mag, ABS_Y, 
+	input_set_abs_params(stat->input_dev_mag, ABS_Y,
 				-MAG_G_MAX_NEG, MAG_G_MAX_POS, FUZZ, FLAT);
-	input_set_abs_params(stat->input_dev_mag, ABS_Z, 
+	input_set_abs_params(stat->input_dev_mag, ABS_Z,
 				-MAG_G_MAX_NEG, MAG_G_MAX_POS, FUZZ, FLAT);
 
 	err = input_register_device(stat->input_dev_mag);
@@ -3152,10 +3175,10 @@ static int lsm303d_probe(struct i2c_client *client,
 	struct lsm303d_status *stat;
 	u32 smbus_func;
 	int err = -1;
-	
+
 	printk("%s\n",__func__);
 
-	smbus_func = I2C_FUNC_SMBUS_BYTE_DATA | 
+	smbus_func = I2C_FUNC_SMBUS_BYTE_DATA |
 			I2C_FUNC_SMBUS_WORD_DATA | I2C_FUNC_SMBUS_I2C_BLOCK;
 
 	dev_info(&client->dev, "probe start.\n");
@@ -3174,7 +3197,7 @@ static int lsm303d_probe(struct i2c_client *client,
 		if (i2c_check_functionality(client->adapter, smbus_func)){
 			stat->use_smbus = 1;
 			dev_warn(&client->dev, "client using SMBUS\n");
-		} else {			
+		} else {
 			err = -ENODEV;
 			dev_err(&client->dev, "client nor SMBUS capable\n");
 			goto exit_check_functionality_failed;
@@ -3216,7 +3239,7 @@ static int lsm303d_probe(struct i2c_client *client,
 					"accelerometer and magnetometer\n");
 	} else {
 		struct lsm303d_main_platform_data *tmp;
-		tmp = kzalloc(sizeof(struct lsm303d_main_platform_data), 
+		tmp = kzalloc(sizeof(struct lsm303d_main_platform_data),
 								GFP_KERNEL);
 		if(tmp == NULL)
 			goto exit_kfree_pdata;
@@ -3227,7 +3250,7 @@ static int lsm303d_probe(struct i2c_client *client,
 			dev_info(&client->dev, "using default plaform_data for "
 							"accelerometer\n");
 		} else {
-			memcpy(stat->pdata_acc, tmp->pdata_acc, 
+			memcpy(stat->pdata_acc, tmp->pdata_acc,
 						sizeof(*stat->pdata_acc));
 		}
 		if(tmp->pdata_mag == NULL) {
@@ -3236,7 +3259,7 @@ static int lsm303d_probe(struct i2c_client *client,
 			dev_info(&client->dev, "using default plaform_data for "
 							"magnetometer\n");
 		} else {
-			memcpy(stat->pdata_mag, tmp->pdata_mag, 
+			memcpy(stat->pdata_mag, tmp->pdata_mag,
 						sizeof(*stat->pdata_mag));
 		}
 		kfree(tmp);
@@ -3275,7 +3298,7 @@ static int lsm303d_probe(struct i2c_client *client,
 
 	//stat->pdata_acc->gpio_int1 = get_gpio_by_name("accel_int1");
 	//stat->pdata_acc->gpio_int1 = 2;
-	
+
 	if(stat->pdata_acc->gpio_int1 >= 0) {
 		if (!gpio_is_valid(stat->pdata_acc->gpio_int1)) {
   			dev_err(&client->dev, "The requested GPIO [%d] is not "
@@ -3283,8 +3306,8 @@ static int lsm303d_probe(struct i2c_client *client,
 			err = -EINVAL;
   			goto err_gpio1_valid;
 		}
-		
-		err = gpio_request(stat->pdata_acc->gpio_int1, 
+
+		err = gpio_request(stat->pdata_acc->gpio_int1,
 						"INTERRUPT_PIN1_LSM303D");
 		if(err < 0) {
 			dev_err(&client->dev, "Unable to request GPIO [%d].\n",
@@ -3305,9 +3328,9 @@ static int lsm303d_probe(struct i2c_client *client,
 						stat->pdata_acc->gpio_int1);
 	}
 
-	//stat->pdata_acc->gpio_int2 = get_gpio_by_name("accel_int2"); 
-	//stat->pdata_acc->gpio_int2 = 3; 
-	
+	//stat->pdata_acc->gpio_int2 = get_gpio_by_name("accel_int2");
+	//stat->pdata_acc->gpio_int2 = 3;
+
 
 	dev_info(&client->dev, "pdata_acc--gpio_int1:%d, gpio_int2:%d\n", stat->pdata_acc->gpio_int1, stat->pdata_acc->gpio_int2); //zfming
 	if(stat->pdata_acc->gpio_int2 >= 0) {
@@ -3317,8 +3340,8 @@ static int lsm303d_probe(struct i2c_client *client,
 			err = -EINVAL;
   			goto err_gpio2_valid;
 		}
-		
-		err = gpio_request(stat->pdata_acc->gpio_int2, 
+
+		err = gpio_request(stat->pdata_acc->gpio_int2,
 						"INTERRUPT_PIN2_LSM303D");
 		if(err < 0) {
 			dev_err(&client->dev, "Unable to request GPIO [%d].\n",
@@ -3386,7 +3409,7 @@ static int lsm303d_probe(struct i2c_client *client,
 		goto  err_power_off;
 	}
 
-	err = lsm303d_acc_update_filter(stat, 
+	err = lsm303d_acc_update_filter(stat,
 					stat->pdata_acc->aa_filter_bandwidth);
 	if (err < 0) {
 		dev_err(&client->dev, "update_filter on accelerometer "
@@ -3614,7 +3637,7 @@ static void lsm303d_lateresume(struct early_suspend *handler)
 
 static const struct i2c_device_id lsm303d_id[] = {
 		 { LSM303D_DEV_NAME, 0 },
-		 { }, 
+		 { },
 };
 
 MODULE_DEVICE_TABLE(i2c, lsm303d_id);
@@ -3669,7 +3692,7 @@ static void __exit lsm303d_exit(void)
 	i2c_del_driver(&lsm303d_driver);
 }
 
-module_init(lsm303d_init);
+fs_initcall(lsm303d_init);
 module_exit(lsm303d_exit);
 
 MODULE_DESCRIPTION("lsm303d accelerometer and magnetometer driver");

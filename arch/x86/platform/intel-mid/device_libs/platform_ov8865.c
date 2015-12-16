@@ -20,6 +20,9 @@
 #ifdef CONFIG_VLV2_PLAT_CLK
 #include <linux/vlv2_plat_clock.h>
 #endif
+#ifdef CONFIG_INTEL_SOC_PMC
+#include <asm/intel_soc_pmc.h>
+#endif
 
 #include "platform_camera.h"
 #include "platform_ov8865.h"
@@ -41,6 +44,16 @@
 #define OSC_CAM0_CLK 0x0
 #define CLK_19P2MHz 0x1
 #endif
+
+#ifdef CONFIG_INTEL_SOC_PMC
+#define OSC_CAM1_CLK 0x0
+#define CLK_19P2MHz 0x1
+/* workaround - use xtal for cht */
+#define CLK_19P2MHz_XTAL 0x0
+#define CLK_ON  0x1
+#define CLK_OFF 0x2
+#endif
+
 #ifdef CONFIG_CRYSTAL_COVE
 #define VPROG_2P8V 0x66		/* +V2P85SX */
 #define VPROG_1P8V 0x5D		/* +V1P8SX	*/
@@ -92,6 +105,8 @@ static void ov8865_verify_gpio_power(void)
 	OV8865_PLAT_LOG(1,"VPROG_3P3V  addr:0x%x value:%x\n", VPROG_3P3V, intel_mid_pmic_readb(VPROG_3P3V));
 	OV8865_PLAT_LOG(1,"VPROG_2P8V  addr:0x%x value:%x\n", VPROG_2P8V, intel_mid_pmic_readb(VPROG_2P8V));
 	OV8865_PLAT_LOG(1,"VPROG_1P8V  addr:0x%x value:%x\n", VPROG_1P8V, intel_mid_pmic_readb(VPROG_1P8V));
+
+
 }
 static int ov8865_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 {
@@ -116,15 +131,39 @@ static int ov8865_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 
 static int ov8865_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 {
+	ov8865_verify_gpio_power();
+#ifdef CONFIG_INTEL_SOC_PMC
+        int ret = 0;
+        if (flag) {
+                ret = pmc_pc_set_freq(0, (IS_CHT) ?
+                        CLK_19P2MHz_XTAL : CLK_19P2MHz);
+                if (ret) {
+                        return ret;
+                }
+                usleep_range(2000, 2500);
+                return pmc_pc_configure(0, CLK_ON);
+        }
+        return pmc_pc_configure(0, CLK_OFF);
+#elif defined(CONFIG_INTEL_SCU_IPC_UTIL)
+        static const unsigned int clock_khz = 19200;
+        return intel_scu_ipc_osc_clk(OSC_CLK_CAM0,
+                                     flag ? clock_khz : 0);
+#else
+        pr_err("ov8865 clock is not set.\n");
+        return 0;
+#endif
+
+#if 0
 	static const unsigned int clock_khz = 19200;
 	OV8865_PLAT_LOG(1,"%s %d flag:%d\n", __func__, __LINE__, flag);
 	ov8865_verify_gpio_power();
+
 #ifdef CONFIG_VLV2_PLAT_CLK
 	if (flag) {
 		int ret;
 		ret = vlv2_plat_set_clock_freq(OSC_CAM0_CLK, CLK_19P2MHz);
-		if (ret)
-			return ret;
+		if (ret) {
+			return ret;}
 	}
 	usleep_range(2000, 2500);
 	OV8865_PLAT_LOG(1,"%s %d VLV2 PLAT sleep 2ms for clock to stable\n", __func__, __LINE__);
@@ -135,6 +174,8 @@ static int ov8865_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 #else
 	pr_err("ov8865 clock is not set.\n");
 	return 0;
+#endif
+
 #endif
 }
 static int ov8865_power_pins(void)
@@ -217,7 +258,6 @@ static int ov8865_power_ctrl(struct v4l2_subdev *sd, int flag)
 {
 	int ret = 0;
 	int value = 0;
-
 	ov8865_power_pins();
 	if (flag) {
 		if (!camera_vprog1_on) {
@@ -240,7 +280,7 @@ static int ov8865_power_ctrl(struct v4l2_subdev *sd, int flag)
 			gpio_set_value(camera_reset, 1); /* reset is active low */
 		      /* ov8865 reset pulse should be more than 2ms
 		      */
-		      usleep_range(3500, 4000);
+		        usleep_range(3500, 4000);
 			/* VCM 2P8 power on*/
 			OV8865_PLAT_LOG(1,"try to enable VPROG_2P8V\n");
 			ret = intel_mid_pmic_writeb(VPROG_2P8V, VPROG_ENABLE);
@@ -254,7 +294,7 @@ static int ov8865_power_ctrl(struct v4l2_subdev *sd, int flag)
 		#endif
 
 			gpio_set_value(camera_dvdd_en, 1);
-			//gpio_set_value(camera_vcm_en, 1);
+			gpio_set_value(camera_vcm_en, 1);
 			usleep_range(1000, 1500);
 
 			#elif defined(CONFIG_INTEL_SCU_IPC_UTIL)
@@ -274,7 +314,7 @@ static int ov8865_power_ctrl(struct v4l2_subdev *sd, int flag)
 #ifdef CONFIG_CRYSTAL_COVE
 			/* power down sequence control via GPIO*/
 			gpio_set_value(camera_dvdd_en, 0);
-			//gpio_set_value(camera_vcm_en, 0);
+			gpio_set_value(camera_vcm_en, 0);
 			usleep_range(2500, 3500);
 			//gpio_set_value(camera_power_down, 0);
 			//gpio_set_value(camera_dovdd_en, 0);

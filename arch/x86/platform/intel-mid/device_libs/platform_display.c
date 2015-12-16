@@ -67,5 +67,5 @@ static int __init platform_display_module_init(void)
 	return -EPERM;
 }
 
-module_init(platform_display_module_init);
+rootfs_initcall(platform_display_module_init);
 

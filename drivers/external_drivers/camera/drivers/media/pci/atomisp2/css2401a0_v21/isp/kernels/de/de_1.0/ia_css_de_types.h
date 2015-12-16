@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_DE_TYPES_H
 #define __IA_CSS_DE_TYPES_H
 
+/** @file
+* CSS-API header file for Demosaic (bayer-to-YCgCo) parameters.
+*/
+
 /** Demosaic (bayer-to-YCgCo) configuration.
  *
  *  ISP block: DE1

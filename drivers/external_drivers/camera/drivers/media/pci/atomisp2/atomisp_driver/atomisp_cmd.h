@@ -31,13 +31,9 @@
 #include <media/v4l2-subdev.h>
 
 #include "atomisp_internal.h"
-
-#ifdef CSS20
+#include <linux/hid-holtekff.h>
 #include "ia_css_types.h"
 #include "ia_css.h"
-#else /* CSS20 */
-#include "sh_css_types.h"
-#endif /* CSS20 */
 
 struct atomisp_device;
 struct atomisp_css_frame;
@@ -92,11 +88,6 @@ int atomisp_get_frame_pgnr(struct atomisp_device *isp,
 void atomisp_delayed_init_work(struct work_struct *work);
 
 /*
- * CSI-2 receiver configuration
- */
-void atomisp_set_term_en_count(struct atomisp_device *isp);
-
-/*
  * Get internal fmt according to V4L2 fmt
  */
 
@@ -124,6 +115,9 @@ int atomisp_low_light(struct atomisp_sub_device *asd, int flag,
  * condition
  */
 int atomisp_xnr(struct atomisp_sub_device *asd, int flag, int *arg);
+
+int atomisp_formats(struct atomisp_sub_device *asd, int flag,
+		struct atomisp_formats_config *config);
 
 /*
  * Function to configure noise reduction
@@ -184,6 +178,12 @@ int atomisp_get_dis_stat(struct atomisp_sub_device *asd,
 			 struct atomisp_dis_statistics *stats);
 
 /*
+ * Function to get DVS2 BQ resolution settings
+ */
+int atomisp_get_dvs2_bq_resolutions(struct atomisp_sub_device *asd,
+			 struct atomisp_dvs2_bq_resolutions *bq_res);
+
+/*
  * Function to set the DIS coefficients.
  */
 int atomisp_set_dis_coefs(struct atomisp_sub_device *asd,
@@ -201,9 +201,17 @@ int atomisp_set_dis_vector(struct atomisp_sub_device *asd,
 int atomisp_3a_stat(struct atomisp_sub_device *asd, int flag,
 		    struct atomisp_3a_statistics *config);
 
-int atomisp_set_parameters(struct atomisp_sub_device *asd,
-		struct atomisp_parameters *arg);
+/*
+ * Function to get metadata from isp
+ */
+int atomisp_get_metadata(struct atomisp_sub_device *asd, int flag,
+			 struct atomisp_metadata *config);
 
+int atomisp_get_metadata_by_type(struct atomisp_sub_device *asd, int flag,
+			 struct atomisp_metadata_with_type *config);
+
+int atomisp_set_parameters(struct video_device *vdev,
+			struct atomisp_parameters *arg);
 /*
  * Function to set/get isp parameters to isp
  */
@@ -268,22 +276,20 @@ int atomisp_3a_config_param(struct atomisp_sub_device *asd, int flag,
 			    struct atomisp_3a_config *config);
 
 /*
- * Function to enable/disable lens shading correction
- */
-int atomisp_shading_correction(struct atomisp_sub_device *asd, int flag,
-				       __s32 *value);
-
-/*
  * Function to setup digital zoom
  */
 int atomisp_digital_zoom(struct atomisp_sub_device *asd, int flag,
 			 __s32 *value);
 
-#ifdef CSS20
-int atomisp_set_dvs_6axis_config(struct atomisp_sub_device *asd,
-					  struct atomisp_dvs_6axis_config
-					  *user_6axis_config);
-#endif
+/*
+ * Function to get current sensor output effective resolution
+ */
+int atomisp_get_effective_res(struct atomisp_sub_device *asd,
+			struct atomisp_resolution  *config);
+
+int atomisp_cp_dvs_6axis_config(struct atomisp_sub_device *asd,
+			struct atomisp_dvs_6axis_config *user_6axis_config,
+			struct atomisp_css_params *css_param);
 
 int atomisp_compare_grid(struct atomisp_sub_device *asd,
 				struct atomisp_grid_info *atomgrid);
@@ -301,7 +307,6 @@ int atomisp_try_fmt(struct video_device *vdev, struct v4l2_format *f,
 int atomisp_set_fmt(struct video_device *vdev, struct v4l2_format *f);
 int atomisp_set_fmt_file(struct video_device *vdev, struct v4l2_format *f);
 
-void atomisp_free_all_shading_tables(struct atomisp_device *isp);
 int atomisp_set_shading_table(struct atomisp_sub_device *asd,
 			      struct atomisp_shading_table *shading_table);
 
@@ -314,13 +319,16 @@ int atomisp_exif_makernote(struct atomisp_sub_device *asd,
 			   struct atomisp_makernote_info *config);
 
 void atomisp_free_internal_buffers(struct atomisp_sub_device *asd);
-void atomisp_free_3a_dis_buffers(struct atomisp_sub_device *asd);
+
+int atomisp_s_ae_window(struct atomisp_sub_device *asd,
+			struct atomisp_ae_window *arg);
 
 int  atomisp_flash_enable(struct atomisp_sub_device *asd,
 			  int num_frames);
 
 int atomisp_freq_scaling(struct atomisp_device *vdev,
-			 enum atomisp_dfs_mode mode);
+			 enum atomisp_dfs_mode mode,
+			 bool force);
 
 void atomisp_buf_done(struct atomisp_sub_device *asd, int error,
 		      enum atomisp_css_buffer_type buf_type,
@@ -330,4 +338,60 @@ void atomisp_buf_done(struct atomisp_sub_device *asd, int error,
 void atomisp_css_flush(struct atomisp_device *isp);
 int atomisp_source_pad_to_stream_id(struct atomisp_sub_device *asd,
 					   uint16_t source_pad);
+
+/*
+ * Events. Only one event has to be exported for now.
+ */
+void atomisp_eof_event(struct atomisp_sub_device *asd, uint8_t exp_id);
+
+mipi_port_ID_t __get_mipi_port(struct atomisp_device *isp,
+				enum atomisp_camera_port port);
+
+bool atomisp_is_vf_pipe(struct atomisp_video_pipe *pipe);
+
+void atomisp_apply_css_parameters(
+				struct atomisp_sub_device *asd,
+				struct atomisp_parameters *arg,
+				struct atomisp_css_params *css_param);
+void atomisp_free_css_parameters(struct atomisp_css_params *css_param);
+
+void atomisp_handle_parameter_and_buffer(struct atomisp_video_pipe *pipe);
+
+void atomisp_flush_params_queue(struct atomisp_video_pipe *asd);
+/*
+ * Function to do Raw Buffer related operation, after enable Lock Unlock Raw Buffer
+ */
+int atomisp_exp_id_unlock(struct atomisp_sub_device *asd, int *exp_id);
+int atomisp_exp_id_capture(struct atomisp_sub_device *asd, int *exp_id);
+
+/*
+ * Function to update Raw Buffer bitmap
+ */
+int atomisp_set_raw_buffer_bitmap(struct atomisp_sub_device *asd, int exp_id);
+void atomisp_init_raw_buffer_bitmap(struct atomisp_sub_device *asd);
+
+/*
+ * Function to enable/disable zoom for capture pipe
+ */
+int atomisp_enable_dz_capt_pipe(struct atomisp_sub_device *asd,
+					   unsigned int *enable);
+
+/*
+ * Function to get metadata type bu pipe id
+ */
+enum atomisp_metadata_type
+atomisp_get_metadata_type(struct atomisp_sub_device *asd,
+			  enum ia_css_pipe_id pipe_id);
+
+/*
+ * Function for HAL to inject a fake event to wake up poll thread
+ */
+int atomisp_inject_a_fake_event(struct atomisp_sub_device *asd, int *event);
+
+/*
+ * Function for HAL to query how many invalid frames at the beginning of ISP
+ * pipeline output
+ */
+int atomisp_get_invalid_frame_num(struct video_device *vdev,
+			int *invalid_frame_num);
 #endif /* __ATOMISP_CMD_H__ */

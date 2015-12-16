@@ -60,7 +60,6 @@ __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
 
 EXPORT_SYMBOL(__mutex_init);
 
-#ifndef CONFIG_DEBUG_LOCK_ALLOC
 /*
  * We split the mutex lock/unlock logic into separate fastpath and
  * slowpath functions, to reduce the register pressure on the fastpath.
@@ -71,7 +70,7 @@ static __used noinline void __sched
 __mutex_lock_slowpath(atomic_t *lock_count);
 
 /**
- * mutex_lock - acquire the mutex
+ * _mutex_lock - acquire the mutex
  * @lock: the mutex to be acquired
  *
  * Lock the mutex exclusively for this task. If the mutex is not
@@ -91,7 +90,7 @@ __mutex_lock_slowpath(atomic_t *lock_count);
  *
  * This function is similar to (but not equivalent to) down().
  */
-void __sched mutex_lock(struct mutex *lock)
+void __sched _mutex_lock(struct mutex *lock)
 {
 	might_sleep();
 	/*
@@ -102,8 +101,7 @@ void __sched mutex_lock(struct mutex *lock)
 	mutex_set_owner(lock);
 }
 
-EXPORT_SYMBOL(mutex_lock);
-#endif
+EXPORT_SYMBOL(_mutex_lock);
 
 #ifdef CONFIG_MUTEX_SPIN_ON_OWNER
 /*
@@ -411,8 +409,12 @@ done:
 void __sched
 mutex_lock_nested(struct mutex *lock, unsigned int subclass)
 {
-	might_sleep();
-	__mutex_lock_common(lock, TASK_UNINTERRUPTIBLE, subclass, NULL, _RET_IP_);
+	if (likely(!debug_locks))
+		_mutex_lock(lock);
+	else {
+		might_sleep();
+		__mutex_lock_common(lock, TASK_UNINTERRUPTIBLE, subclass, NULL, _RET_IP_);
+	}
 }
 
 EXPORT_SYMBOL_GPL(mutex_lock_nested);
@@ -429,6 +431,9 @@ EXPORT_SYMBOL_GPL(_mutex_lock_nest_lock);
 int __sched
 mutex_lock_killable_nested(struct mutex *lock, unsigned int subclass)
 {
+	if (likely(!debug_locks))
+		return _mutex_lock_killable(lock);
+
 	might_sleep();
 	return __mutex_lock_common(lock, TASK_KILLABLE, subclass, NULL, _RET_IP_);
 }
@@ -437,6 +442,9 @@ EXPORT_SYMBOL_GPL(mutex_lock_killable_nested);
 int __sched
 mutex_lock_interruptible_nested(struct mutex *lock, unsigned int subclass)
 {
+	if (likely(!debug_locks))
+		return _mutex_lock_interruptible(lock);
+
 	might_sleep();
 	return __mutex_lock_common(lock, TASK_INTERRUPTIBLE,
 				   subclass, NULL, _RET_IP_);
@@ -489,7 +497,6 @@ __mutex_unlock_slowpath(atomic_t *lock_count)
 	__mutex_unlock_common_slowpath(lock_count, 1);
 }
 
-#ifndef CONFIG_DEBUG_LOCK_ALLOC
 /*
  * Here come the less common (and hence less performance-critical) APIs:
  * mutex_lock_interruptible() and mutex_trylock().
@@ -511,7 +518,7 @@ __mutex_lock_interruptible_slowpath(atomic_t *lock_count);
  *
  * This function is similar to (but not equivalent to) down_interruptible().
  */
-int __sched mutex_lock_interruptible(struct mutex *lock)
+int __sched _mutex_lock_interruptible(struct mutex *lock)
 {
 	int ret;
 
@@ -524,9 +531,9 @@ int __sched mutex_lock_interruptible(struct mutex *lock)
 	return ret;
 }
 
-EXPORT_SYMBOL(mutex_lock_interruptible);
+EXPORT_SYMBOL(_mutex_lock_interruptible);
 
-int __sched mutex_lock_killable(struct mutex *lock)
+int __sched _mutex_lock_killable(struct mutex *lock)
 {
 	int ret;
 
@@ -538,7 +545,7 @@ int __sched mutex_lock_killable(struct mutex *lock)
 
 	return ret;
 }
-EXPORT_SYMBOL(mutex_lock_killable);
+EXPORT_SYMBOL(_mutex_lock_killable);
 
 static __used noinline void __sched
 __mutex_lock_slowpath(atomic_t *lock_count)
@@ -563,7 +570,6 @@ __mutex_lock_interruptible_slowpath(atomic_t *lock_count)
 
 	return __mutex_lock_common(lock, TASK_INTERRUPTIBLE, 0, NULL, _RET_IP_);
 }
-#endif
 
 /*
  * Spinlock based trylock, we take the spinlock and check whether we

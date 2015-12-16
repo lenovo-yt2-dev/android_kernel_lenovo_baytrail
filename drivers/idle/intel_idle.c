@@ -62,6 +62,7 @@
 #include <linux/cpu.h>
 #include <linux/module.h>
 #include <linux/intel_mid_pm.h>
+#include <linux/pm_qos.h>
 #include <asm/cpu_device_id.h>
 #include <asm/mwait.h>
 #include <asm/msr.h>
@@ -77,6 +78,15 @@
 #define CLPU_MD_C6_POLICY_CONFIG	0x669
 #define DISABLE_CORE_C6_DEMOTION	0x0
 #define DISABLE_MODULE_C6_DEMOTION	0x0
+
+#ifdef CONFIG_MOOREFIELD
+#define S0I1_DISPLAY_MODE		(1 << 8)
+#define PUNIT_PORT			0x04
+#define DSP_SS_PM			0x36
+#define S0i1_LATENCY			1200
+#define LOW_LATENCY_S0I1		1000
+#define S0I1_STATE			0x60
+#endif
 
 static struct cpuidle_driver intel_idle_driver = {
 	.name = "intel_idle",
@@ -771,6 +781,20 @@ static unsigned int get_target_residency(unsigned int cstate)
 }
 #endif
 
+#ifdef CONFIG_MOOREFIELD
+/* MOFD: Optimize special variants of S0i1 where low residency is sufficient */
+int low_latency_s0ix_state(int eax)
+{
+	u32 dsp_ss_pm_val;
+
+	dsp_ss_pm_val = intel_mid_msgbus_read32(PUNIT_PORT, DSP_SS_PM);
+	if (dsp_ss_pm_val & S0I1_DISPLAY_MODE)
+		eax = S0I1_STATE;
+
+	return eax;
+}
+#endif
+
 /**
  * intel_idle
  * @dev: cpuidle_device
@@ -787,6 +811,9 @@ static int intel_idle(struct cpuidle_device *dev,
 	unsigned long eax = flg2MWAIT(state->flags);
 	unsigned int cstate;
 	int cpu = smp_processor_id();
+#ifdef CONFIG_MOOREFIELD
+	int latency_req = pm_qos_request(PM_QOS_CPU_DMA_LATENCY);
+#endif
 
 #if (defined(CONFIG_REMOVEME_INTEL_ATOM_MRFLD_POWER) && \
 	defined(CONFIG_PM_DEBUG))
@@ -817,13 +844,16 @@ static int intel_idle(struct cpuidle_device *dev,
 					(void *)&current_thread_info()->flags,
 					0);
 #else
+
+#ifdef CONFIG_MOOREFIELD
+		if (eax >= C6_HINT && latency_req > S0i1_LATENCY
+			&& per_cpu(predicted_time, cpu) > LOW_LATENCY_S0I1)
+			eax = low_latency_s0ix_state(eax);
+#endif
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 		smp_mb();
-		if (!need_resched()) {
-			trace_printk("+%s, eax=0x%x, ecx=0x%x, cstate=%d\n", __func__, eax, ecx, cstate);
+		if (!need_resched())
 			__mwait(eax, ecx);
-			trace_printk("-%s, eax=0x%x, ecx=0x%x, cstate=%d\n", __func__, eax, ecx, cstate);
-        }
 #if defined(CONFIG_REMOVEME_INTEL_ATOM_MDFLD_POWER) || \
 	defined(CONFIG_REMOVEME_INTEL_ATOM_CLV_POWER)
 		if (!need_resched() && is_irq_pending() == 0)
@@ -963,7 +993,7 @@ static const struct x86_cpu_id intel_idle_ids[] = {
 	ICPU(0x2f, idle_cpu_nehalem),
 	ICPU(0x2a, idle_cpu_snb),
 	ICPU(0x2d, idle_cpu_snb),
-	ICPU(0x30, idle_cpu_chv),
+	ICPU(0x4c, idle_cpu_chv),
 	ICPU(0x37, idle_cpu_vlv),
 	ICPU(0x3a, idle_cpu_ivb),
 	ICPU(0x3e, idle_cpu_ivb),
@@ -1058,7 +1088,7 @@ static int intel_idle_cpuidle_driver_init(void)
 	drv->state_count = 1;
 
 	for (cstate = 0; cstate < CPUIDLE_STATE_MAX; ++cstate) {
-		int num_substates, mwait_hint, mwait_cstate, mwait_substate;
+		int num_substates = 0, mwait_hint, mwait_cstate, mwait_substate;
 
 		if (cpuidle_state_table[cstate].enter == NULL)
 			break;
@@ -1079,7 +1109,7 @@ static int intel_idle_cpuidle_driver_init(void)
 		 * as these are not real C states supported by the CPU, they
 		 * are emulated c states for s0ix support.
 		*/
-		if ((cstate + 1) < 6) {
+		if ((mwait_cstate + 1) <= 6) {
 			num_substates = (mwait_substates >> ((mwait_cstate + 1) * 4))
 					& MWAIT_SUBSTATE_MASK;
 			if (num_substates == 0)
@@ -1087,7 +1117,7 @@ static int intel_idle_cpuidle_driver_init(void)
 		}
 
 #if !defined(CONFIG_ATOM_SOC_POWER)
-		if (boot_cpu_data.x86_model != 0x37) {
+		if ((boot_cpu_data.x86_model != 0x37) && (boot_cpu_data.x86_model != 0x4c)) {
 			/* if sub-state in table is not enumerated by CPUID */
 			if ((mwait_substate + 1) > num_substates)
 				continue;
@@ -1154,7 +1184,7 @@ static int intel_idle_cpu_init(int cpu)
 		 * as these are not real C states supported by the CPU, they
 		 * are emulated c states for s0ix support.
 		 */
-		if ((cstate + 1) < 6) {
+		if ((mwait_cstate + 1) <= 6) {
 			num_substates = (mwait_substates >> ((mwait_cstate + 1) * 4))
 					& MWAIT_SUBSTATE_MASK;
 			if (num_substates == 0)
@@ -1162,7 +1192,7 @@ static int intel_idle_cpu_init(int cpu)
 		}
 
 #if !defined(CONFIG_ATOM_SOC_POWER)
-		if (boot_cpu_data.x86_model != 0x37) {
+		if ((boot_cpu_data.x86_model != 0x37) && (boot_cpu_data.x86_model != 0x4c)) {
 			/* if sub-state in table is not enumerated by CPUID */
 			if ((mwait_substate + 1) > num_substates)
 				continue;
@@ -1182,7 +1212,7 @@ static int intel_idle_cpu_init(int cpu)
 	if (icpu->auto_demotion_disable_flags)
 		smp_call_function_single(cpu, auto_demotion_disable, NULL, 1);
 
-	__get_cpu_var(update_buckets) = 1;
+	per_cpu(update_buckets, cpu) = 1;
 
 	return 0;
 }
@@ -1219,7 +1249,7 @@ static int __init intel_idle_init(void)
 			return retval;
 		}
 
-		if (platform_is(INTEL_ATOM_BYT)) {
+		if (platform_is(INTEL_ATOM_BYT) || platform_is(INTEL_ATOM_CHT)) {
 			/* Disable automatic core C6 demotion by PUNIT */
 			if (wrmsr_on_cpu(i, CLPU_CR_C6_POLICY_CONFIG,
 					DISABLE_CORE_C6_DEMOTION, 0x0))

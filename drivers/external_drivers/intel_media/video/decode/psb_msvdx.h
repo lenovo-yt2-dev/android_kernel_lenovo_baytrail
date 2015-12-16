@@ -55,7 +55,6 @@ int psb_msvdx_init(struct drm_device *dev);
 int psb_msvdx_uninit(struct drm_device *dev);
 int psb_msvdx_core_reset(struct drm_psb_private *dev_priv);
 
-int tng_msvdx_fw_init(uint8_t *name,struct drm_device *dev);
 int psb_msvdx_post_init(struct drm_device *dev);
 
 /* TODO: psb_msvdx_reset is used for the case of fw loading by driver
@@ -227,7 +226,6 @@ struct msvdx_private {
 	int msvdx_fw_size;
 
 	uint32_t fw_b0_uploaded;
-	uint32_t msvdx_hw_busy;
 
 	uint32_t vec_ec_mem_data[5];
 	uint32_t vec_ec_mem_saved;
@@ -273,13 +271,12 @@ struct psb_msvdx_cmd_queue {
 	void *cmd;
 	unsigned long cmd_size;
 	uint32_t sequence;
-	uint32_t fence_flag;
 	uint32_t msvdx_tile;
 	uint32_t host_be_opp_enabled;
 	uint32_t deblock_cmd_offset;
 	struct ttm_object_file *tfile;
 	struct psb_video_ctx *msvdx_ctx;
-	int frame_boundary;
+	int frame_boundary; /* this command is frame end if true */
 };
 
 #ifdef CONFIG_VIDEO_MRFLD

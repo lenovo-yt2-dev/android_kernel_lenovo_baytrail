@@ -241,7 +241,6 @@ void dlp_get_device_info(struct dlp_driver *drv,
 		pr_err(DRVNAME ": Disabling driver. No known device.");
 	}
 
- out:
 	return;
 }
 
@@ -1266,15 +1265,14 @@ int dlp_hsi_controller_push(struct dlp_xfer_ctx *xfer_ctx, struct hsi_msg *pdu)
 		err = -EAGAIN;
 		goto out;
 	}
-
-	/* Decrease counters values */
-	if (pdu->ttype == HSI_MSG_WRITE) {
+	if (pdu->ttype == HSI_MSG_WRITE)
 		xfer_ctx->channel->credits--;
-		xfer_ctx->seq_num++;
-	}
 	spin_unlock_irqrestore(&ch_ctx->lock, flags);
 
 	write_lock_irqsave(&xfer_ctx->lock, flags);
+	/* Increase seq_num value */
+	if (pdu->ttype == HSI_MSG_WRITE)
+		xfer_ctx->seq_num++;
 	xfer_ctx->room -= lost_room;
 	xfer_ctx->ctrl_len++;
 	write_unlock_irqrestore(&xfer_ctx->lock, flags);
@@ -1288,13 +1286,8 @@ int dlp_hsi_controller_push(struct dlp_xfer_ctx *xfer_ctx, struct hsi_msg *pdu)
 		if (state != DLP_CH_STATE_OPENED) {
 			pr_err(DRVNAME ": Can't push PDU for CH%d => invalid state: %d\n",
 					ch_ctx->ch_id, state);
-			/* Don't set back credit value as modem could have
-			 * updated credit in the meantime. It's better getting
-			 * one credit less than risking a protocol violation.
-			 * Correct credit value will be updated later by modem.
-			 */
 			err = -EACCES;
-			goto out;
+			goto out_restore_counts;
 		}
 	}
 
@@ -1304,14 +1297,18 @@ int dlp_hsi_controller_push(struct dlp_xfer_ctx *xfer_ctx, struct hsi_msg *pdu)
 			mod_timer(&dlp_drv.timer[ch_ctx->ch_id],
 				  jiffies + usecs_to_jiffies(DLP_HANGUP_DELAY));
 		}
-	} else {
-		unsigned int ctrl_len;
+	} else
 		pr_err(DRVNAME ": hsi_async(ctrl_push) failed (%d)", err);
 
+out_restore_counts:
+	if (err) {
 		/* Failed to send pdu, set back counters values;
 		 * excepted credit value as modem could have updated
-		 * credit value in the meantime.
+		 * credit value in the meantime. It's better getting
+		 * one credit less than risking a protocol violation.
+		 * Correct credit value will be updated later by modem.
 		 */
+		unsigned int ctrl_len;
 		write_lock_irqsave(&xfer_ctx->lock, flags);
 		xfer_ctx->room += lost_room;
 		xfer_ctx->ctrl_len--;
@@ -1863,6 +1860,8 @@ static int dlp_driver_probe(struct device *dev)
 
 		dlp_drv.channels_hsi[i].edlp_channel = i;
 	}
+	/* By default, associate trace channel to edlp channel 4 */
+	dlp_drv.channels_hsi[hsi_ch[DLP_CHANNEL_TRACE]].edlp_channel = DLP_CHANNEL_TRACE;
 
 	/* HSI client events callback  */
 	dlp_drv.ehandler = dlp_hsi_ehandler;
@@ -1893,19 +1892,13 @@ static int dlp_driver_remove(struct device *dev)
 {
 	struct hsi_client *client = to_hsi_client(dev);
 
-	/* Set TTY as closed to prevent RX/TX transaction */
-	dlp_tty_set_link_valid(1, 0);
-
 	pr_debug(DRVNAME ": driver removed\n");
+
+	unregister_reboot_notifier(&dlp_drv.nb);
 
 	/* Unregister HSI events */
 	if (hsi_port_claimed(client))
 		hsi_unregister_port_event(client);
-
-	unregister_reboot_notifier(&dlp_drv.nb);
-
-	/* Cleanup all channels */
-	dlp_driver_cleanup();
 
 	/* UnClaim the HSI port */
 	dlp_hsi_port_unclaim();
@@ -1915,15 +1908,30 @@ static int dlp_driver_remove(struct device *dev)
 
 	/* Free allocated memory */
 	dlp_driver_delete();
+
 	return 0;
 }
 
+/**
+ * dlp_driver_shutdown - freeze a context from the DLP driver
+ * @dev: a reference to the device requiring the context
+ *
+ * Returns 0 on success or an error code
+ *
+ * This function is freezing all resources hold by the context attached to the
+ * requesting HSI device.
+ */
 static void dlp_driver_shutdown(struct device *dev)
 {
 	pr_debug(DRVNAME ": driver shutdown\n");
 
-	/* Clear context as when removing the driver */
-	dlp_driver_remove(dev);
+	/* Set TTY as closed to prevent RX/TX transaction */
+	dlp_tty_set_link_valid(1, 0);
+
+	/* Cleanup all channels */
+	dlp_driver_cleanup();		// Mandatory to stop rx/tx timers
+
+	return;
 }
 
 /*

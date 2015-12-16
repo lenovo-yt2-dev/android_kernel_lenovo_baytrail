@@ -589,14 +589,14 @@ end:
 	return size;
 }
 
-static KOBJ_MIP_ATTR(data, S_IRUGO|S_IWUSR, mip_data_show, mip_data_store);
-static KOBJ_MIP_ATTR(len, S_IRUGO|S_IWUSR, mip_len_show, mip_len_store);
-static KOBJ_MIP_ATTR(offset, S_IRUGO|S_IWUSR, mip_offset_show,
+static KOBJ_MIP_ATTR(data, S_IRUSR|S_IWUSR, mip_data_show, mip_data_store);
+static KOBJ_MIP_ATTR(len, S_IRUSR|S_IWUSR, mip_len_show, mip_len_store);
+static KOBJ_MIP_ATTR(offset, S_IRUSR|S_IWUSR, mip_offset_show,
 		mip_offset_store);
-static KOBJ_MIP_ATTR(issigned, S_IRUGO|S_IWUSR, mip_issigned_show,
+static KOBJ_MIP_ATTR(issigned, S_IRUSR|S_IWUSR, mip_issigned_show,
 		mip_issigned_store);
 static KOBJ_MIP_ATTR(cmd, S_IWUSR, NULL, mip_cmd_store);
-static KOBJ_MIP_ATTR(error, S_IRUGO, mip_error_show, NULL);
+static KOBJ_MIP_ATTR(error, S_IRUSR, mip_error_show, NULL);
 
 static struct attribute *mip_attrs[] = {
 	&data_attr.attr,

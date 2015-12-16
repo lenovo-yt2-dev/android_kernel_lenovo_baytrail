@@ -133,6 +133,20 @@ config PS_STM8T143
           STM8T143 proxmity sensor Driver
           Say y here to enable.
 
+config PS_SX9500
+       bool "SX9500 proxmity sensor Driver"
+       default n
+       help
+          SX9500 proxmity sensor Driver
+          Say y here to enable.
+
+config ALSPS_JSA1212
+       bool "JSA ALS and PS sensor Driver"
+       default n
+       help
+          JSA ALS and PS sensor Driver
+          Say y here to enable.
+
 config SENSOR_SAR_CAP
        tristate  "cypress SAR sensor"
        depends on I2C && INPUT

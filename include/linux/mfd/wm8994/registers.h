@@ -2017,6 +2017,7 @@
 #define WM8958_MICB2_DISCH_MASK                 0x0001  /* MICB2_DISCH */
 #define WM8958_MICB2_DISCH_SHIFT                     0  /* MICB2_DISCH */
 #define WM8958_MICB2_DISCH_WIDTH                     1  /* MICB2_DISCH */
+#define WM8958_MICB2_LVL_2P6V			   0x7	/* MICB2_LVL_VAL: 2.6V */
 
 /*
  * R210 (0xD2) - Mic Detect 3

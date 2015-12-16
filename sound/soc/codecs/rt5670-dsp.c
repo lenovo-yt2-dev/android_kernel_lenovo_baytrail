@@ -907,7 +907,14 @@ int rt5670_dsp_ioctl_common(struct snd_hwdep *hw,
 
 	struct rt_codec_cmd __user *_rt_codec = (struct rt_codec_cmd *)arg;
 	struct snd_soc_codec *codec = hw->private_data;
-	struct rt5670_priv *rt5670 = snd_soc_codec_get_drvdata(codec);
+	struct rt5670_priv *rt5670;
+
+	if (codec == NULL)
+		return -EINVAL;
+
+	rt5670 = snd_soc_codec_get_drvdata(codec);
+	if (!rt5670)
+		return -EFAULT;
 
 	if (copy_from_user(&rt_codec, _rt_codec, sizeof(rt_codec))) {
 		dev_err(codec->dev, "copy_from_user faild\n");
@@ -940,10 +947,6 @@ int rt5670_dsp_ioctl_common(struct snd_hwdep *hw,
 		break;
 
 	case RT_WRITE_CODEC_DSP_IOCTL:
-		if (codec == NULL) {
-			dev_dbg(codec->dev, "codec is null\n");
-			break;
-		}
 		for (p = buf; p < buf + rt_codec.number / 2; p++)
 			rt5670_dsp_write(codec, *p, *(p + rt_codec.number / 2));
 		break;

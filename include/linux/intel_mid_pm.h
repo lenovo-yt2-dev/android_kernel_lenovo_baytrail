@@ -24,7 +24,6 @@
 #include <asm/intel-mid.h>
 #include <linux/init.h>
 #include <linux/pci.h>
-#include <linux/pm_qos.h>
 
 
 /* Chip ID of Intel Atom SOC*/
@@ -34,6 +33,7 @@
 #define INTEL_ATOM_MRFLD 0x4a
 #define INTEL_ATOM_BYT 0x37
 #define INTEL_ATOM_MOORFLD 0x5a
+#define INTEL_ATOM_CHT 0x4c
 
 static inline int platform_is(u8 model)
 {
@@ -63,8 +63,8 @@ static inline int platform_is(u8 model)
 #define OSPM_DISPLAY_C_ISLAND  0x100
 #define OSPM_MIPI_ISLAND       0x200
 
-/* North Complex power islands definitions for Tangier, Baytrail, Cherrytrail */
-#define ISP_PWR_ISLAND		0x1
+/* North Complex power islands definitions for Tangier */
+#define TNG_ISP_ISLAND		0x1
 /* North Complex Register definitions for Tangier */
 #define	ISP_SS_PM0		0x39
 
@@ -108,9 +108,6 @@ enum s3_parts {
 	PROC_UNFRZ,
 	MAX_S3_PARTS
 };
-
-#define PCI_DEVICE_ID_IUNIT_CHT		0x22b8
-#define PCI_DEVICE_ID_IUNIT_BYT		0x0f38
 
 #ifdef CONFIG_ATOM_SOC_POWER
 #define LOG_PMU_EVENTS
@@ -177,7 +174,9 @@ extern bool pmu_is_s0ix_in_progress(void);
 extern int pmu_nc_set_power_state
 	(int islands, int state_type, int reg_type);
 extern int pmu_nc_get_power_state(int island, int reg_type);
+extern void pmu_set_s0i1_disp_vote(bool enable);
 extern int pmu_set_emmc_to_d0i0_atomic(void);
+extern bool pmu_pci_power_manageable(struct pci_dev *pdev);
 
 #ifdef LOG_PMU_EVENTS
 extern void pmu_log_ipc(u32 command);
@@ -191,14 +190,6 @@ extern void dump_nc_power_history(void);
 extern bool mid_pmu_is_wake_source(u32 lss_number);
 
 extern void (*nc_report_power_state) (u32, int);
-
-
-static inline int byt_cht_pci_power_manageable(struct pci_dev *dev)
-					{ return false; }
-static inline pci_power_t byt_cht_pci_choose_state(struct pci_dev *dev)
-					{ return PCI_POWER_ERROR; }
-static inline int byt_cht_pci_set_power_state(struct pci_dev *dev,
-					pci_power_t state) { return -EINVAL; }
 #else
 
 /*
@@ -224,6 +215,7 @@ static inline int byt_cht_pci_set_power_state(struct pci_dev *dev,
 static inline int pmu_nc_set_power_state
 	(int islands, int state_type, int reg_type) { return 0; }
 static inline int pmu_nc_get_power_state(int island, int reg_type) { return 0; }
+static inline void pmu_set_s0i1_disp_vote(bool enable) { return; }
 
 static inline void pmu_set_s0ix_complete(void) { return; }
 static inline bool pmu_is_s0ix_in_progress(void) { return false; };
@@ -242,59 +234,6 @@ static inline void pmu_log_ipc_irq(void) { return; };
 static inline int pmu_set_emmc_to_d0i0_atomic(void) { return -ENOSYS; }
 static inline void pmu_power_off(void) { return; }
 static inline bool mid_pmu_is_wake_source(u32 lss_number) { return false; }
-extern int pmc_nc_set_power_state(int islands, int state_type, int reg);
-
-/*
- * following changes for BYT/CHT I-Unit is due to sighting 4591287,
- * accessing to PCI registers after power off I-Unit would cause hang
- */
-static inline int byt_cht_pci_power_manageable(struct pci_dev *dev)
-{
-	return (dev->vendor == PCI_VENDOR_ID_INTEL && (
-		dev->device == PCI_DEVICE_ID_IUNIT_CHT ||
-		dev->device == PCI_DEVICE_ID_IUNIT_BYT));
-}
-
-static inline pci_power_t byt_cht_pci_choose_state(struct pci_dev *dev)
-{
-	if (!byt_cht_pci_power_manageable(dev))
-		return PCI_POWER_ERROR;
-
-	/*
-	 * Use D3cold for ATOMISP as after power off, kernel
-	 * wouldn't access PCI space.
-	 */
-	return PCI_D3cold;
-}
-
-static inline int byt_cht_pci_set_power_state(struct pci_dev *dev,
-					  pci_power_t state)
-{
-	int error = -EINVAL;
-
-	if (!byt_cht_pci_power_manageable(dev))
-		return error;
-
-	switch (state) {
-	case PCI_D0:
-		error = pmc_nc_set_power_state(ISP_PWR_ISLAND,
-				OSPM_ISLAND_UP, 0x39);
-		break;
-	case PCI_D1:
-	case PCI_D2:
-	case PCI_D3cold:
-		if (dev_pm_qos_flags(&dev->dev, PM_QOS_FLAG_NO_POWER_OFF) ==
-				PM_QOS_FLAGS_ALL) {
-			error = -EBUSY;
-			break;
-		}
-	case PCI_D3hot:
-		error = pmc_nc_set_power_state(ISP_PWR_ISLAND,
-				OSPM_ISLAND_DOWN, 0x39);
-		break;
-	}
-	return error;
-}
 #endif /* #ifdef CONFIG_ATOM_SOC_POWER */
 
 #endif /* #ifndef INTEL_MID_PM_H */

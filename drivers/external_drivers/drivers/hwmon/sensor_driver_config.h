@@ -106,13 +106,20 @@ struct ifelse_action {
 	__s16 num_else;
 }__attribute__ ((packed));
 
+/*
+* extern_c_action of lowlevel_action
+*/
+struct externc_action {
+	__u32 index;
+};
+
 /* General Lowlevel Action
 *   used to descript sensor_action by developer
 *   extend new type of lowlevel action here
 */
 enum action_lowlevel {
 	DATA = 0, SLEEP, IFELSE,
-	RETURN, SWITCH, ACTION_RESERVE
+	RETURN, SWITCH, EXTERNC, ACTION_RESERVE
 };
 
 struct lowlevel_action {
@@ -121,6 +128,7 @@ struct lowlevel_action {
 		struct data_action data;
 		struct sleep_action sleep;
 		struct ifelse_action ifelse;
+		struct externc_action externc;
 	} action;
 }__attribute__ ((packed));
 
@@ -304,5 +312,8 @@ struct sensor_config_image {
 /*the way to start parse*/
 #define SG_START		0x1
 #define SG_FORCE_START		0x2
+
+/*maxium number of external c functions*/
+#define MAX_EXTERN_C            100
 
 #endif

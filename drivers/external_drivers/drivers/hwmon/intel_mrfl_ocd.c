@@ -57,6 +57,15 @@
 #define CAMFLASH_STATE_NORMAL	0
 #define CAMFLASH_STATE_CRITICAL	3
 
+#define PMIC_ID_ADDR		0x00
+#define PMIC_CHIP_ID_SC_B0_VAL	0x08
+
+/* The registers listed below no longer exist for shadycove PMIC-BO */
+#define PMIC_B0_BCU_NOP_ADDRx42		(6)	/* VFLEXSRC_BEH_REG  - 0x5E42	*/
+#define PMIC_B0_BCU_NOP_ADDRx43		(7)	/* VFLEXDIS_BEH_REG  - 0x5E43	*/
+#define PMIC_B0_BCU_NOP_ADDRx45		(9)	/* CAMFLTORCH_BEH_REG - 0x5E45	*/
+#define PMIC_B0_BCU_NOP_ADDRX46		(10)	/* CAMFLDIS_BEH_REG  - 0x5E46	*/
+
 /* 'enum' of BCU events */
 enum bcu_events { VWARN1, VWARN2, VCRIT, GSMPULSE, TXPWRTH, UNKNOWN, __COUNT };
 
@@ -161,6 +170,7 @@ static int program_bcu(void *ocd_smip_addr)
 {
 	int ret, i;
 	u8 *smip_data;
+	uint8_t pmic_id;
 
 	if (!ocd_smip_addr)
 		return -ENXIO;
@@ -168,7 +178,19 @@ static int program_bcu(void *ocd_smip_addr)
 	smip_data = (u8 *)ocd_smip_addr;
 	mutex_lock(&ocd_update_lock);
 
+	/* Get PMIC ID */
+	ret = intel_scu_ipc_ioread8(PMIC_ID_ADDR, &pmic_id);
+	if (ret) {
+		pr_err("Error reading PMIC ID register\n");
+		goto ipc_fail;
+	}
+
+	/* Skipping write to registers for shadycove B0	*/
 	for (i = 0; i < NUM_SMIP_BYTES-1; i++, smip_data++) {
+		if ((i == PMIC_B0_BCU_NOP_ADDRx42 || i == PMIC_B0_BCU_NOP_ADDRx43 ||
+			i == PMIC_B0_BCU_NOP_ADDRx45 || i == PMIC_B0_BCU_NOP_ADDRX46)
+			&& (pmic_id == PMIC_CHIP_ID_SC_B0_VAL))
+			continue;
 		ret = intel_scu_ipc_iowrite8(VWARN1_CFG + i, *smip_data);
 		if (ret)
 			goto ipc_fail;
@@ -620,23 +642,44 @@ static inline int bcu_get_battery_voltage(int *volt)
 	return ret;
 }
 
+/**
+ * Initiate Graceful Shutdown by setting the SOC to 0% via battery driver and
+ * post the power supply changed event to indicate the change in battery level.
+ */
+static inline int bcu_action_voltage_drop(void)
+{
+	struct power_supply *psy;
+	union power_supply_propval val;
+	int ret;
+
+	psy = get_psy_battery();
+	if (!psy)
+		return -EINVAL;
+
+	/* setting battery capacity to 0 */
+	val.intval = 0;
+	ret = psy->set_property(psy, POWER_SUPPLY_PROP_CAPACITY, &val);
+	if (ret < 0)
+		return ret;
+
+	power_supply_changed(psy);
+	return 0;
+}
+
 static void handle_VW1_event(void *dev_data)
 {
-	uint8_t irq_status, beh_data;
+	uint8_t irq_status;
 	struct ocd_info *cinfo = (struct ocd_info *)dev_data;
 	int ret;
-	char *bcu_envp[2];
 
 	dev_info(cinfo->dev, "EM_BCU: VWARN1 Event has occured\n");
 
-	/**
-	 * Notify using uevent along with env info. Here sending vwarn2 info
-	 * upon receiving vwarn1 interrupt since the vwarn1 & vwarn2 threshold
-	 * values is swapped.
-	 */
-	bcu_envp[0] = get_envp(VWARN2);
-	bcu_envp[1] = NULL;
-	kobject_uevent_env(&cinfo->dev->kobj, KOBJ_CHANGE, bcu_envp);
+	/* Trigger graceful shutdown via battery driver by setting SOC to 0% */
+	dev_info(cinfo->dev, "EM_BCU: Trigger Graceful Shutdown\n");
+	ret = bcu_action_voltage_drop();
+	if (ret)
+		dev_err(cinfo->dev,
+			"EM_BCU: Error in Triggering Graceful Shutdown\n");
 
 	/**
 	 * Masking the BCU MVWARN1 Interrupt, since software does graceful
@@ -673,18 +716,8 @@ static void handle_VW2_event(void *dev_data)
 	uint8_t irq_status, beh_data;
 	struct ocd_info *cinfo = (struct ocd_info *)dev_data;
 	int ret;
-	char *bcu_envp[2];
 
 	dev_info(cinfo->dev, "EM_BCU: VWARN2 Event has occured\n");
-
-	/**
-	 * Notify using uevent along with env info. Here sending vwarn1 info
-	 * upon receiving vwarn2 interrupt since the vwarn1 & vwarn2 threshold
-	 * values is swapped.
-	 */
-	bcu_envp[0] = get_envp(VWARN1);
-	bcu_envp[1] = NULL;
-	kobject_uevent_env(&cinfo->dev->kobj, KOBJ_CHANGE, bcu_envp);
 
 	ret = intel_scu_ipc_ioread8(S_BCUINT, &irq_status);
 	if (ret)
@@ -761,15 +794,9 @@ ipc_fail:
 static void handle_VC_event(void *dev_data)
 {
 	struct ocd_info *cinfo = (struct ocd_info *)dev_data;
-	char *bcu_envp[2];
 	int ret = 0;
 
 	dev_info(cinfo->dev, "EM_BCU: VCRIT Event has occured\n");
-
-	/* Notify using uevent along with env info */
-	bcu_envp[0] = get_envp(VCRIT);
-	bcu_envp[1] = NULL;
-	kobject_uevent_env(&cinfo->dev->kobj, KOBJ_CHANGE, bcu_envp);
 
 	/**
 	 * Masking BCU VCRIT Interrupt, since hardware does critical hardware

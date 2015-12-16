@@ -52,8 +52,10 @@ const struct ia_css_fc_config default_fc_config = {
 void
 ia_css_ynr_encode(
 	struct sh_css_isp_yee2_params *to,
-	const struct ia_css_ynr_config *from)
+	const struct ia_css_ynr_config *from,
+	unsigned size)
 {
+	(void)size;
 	to->edge_sense_gain_0   = from->edge_sense_gain_0;
 	to->edge_sense_gain_1   = from->edge_sense_gain_1;
 	to->corner_sense_gain_0 = from->corner_sense_gain_0;
@@ -63,8 +65,10 @@ ia_css_ynr_encode(
 void
 ia_css_fc_encode(
 	struct sh_css_isp_fc_params *to,
-	const struct ia_css_fc_config *from)
+	const struct ia_css_fc_config *from,
+	unsigned size)
 {
+	(void)size;
 	to->gain_exp   = from->gain_exp;
 
 	to->coring_pos_0 = from->coring_pos_0;

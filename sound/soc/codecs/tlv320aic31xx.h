@@ -288,9 +288,14 @@ void aic31xx_btn_press_intr_enable(struct snd_soc_codec *codec,
 #define AIC31XX_DACSINT_MASK				0x02
 #define AIC31XX_DACAINT_MASK				0x01
 
+/* Sticky Interrupt flags 1 and 2 registers (ADC) */
+#define AIC31XX_INTRADCFLAG				0xAD
+
 /* Interrupt flags register */
 #define AIC31XX_INTRFLAG				0xAE
 #define AIC31XX_BTNPRESS_STATUS_MASK			0x20
+#define AIC31XX_HEADSET_STATUS_MASK			0x10
+#define AIC31XX_BTN_HS_STATUS_MASK (AIC31XX_BTNPRESS_STATUS_MASK|AIC31XX_HEADSET_STATUS_MASK)
 
 /* INT1 interrupt control */
 #define AIC31XX_INT1CTRL				0xB0
@@ -328,6 +333,7 @@ void aic31xx_btn_press_intr_enable(struct snd_soc_codec *codec,
 #define AIC31XX_HS_MASK					(0b01100000)
 #define AIC31XX_HP_MASK					(0b00100000)
 #define AIC31XX_JACK_DEBOUCE_MASK			(0b00011100)
+#define AIC31XX_BTN_DEBOUCE_MASK			(0b00000011)
 #define AIC31XX_ADCSETUP				0xD1
 #define AIC31XX_ADCFGA				0xD2
 #define AIC31XX_ADCMUTE_MASK			0x80

@@ -26,9 +26,8 @@
 #include <linux/device.h>
 #include <linux/miscdevice.h>
 #include <linux/usb/debug.h>
-#include <linux/sdm.h>
 
-#define TRACE_TX_REQ_MAX 3
+#include <linux/usb/dvctrace_io.h>
 
 #define CONFIG_BOARD_MRFLD_VV
 
@@ -41,19 +40,14 @@ struct dvc_trace_dev {
 
 	struct usb_ep *ep_in;
 
-	int online;
 	int online_data;
 	int online_ctrl;
-	int transfering;
-	int error;
 
+	atomic_t status;
 	atomic_t write_excl;
 	atomic_t open_excl;
 
 	wait_queue_head_t write_wq;
-
-	struct list_head tx_idle;
-	struct list_head tx_xfer;
 };
 
 static struct usb_interface_assoc_descriptor trace_iad_desc = {
@@ -273,6 +267,9 @@ static struct usb_gadget_strings *trace_strings[] = {
 	NULL,
 };
 
+static struct dvc_io *_dvc_io;
+static atomic_t dvc_io_registered;
+
 /* temporary var used between dvc_trace_open() and dvc_trace_gadget_bind() */
 static struct dvc_trace_dev *_dvc_trace_dev;
 
@@ -280,86 +277,13 @@ static inline struct dvc_trace_dev *func_to_dvc_trace(struct usb_function *f)
 {
 	return container_of(f, struct dvc_trace_dev, function);
 }
-
 static int dvc_trace_is_enabled(void)
 {
-	if (!stm_is_enabled()) {
-		pr_info("%s STM/PTI block is not enabled\n", __func__);
-		return 0;
-	}
-	return 1;
-}
+	if (atomic_read(&dvc_io_registered))
+		return _dvc_io->is_io_enabled();
 
-static struct usb_request *dvc_trace_request_new(struct usb_ep *ep,
-					 int buffer_size, dma_addr_t dma)
-{
-	struct usb_request *req = usb_ep_alloc_request(ep, GFP_KERNEL);
-	if (!req)
-		return NULL;
-
-	req->dma = dma;
-	/* now allocate buffers for the requests */
-	req->buf = kmalloc(buffer_size, GFP_KERNEL);
-	if (!req->buf) {
-		usb_ep_free_request(ep, req);
-		return NULL;
-	}
-
-	return req;
-}
-
-static void dvc_trace_request_free(struct usb_request *req, struct usb_ep *ep)
-{
-	if (req) {
-		kfree(req->buf);
-		usb_ep_free_request(ep, req);
-	}
-}
-
-/* add a request to the tail of a list */
-static void dvc_trace_req_put(struct dvc_trace_dev *dev, struct list_head *head,
-		struct usb_request *req)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&dev->lock, flags);
-	list_add_tail(&req->list, head);
-	spin_unlock_irqrestore(&dev->lock, flags);
-}
-
-/* remove a request from the head of a list */
-static struct usb_request *dvc_trace_req_get(struct dvc_trace_dev *dev,
-			struct list_head *head)
-{
-	unsigned long flags;
-	struct usb_request *req;
-
-	spin_lock_irqsave(&dev->lock, flags);
-	if (list_empty(head)) {
-		req = 0;
-	} else {
-		req = list_first_entry(head, struct usb_request, list);
-		list_del(&req->list);
-	}
-	spin_unlock_irqrestore(&dev->lock, flags);
-	return req;
-}
-
-static void dvc_trace_set_disconnected(struct dvc_trace_dev *dev)
-{
-	dev->transfering = 0;
-}
-
-static void dvc_trace_complete_in(struct usb_ep *ep, struct usb_request *req)
-{
-	struct dvc_trace_dev *dev = _dvc_trace_dev;
-
-	if (req->status != 0)
-		dvc_trace_set_disconnected(dev);
-
-	dvc_trace_req_put(dev, &dev->tx_idle, req);
-
-	wake_up(&dev->write_wq);
+	pr_info("%s DvC Trace is not enabled", __func__);
+	return 0;
 }
 
 static inline int dvc_trace_lock(atomic_t *excl)
@@ -377,15 +301,42 @@ static inline void dvc_trace_unlock(atomic_t *excl)
 	atomic_dec(excl);
 }
 
+/* This function assumes write_excl is locked */
+static ssize_t dvc_trace_wait_for_enumeration(void)
+{
+	struct dvc_trace_dev *dev = _dvc_trace_dev;
+	int ret;
+
+	/* we will block until enumeration completes */
+	while (!DVC_IO_STATUS_GET(&dev->status, DVC_IO_MASK_ONLINE|DVC_IO_MASK_ERROR)) {
+		pr_debug("%s: waiting for online state\n", __func__);
+		ret = wait_event_interruptible(dev->write_wq,
+				DVC_IO_STATUS_GET(&dev->status, DVC_IO_MASK_ONLINE|DVC_IO_MASK_ERROR));
+
+		if (ret >= 0)
+			continue;
+
+		/* not at CONFIGURED state */
+		pr_info("%s !dev->online already\n", __func__);
+		return ret;
+	}
+	return 0;
+}
+
+
 static int trace_create_bulk_endpoints(struct dvc_trace_dev *dev,
 				       struct usb_endpoint_descriptor *in_desc,
 				       struct usb_ss_ep_comp_descriptor *in_comp_desc
 	)
 {
-	struct usb_composite_dev *cdev = dev->cdev;
-	struct usb_request *req;
+	struct usb_composite_dev *cdev;
 	struct usb_ep *ep;
-	int i;
+
+	if (!dev || !in_desc || !in_comp_desc)
+		return -EINVAL;
+	cdev = dev->cdev;
+	if (!cdev || !cdev->gadget)
+		return -ENODEV;
 
 	pr_debug("%s dev: %p\n", __func__, dev);
 
@@ -400,29 +351,15 @@ static int trace_create_bulk_endpoints(struct dvc_trace_dev *dev,
 	ep->driver_data = dev;		/* claim the endpoint */
 	dev->ep_in = ep;
 
-	for (i = 0; i < TRACE_TX_REQ_MAX; i++) {
-		req = dvc_trace_request_new(dev->ep_in, TRACE_BULK_BUFFER_SIZE,
-			(dma_addr_t)TRACE_BULK_IN_BUFFER_ADDR);
-		if (!req)
-			goto fail;
-		req->complete = dvc_trace_complete_in;
-		dvc_trace_req_put(dev, &dev->tx_idle, req);
-		pr_debug("%s req= %p : for %s predefined TRB\n", __func__,
-			req, ep->name);
-	}
+	if (atomic_read(&dvc_io_registered))
+		return _dvc_io->on_endpoint_creation(ep, &dev->function);
 
-	return 0;
-
-fail:
-	pr_err("%s could not allocate requests\n", __func__);
-	return -1;
+	return -EINVAL;
 }
 
 static ssize_t dvc_trace_start_transfer(size_t count)
 {
 	struct dvc_trace_dev *dev = _dvc_trace_dev;
-	struct usb_request *req = 0;
-	int r = count, xfer;
 	int ret = -EINVAL;
 
 	pr_debug("%s\n", __func__);
@@ -433,77 +370,12 @@ static ssize_t dvc_trace_start_transfer(size_t count)
 		return -EBUSY;
 
 	/* we will block until enumeration completes */
-	while (!(dev->online || dev->error)) {
-		pr_debug("%s: waiting for online state\n", __func__);
-		ret = wait_event_interruptible(dev->write_wq,
-				(dev->online || dev->error));
+	if (dvc_trace_wait_for_enumeration())
+		ret = -EBUSY;
 
-		if (ret < 0) {
-			/* not at CONFIGURED state */
-			pr_info("%s !dev->online already\n", __func__);
-			dvc_trace_unlock(&dev->write_excl);
-			return ret;
-		}
-	}
+	if (atomic_read(&dvc_io_registered))
+		ret = _dvc_io->on_start_transfer(count);
 
-	/* queue a ep_in endless request */
-	while (r > 0) {
-		if (dev->error) {
-			pr_debug("%s dev->error\n", __func__);
-			r = -EIO;
-			break;
-		}
-
-		if (!dev->online) {
-			pr_debug("%s !dev->online\n", __func__);
-			r = -EIO;
-			break;
-		}
-
-		/* get an idle tx request to use */
-		req = 0;
-		ret = wait_event_interruptible(dev->write_wq,
-				dev->error || !dev->online ||
-				(req = dvc_trace_req_get(dev, &dev->tx_idle)));
-
-		if (ret < 0) {
-			r = ret;
-			break;
-		}
-
-		if (req != 0) {
-			if (count > TRACE_BULK_BUFFER_SIZE)
-				xfer = TRACE_BULK_BUFFER_SIZE;
-			else
-				xfer = count;
-			pr_debug("%s queue tx_idle list req to dev->ep_in\n",
-				__func__);
-			req->no_interrupt = 1;
-			req->context = &dev->function;
-			req->length = xfer;
-			ret = usb_ep_queue(dev->ep_in, req, GFP_ATOMIC);
-			if (ret < 0) {
-				pr_err("%s: xfer error %d\n", __func__, ret);
-				dev->error = 1;
-				dev->transfering = 0;
-				r = -EIO;
-				break;
-			}
-			pr_debug("%s: xfer=%d/%d  queued req/%p\n", __func__,
-				xfer, r, req);
-			dvc_trace_req_put(dev, &dev->tx_xfer, req);
-			r -= xfer;
-
-			/* zero this so we don't try to free it on error exit */
-			req = 0;
-		}
-	}
-	if (req) {
-		pr_debug("%s req re-added to tx_idle on error\n", __func__);
-		dvc_trace_req_put(dev, &dev->tx_idle, req);
-	} else {
-		dev->transfering = 1;
-	}
 	dvc_trace_unlock(&dev->write_excl);
 	pr_debug("%s end\n", __func__);
 	return ret;
@@ -512,46 +384,41 @@ static ssize_t dvc_trace_start_transfer(size_t count)
 static int dvc_trace_disable_transfer(void)
 {
 	struct dvc_trace_dev *dev = _dvc_trace_dev;
-	struct usb_request *req = 0;
-	int ret;
+	int ret = 0;
 
 	pr_debug("%s\n", __func__);
-	if (!_dvc_trace_dev)
+	if (!dev)
 		return -ENODEV;
 
 	if (dvc_trace_lock(&dev->write_excl))
 		return -EBUSY;
 
-	if (dev->error) {
+	if (DVC_IO_STATUS_GET(&dev->status, DVC_IO_MASK_ERROR)) {
 		pr_debug("%s dev->error\n", __func__);
 		dvc_trace_unlock(&dev->write_excl);
 		return -EIO;
 	}
 
-	if ((!dev->online) || (!dev->transfering)) {
+	if (DVC_IO_STATUS_GET(&dev->status, DVC_IO_MASK_ONLINE_T) != DVC_IO_MASK_ONLINE_T) {
 		pr_debug("%s !dev->online OR !dev->transfering\n", __func__);
 		dvc_trace_unlock(&dev->write_excl);
 		return -EIO;
 	}
 
-	/* get an xfer tx request to use */
-	while ((req = dvc_trace_req_get(dev, &dev->tx_xfer))) {
-		ret = usb_ep_dequeue(dev->ep_in, req);
-		if (ret < 0) {
-			pr_err("%s: dequeue error %d\n", __func__, ret);
-			dev->error = 1;
-			dvc_trace_unlock(&dev->write_excl);
-			return -EIO;
-		}
-		pr_debug("%s: dequeued req/%p\n", __func__, req);
-	}
+	if (atomic_read(&dvc_io_registered))
+		ret = _dvc_io->on_disable_transfer();
 
 	dvc_trace_unlock(&dev->write_excl);
 	return 1;
 }
 
+/**
+ * Fills /dev/usb_dvc_trace with raw data from of DVC device
+ * (struct dvc_trace_dev)
+ **/
 static int dvc_trace_open(struct inode *ip, struct file *fp)
 {
+
 	pr_debug("%s\n", __func__);
 	if (!_dvc_trace_dev)
 		return -ENODEV;
@@ -562,15 +429,19 @@ static int dvc_trace_open(struct inode *ip, struct file *fp)
 	fp->private_data = _dvc_trace_dev;
 
 	/* clear the error latch */
-	_dvc_trace_dev->error = 0;
-	_dvc_trace_dev->transfering = 0;
+
+	DVC_IO_STATUS_CLEAR(&_dvc_trace_dev->status, DVC_IO_MASK_TRANSFER);
+	DVC_IO_STATUS_CLEAR(&_dvc_trace_dev->status, DVC_IO_MASK_ERROR);
 
 	return 0;
 }
 
 static int dvc_trace_release(struct inode *ip, struct file *fp)
 {
+
 	pr_debug("%s\n", __func__);
+	if (!_dvc_trace_dev)
+		return -ENODEV;
 
 	dvc_trace_unlock(&_dvc_trace_dev->open_excl);
 	return 0;
@@ -589,16 +460,27 @@ static struct miscdevice dvc_trace_device = {
 	.fops = &dvc_trace_fops,
 };
 
+
+
+
+/**
+ * Callback for DWC3::Android  usb_function.ctrlrequest
+ * To handle USB control requests.
+ */
 static int dvc_trace_ctrlrequest(struct usb_composite_dev *cdev,
 				const struct usb_ctrlrequest *ctrl)
 {
 
-	struct dvc_trace_dev *dev = _dvc_trace_dev;
 	int	value = -EOPNOTSUPP;
 	int	ret;
-	u16	w_index = le16_to_cpu(ctrl->wIndex);
-	u16	w_value = le16_to_cpu(ctrl->wValue);
-	u16	w_length = le16_to_cpu(ctrl->wLength);
+	u16	w_index;
+	u16	w_value;
+	u16	w_length;
+	int	valid = 1;
+
+	w_index = le16_to_cpu(ctrl->wIndex);
+	w_value = le16_to_cpu(ctrl->wValue);
+	w_length = le16_to_cpu(ctrl->wLength);
 
 	pr_debug("%s %02x.%02x v%04x i%04x l%u\n", __func__,
 			ctrl->bRequestType, ctrl->bRequest,
@@ -609,8 +491,12 @@ static int dvc_trace_ctrlrequest(struct usb_composite_dev *cdev,
 	/* DC_REQUEST_SET_RESET ... stop active transfer */
 	case ((USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE) << 8)
 		| DC_REQUEST_SET_RESET:
-		if (w_index != dev->data_id)
-			goto invalid;
+
+
+		if (w_index != _dvc_trace_dev->data_id) {
+			valid = 0;
+			break;
+		}
 
 		pr_info("%s DC_REQUEST_SET_RESET v%04x i%04x l%u\n", __func__,
 			 w_value, w_index, w_length);
@@ -638,15 +524,18 @@ static int dvc_trace_ctrlrequest(struct usb_composite_dev *cdev,
 		break;
 
 	default:
-invalid:
+		valid = 0;
+	}
+	if (!valid)
 		pr_debug("unknown class-specific control req "
 			 "%02x.%02x v%04x i%04x l%u\n",
 			 ctrl->bRequestType, ctrl->bRequest,
 			 w_value, w_index, w_length);
-	}
 
 	/* respond with data transfer or status phase? */
 	if (value >= 0) {
+		if (!cdev->req || !cdev->gadget || !cdev->gadget->ep0)
+			return -EINVAL;
 		cdev->req->zero = 0;
 		cdev->req->length = value;
 		value = usb_ep_queue(cdev->gadget->ep0, cdev->req, GFP_ATOMIC);
@@ -743,31 +632,37 @@ dvc_trace_function_bind(struct usb_configuration *c, struct usb_function *f)
 	pr_debug("%s speed %s: IN/%s\n",
 			gadget_is_dualspeed(c->cdev->gadget) ? "dual" : "full",
 			f->name, dev->ep_in->name);
+
 	return 0;
 }
 
+/**
+ * Bound during bind_config, to unset the DVC trace USB endpoint
+ */
 static void
 dvc_trace_function_unbind(struct usb_configuration *c, struct usb_function *f)
 {
-	struct dvc_trace_dev	*dev = func_to_dvc_trace(f);
-	struct usb_request *req;
+	struct dvc_trace_dev *dev = func_to_dvc_trace(f);
 
-	dev->online = 0;
+
+	DVC_IO_STATUS_CLEAR(&dev->status, DVC_IO_MASK_ONLINE|DVC_IO_MASK_ERROR);
 	dev->online_data = 0;
 	dev->online_ctrl = 0;
-	dev->error = 0;
 	trace_string_defs[DVCTRACE_CTRL_IDX].id = 0;
 
 	wake_up(&dev->write_wq);
 
-	while ((req = dvc_trace_req_get(dev, &dev->tx_idle)))
-		dvc_trace_request_free(req, dev->ep_in);
+	if (atomic_read(&dvc_io_registered))
+		_dvc_io->on_dvc_unbind();
 }
 
+/**
+ * Bound during bind_config,
+ */
 static int dvc_trace_function_set_alt(struct usb_function *f,
 		unsigned intf, unsigned alt)
 {
-	struct dvc_trace_dev	*dev = func_to_dvc_trace(f);
+	struct dvc_trace_dev     *dev = func_to_dvc_trace(f);
 	struct usb_composite_dev *cdev = f->config->cdev;
 	int ret;
 
@@ -794,8 +689,8 @@ static int dvc_trace_function_set_alt(struct usb_function *f,
 	}
 
 	if (dev->online_data && dev->online_ctrl) {
-		dev->online = 1;
-		dev->transfering = 0;
+		DVC_IO_STATUS_SET(&_dvc_trace_dev->status, DVC_IO_MASK_ONLINE);
+		DVC_IO_STATUS_CLEAR(&_dvc_trace_dev->status, DVC_IO_MASK_TRANSFER);
 	}
 
 	/* readers may be blocked waiting for us to go online */
@@ -803,20 +698,23 @@ static int dvc_trace_function_set_alt(struct usb_function *f,
 	return 0;
 }
 
+/**
+ * Bound during bind_config to be called when disabling dvctrace
+ */
 static void dvc_trace_function_disable(struct usb_function *f)
 {
-	struct dvc_trace_dev	*dev = func_to_dvc_trace(f);
-	struct usb_composite_dev	*cdev = dev->cdev;
+	struct dvc_trace_dev     *dev = func_to_dvc_trace(f);
+	struct usb_composite_dev *cdev = dev->cdev;
 
 	pr_debug("%s dev %p\n", __func__, cdev);
 
-	if (dev->transfering)
+	if (DVC_IO_STATUS_GET(&_dvc_trace_dev->status, DVC_IO_MASK_TRANSFER))
 		dvc_trace_disable_transfer();
 
-	dev->online = 0;
 	dev->online_data = 0;
 	dev->online_ctrl = 0;
-	dev->error = 0;
+	DVC_IO_STATUS_CLEAR(&_dvc_trace_dev->status, DVC_IO_MASK_ONLINE|DVC_IO_MASK_ERROR);
+
 	usb_ep_disable(dev->ep_in);
 
 	/* writer may be blocked waiting for us to go online */
@@ -825,6 +723,11 @@ static void dvc_trace_function_disable(struct usb_function *f)
 	pr_debug("%s : %s disabled\n", __func__, dev->function.name);
 }
 
+
+/**
+ * Callback for DWC3::Android  usb_function.bind_config
+ * To enable dvctrace usb feature during USB initialization.
+ */
 static int dvc_trace_bind_config(struct usb_configuration *c)
 {
 	struct dvc_trace_dev *dev = _dvc_trace_dev;
@@ -845,43 +748,106 @@ static int dvc_trace_bind_config(struct usb_configuration *c)
 	return usb_add_function(c, &dev->function);
 }
 
+/**
+ * Callback for DWC3::Android  usb_function.init
+ * To setup dvctrace device/handler.
+ */
 static int dvc_trace_setup(void)
 {
-	struct dvc_trace_dev *dev;
 	int ret;
 
-	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-	if (!dev)
+	pr_info("");
+
+	_dvc_trace_dev = kzalloc(sizeof(struct dvc_trace_dev), GFP_KERNEL);
+	if (!_dvc_trace_dev)
 		return -ENOMEM;
 
-	spin_lock_init(&dev->lock);
+	spin_lock_init(&_dvc_trace_dev->lock);
 
-	INIT_LIST_HEAD(&dev->tx_idle);
-	INIT_LIST_HEAD(&dev->tx_xfer);
+	init_waitqueue_head(&_dvc_trace_dev->write_wq);
 
-	init_waitqueue_head(&dev->write_wq);
+	atomic_set(&_dvc_trace_dev->open_excl, 0);
+	atomic_set(&_dvc_trace_dev->write_excl, 0);
 
-	atomic_set(&dev->open_excl, 0);
-	atomic_set(&dev->write_excl, 0);
-
-	_dvc_trace_dev = dev;
 
 	ret = misc_register(&dvc_trace_device);
 	if (ret)
 		goto err;
 
-	return 0;
 
+	if (atomic_read(&dvc_io_registered)) {
+		ret = _dvc_io->on_dvc_setup(&_dvc_trace_dev->status);
+		if (ret) {
+			pr_err("DvC.Trace not supported\n");
+			DVC_IO_STATUS_CLEAR(&_dvc_trace_dev->status, DVC_IO_MASK_ONLINE_T);
+			DVC_IO_STATUS_SET(&_dvc_trace_dev->status, DVC_IO_MASK_ERROR);
+			goto err;
+		}
+	}
+
+	return 0;
 err:
-	kfree(dev);
+	kfree(_dvc_trace_dev);
 	pr_err("DvC.Trace gadget driver failed to initialize\n");
 	return ret;
 }
 
+/**
+ * Callback for DWC3::Android  usb_function.cleanup
+ * To clean dvctrace device/handler.
+ */
 static void dvc_trace_cleanup(void)
 {
+	if (atomic_read(&dvc_io_registered))
+		_dvc_io->on_dvc_cleanup();
+
 	misc_deregister(&dvc_trace_device);
 
 	kfree(_dvc_trace_dev);
 	_dvc_trace_dev = NULL;
 }
+
+
+int dvc_io_register(struct dvc_io *ops)
+{
+	pr_info("Registering DvC device hooks: %p\n", ops);
+
+	if (atomic_read(&dvc_io_registered)) {
+		pr_debug("Only one DvC device allowd\n");
+		return -EINVAL;
+	}
+	if (ops) {
+		if (!ops->on_disable_transfer)
+			return -EINVAL;
+		if (!ops->on_dvc_cleanup)
+			return -EINVAL;
+		if (!ops->on_dvc_setup)
+			return -EINVAL;
+		if (!ops->on_dvc_unbind)
+			return -EINVAL;
+		if (!ops->on_endpoint_creation)
+			return -EINVAL;
+		if (!ops->on_start_transfer)
+			return -EINVAL;
+	}
+
+	atomic_set(&dvc_io_registered, 1);
+	_dvc_io = ops;
+	pr_info("DvC device registered\n");
+	return 0;
+}
+EXPORT_SYMBOL(dvc_io_register);
+
+int dvc_io_unregister(struct dvc_io *ops)
+{
+	dvc_trace_disable_transfer();
+
+	if (!_dvc_io || !ops || _dvc_io != ops)
+		return -EINVAL;
+
+	_dvc_io = NULL;
+	atomic_set(&dvc_io_registered, 0);
+	return 0;
+}
+EXPORT_SYMBOL(dvc_io_unregister);
+

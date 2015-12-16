@@ -18,8 +18,10 @@ struct mrfld_audio_platform_data {
 	const struct soft_platform_id *spid;
 	int codec_gpio;
 	int codec_rst;
+	int spk_gpio;
 };
 
 extern void __init *merfld_audio_platform_data(void *info) __attribute__((weak));
 extern void __init *merfld_wm8958_audio_platform_data(void *info) __attribute__((weak));
+extern void __init *moor_wm8280_audio_platform_data(void *info) __attribute__((weak));
 #endif

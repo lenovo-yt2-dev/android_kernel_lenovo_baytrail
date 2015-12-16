@@ -43,6 +43,7 @@
 #include <linux/acpi_gpio.h>
 
 /* Status register bits */
+#define STATUS_MASK		0xFF0A
 #define STATUS_POR_BIT		(1 << 1)
 #define STATUS_BST_BIT		(1 << 3)
 #define STATUS_VMN_BIT		(1 << 8)
@@ -66,12 +67,13 @@
 /* Tmax disabled, Tmin disabled */
 #define TEMP_DEF_MAX_MIN_THRLD  0x7F80
 
-/* SoCmax disabled, SoCmin can be set to 15%, 4% and 1%.
+/* SoCmax disabled, SoCmin can be set to 15%, 10%, 5% and 1%.
  * INT will trigger when the thresholds are voilated.
  */
-#define SOC_DEF_MAX_MIN1_THRLD	0xFF0E
-#define SOC_DEF_MAX_MIN2_THRLD	0xFF04
-#define SOC_DEF_MAX_MIN3_THRLD	0xFF01
+#define SOC_DEF_MAX_MIN1_THRLD	0xFF0F
+#define SOC_DEF_MAX_MIN2_THRLD	0xFF0A
+#define SOC_DEF_MAX_MIN3_THRLD	0xFF05
+#define SOC_DEF_MAX_MIN4_THRLD	0xFF01
 
 /* SOC threshold for 1% interrupt */
 #define SOC_INTR_S0_THR		1
@@ -80,23 +82,19 @@
 #define MISCCFG_CONFIG_VFSOC	0x0003
 
 /* low battery notification warning level */
-#define SOC_WARNING_LEVEL1	14
-#define SOC_WARNING_LEVEL2	4
+#define SOC_WARNING_LEVEL1	15
+#define SOC_WARNING_LEVEL2	10
+#define SOC_WARNING_LEVEL3	5
 #define SOC_SHUTDOWN_LEVEL	1
 
 #define CONFIG_BER_BIT_ENBL	(1 << 0)
 #define CONFIG_BEI_BIT_ENBL	(1 << 1)
 #define CONFIG_ALRT_BIT_ENBL	(1 << 2)
+#define CONFIG_VSTICKY_BIT_SET	(1 << 12)
 #define CONFIG_TSTICKY_BIT_SET	(1 << 13)
+#define CONFIG_SSTICKY_BIT_SET	(1 << 14)
 #define CONFIG_ALP_BIT_ENBL	(1 << 11)
 #define CONFIG_TEX_BIT_ENBL	(1 << 8)
-
-/* Interrupt status bits */
-#define STATUS_INTR_VMAX_BIT	(1 << 12)
-#define STATUS_INTR_VMIN_BIT	(1 << 8)
-#define STATUS_INTR_SOCMAX_BIT	(1 << 14)
-#define STATUS_INTR_SOCMIN_BIT	(1 << 10)
-
 
 #define VFSOC0_LOCK		0x0000
 #define VFSOC0_UNLOCK		0x0080
@@ -147,6 +145,8 @@
 #define BYTE_VALUE			1
 #define WORD_VALUE			0
 
+/* Time interval to write temperature values from host, if needed (in milliseconds) */
+#define TEMP_WRITE_INTERVAL		120000
 enum max17042_register {
 	MAX17042_STATUS		= 0x00,
 	MAX17042_VALRT_Th	= 0x01,
@@ -248,6 +248,14 @@ enum max170xx_chip_type {MAX17042, MAX17050};
 /* No of times we should retry on -EAGAIN error */
 #define NR_RETRY_CNT	3
 
+/* No of times we should process interrupt reasons @irq handler */
+/* Probably all values >1 are ok, Normally It just goes once thought
+ * all bits and everything is handled. Also chips seems to limit
+ * interrupts to ~3/s, so we have ~300ms to process, until we will
+ * miss interrupt. What ever value it's, it doesn't have any
+ * performance impact. */
+#define NR_RETRY_INT	3
+
 /* No of times we should reset I2C lines */
 #define NR_I2C_RESET_CNT	8
 
@@ -284,9 +292,11 @@ struct max17042_chip {
 	int health;
 	int technology;
 	int charge_full_des;
+	int ext_set_cap;
 
 	struct work_struct	init_worker;
 	struct work_struct	evt_worker;
+	struct delayed_work	temp_worker;
 
 	bool plat_rebooting;
 	/*
@@ -366,6 +376,7 @@ static struct i2c_client *max17042_client;
 atomic_t fopen_count;
 
 static void update_runtime_params(struct max17042_chip *chip);
+static int read_batt_pack_temp(struct max17042_chip *chip, int *temp);
 
 /* Voltage-Capacity lookup function to get
  * capacity value against a given voltage */
@@ -499,6 +510,8 @@ static enum power_supply_property max17042_battery_props[] = {
 	POWER_SUPPLY_PROP_CURRENT_AVG,
 	POWER_SUPPLY_PROP_CAPACITY,
 	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_TEMP_ALERT_MIN,
+	POWER_SUPPLY_PROP_TEMP_ALERT_MAX,
 	POWER_SUPPLY_PROP_CHARGE_NOW,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
@@ -620,46 +633,136 @@ static irqreturn_t max17042_intr_handler(int id, void *dev)
 static irqreturn_t max17042_thread_handler(int id, void *dev)
 {
 	struct max17042_chip *chip = dev;
-	int stat;
+	struct device *device = &chip->client->dev;
+	int stat, temp, val, count = 0;
+	u16 processed, ignored, config;
 
-	pm_runtime_get_sync(&chip->client->dev);
+	pm_runtime_get_sync(device);
+
+	/* read current configuration */
+	val = max17042_read_reg(chip->client, MAX17042_CONFIG);
+	if (val < 0)
+		config = fg_conf_data->cfg;
+	else
+		config = val;
 
 	stat = max17042_read_reg(chip->client, MAX17042_STATUS);
-	if (stat < 0) {
-		dev_err(&chip->client->dev,
-			"max17042-INTR: status read failed:%d\n", stat);
-		pm_runtime_put_sync(&chip->client->dev);
-		return IRQ_HANDLED;
-	}
-	dev_info(&chip->client->dev, "max17042-INTR: Status-val:%x\n", stat);
-
-	if ((stat & STATUS_INTR_VMAX_BIT) ||
-		(stat & STATUS_INTR_VMIN_BIT))
-		dev_info(&chip->client->dev, "VOLT threshold INTR\n");
-
-	if ((stat & STATUS_INTR_SOCMAX_BIT) ||
-		(stat & STATUS_INTR_SOCMIN_BIT)) {
-		dev_info(&chip->client->dev, "SOC threshold INTR\n");
-	}
-
-	if (stat & STATUS_BR_BIT) {
-		dev_info(&chip->client->dev, "Battery removed INTR\n");
-		/* clear BR bit */
-		max17042_reg_read_modify(chip->client, MAX17042_STATUS,
-						STATUS_BR_BIT, 0);
-		if ((fg_conf_data->cfg & CONFIG_BER_BIT_ENBL) &&
-				(stat & STATUS_BST_BIT)) {
-			dev_warn(&chip->client->dev, "battery unplugged\n");
-			mutex_lock(&chip->batt_lock);
-			chip->present = 0;
-			mutex_unlock(&chip->batt_lock);
-			kernel_power_off();
+	do {
+		dev_dbg(device, "%s: Status-val: 0x%x\n", __func__, stat);
+		if (stat < 0) {
+			dev_err(device,
+				"max17042-INTR: status read failed:%d\n", stat);
+			pm_runtime_put_sync(device);
+			return IRQ_HANDLED;
 		}
-	}
+
+		processed = 0;
+		ignored = 0;
+
+		if ((stat & STATUS_VMN_BIT) || (stat & STATUS_VMX_BIT)) {
+			dev_info(device, "VOLT threshold INTR\n");
+			/* nothing yet */
+			if (stat & STATUS_VMN_BIT) {
+				if (config & CONFIG_VSTICKY_BIT_SET)
+					processed |= STATUS_VMN_BIT;
+				else
+					ignored |= STATUS_VMN_BIT;
+			}
+			if (stat & STATUS_VMX_BIT) {
+				if (config & CONFIG_VSTICKY_BIT_SET)
+					processed |= STATUS_VMX_BIT;
+				else
+					ignored |= STATUS_VMX_BIT;
+			}
+		}
+
+		if ((stat & STATUS_SMN_BIT) || (stat & STATUS_SMX_BIT)) {
+			dev_info(device, "SOC threshold INTR\n");
+			/* Actual processing is done in evt_worker */
+			/* so we might get interrupt again or miss */
+			if (stat & STATUS_SMN_BIT) {
+				if (config & CONFIG_SSTICKY_BIT_SET)
+					processed |= STATUS_SMN_BIT;
+				else
+					ignored |= STATUS_SMN_BIT;
+			}
+			if (stat & STATUS_SMX_BIT) {
+				if (config & CONFIG_SSTICKY_BIT_SET)
+					processed |= STATUS_SMX_BIT;
+				else
+					ignored |= STATUS_SMX_BIT;
+			}
+		}
+
+		if (stat & STATUS_BR_BIT) {
+			dev_info(device, "Battery removed INTR\n");
+			if ((config & CONFIG_BER_BIT_ENBL) &&
+			    (stat & STATUS_BST_BIT)) {
+				dev_warn(device, "battery unplugged\n");
+				mutex_lock(&chip->batt_lock);
+				chip->present = 0;
+				mutex_unlock(&chip->batt_lock);
+				kernel_power_off();
+			}
+			processed |= STATUS_BR_BIT;
+		}
+
+		if ((stat & STATUS_TMN_BIT) || (stat & STATUS_TMX_BIT)) {
+			val = read_batt_pack_temp(chip, &temp);
+			if (val) {
+				dev_warn(device, "Can't read temp: %d\n", val);
+			} else {
+				val = max17042_read_reg(chip->client,
+							MAX17042_TALRT_Th);
+				dev_info(device,
+					"Thermal threshold INTR: %d (%d, %d)\n",
+					 temp, (int8_t)(val & 0xff),
+					 (int8_t)(val >> 8));
+			}
+			if (stat & STATUS_TMN_BIT) {
+				if (config & CONFIG_TSTICKY_BIT_SET)
+					processed |= STATUS_TMN_BIT;
+				else
+					ignored |= STATUS_TMN_BIT;
+			}
+			if (stat & STATUS_TMX_BIT) {
+				if (config & CONFIG_TSTICKY_BIT_SET)
+					processed |= STATUS_TMX_BIT;
+				else
+					ignored |= STATUS_TMX_BIT;
+			}
+		}
+
+		if (stat & STATUS_POR_BIT) {
+			dev_info(device, "Power On Reset event\n");
+			ignored |= STATUS_POR_BIT;
+		}
+
+		if (stat & STATUS_BST_BIT)
+			ignored |= STATUS_BST_BIT;
+
+		if (stat & STATUS_BI_BIT) {
+			dev_info(device, "Battery Insert INTR\n");
+			/* nothing yet */
+			processed |= STATUS_BI_BIT;
+		}
+
+		/* clear int */
+		max17042_reg_read_modify(chip->client, MAX17042_STATUS,
+					 processed, 0);
+
+		stat = max17042_read_reg(chip->client, MAX17042_STATUS);
+	} while ((stat & STATUS_MASK & ~ignored) && (count++ < NR_RETRY_INT));
 
 	/* update battery status and health */
 	schedule_work(&chip->evt_worker);
-	pm_runtime_put_sync(&chip->client->dev);
+	pm_runtime_put_sync(device);
+	if (count >= NR_RETRY_INT) {
+		dev_err(device, "%s: can't process all IRQ reasons: 0x%x\n",
+			__func__, stat);
+		/* desperate */
+		max17042_write_reg(max17042_client, MAX17042_STATUS, 0x0000);
+	}
 	return IRQ_HANDLED;
 }
 
@@ -740,11 +843,38 @@ static int max17042_set_property(struct power_supply *psy,
 	struct max17042_chip *chip = container_of(psy,
 				struct max17042_chip, battery);
 	int ret = 0;
+	int8_t temp;
 
 	mutex_lock(&chip->batt_lock);
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
 		chip->status = val->intval;
+		break;
+	case POWER_SUPPLY_PROP_CAPACITY:
+		if ((val->intval >= 0) && (val->intval <= 100))
+			chip->ext_set_cap = val->intval;
+		break;
+	case POWER_SUPPLY_PROP_TEMP_ALERT_MIN:
+		ret = max17042_read_reg(chip->client, MAX17042_TALRT_Th);
+		if (ret < 0)
+			break;
+		temp = val->intval / 10; /* 0.1C prop to 1C reg */
+		/* Force that min is under max */
+		if (temp >= (int8_t)(ret >> 8))
+			temp = (int8_t)(ret >> 8) - 1;
+		ret = (ret & 0xff00) + (uint8_t)temp;
+		ret = max17042_write_reg(chip->client, MAX17042_TALRT_Th, ret);
+		break;
+	case POWER_SUPPLY_PROP_TEMP_ALERT_MAX:
+		ret = max17042_read_reg(chip->client, MAX17042_TALRT_Th);
+		if (ret < 0)
+			break;
+		temp = val->intval / 10; /* 0.1C prop to 1C reg */
+		/* Force that max is over min */
+		if (temp <= (int8_t)(ret & 0xff))
+			temp = (int8_t)(ret & 0xff) + 1;
+		ret = (temp << 8) + (ret & 0xff);
+		ret = max17042_write_reg(chip->client, MAX17042_TALRT_Th, ret);
 		break;
 	default:
 		ret = -EINVAL;
@@ -862,6 +992,18 @@ static int max17042_get_property(struct power_supply *psy,
 		 */
 		val->intval = batt_temp * 10;
 		break;
+	case POWER_SUPPLY_PROP_TEMP_ALERT_MIN:
+		ret = max17042_read_reg(chip->client, MAX17042_TALRT_Th);
+		if (ret < 0)
+			goto ps_prop_read_err;
+		val->intval = ((int8_t)(ret & 0xff)) * 10; /* 0.1C */
+		break;
+	case POWER_SUPPLY_PROP_TEMP_ALERT_MAX:
+		ret = max17042_read_reg(chip->client, MAX17042_TALRT_Th);
+		if (ret < 0)
+			goto ps_prop_read_err;
+		val->intval = ((int8_t)(ret >> 8)) * 10; /* 0.1C */
+		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		ret = max17042_read_reg(chip->client, MAX17042_VCELL);
 		if (ret < 0)
@@ -893,6 +1035,16 @@ static int max17042_get_property(struct power_supply *psy,
 		val->intval = chip->voltage_max;
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
+		/*
+		 * Check whether the capacity is set externally or not. If the
+		 * capacity value is set externally, use same as the SOC value
+		 * for the battery level usage.
+		 */
+		if ((chip->ext_set_cap) >= 0 && (chip->ext_set_cap <= 100)) {
+			val->intval = chip->ext_set_cap;
+			break;
+		}
+
 		/*
 		 * WA added to support power supply voltage
 		 * variations b/w supply and FG readings.
@@ -1470,6 +1622,8 @@ static void set_chip_config(struct max17042_chip *chip)
 			chip->pdata->save_config_data = NULL;
 		}
 	}
+	if (fg_conf_data->cfg & CONFIG_TEX_BIT_ENBL)
+		schedule_delayed_work(&chip->temp_worker, 0);
 	chip->pdata->is_init_done = 1;
 	configure_interrupts(chip);
 
@@ -1484,6 +1638,16 @@ static void max17042_init_worker(struct work_struct *work)
 
 	dev_info(&chip->client->dev, "%s\n", __func__);
 	max17042_restore_conf_data(chip);
+}
+
+static void max17042_temp_worker(struct work_struct *w)
+{
+	struct delayed_work *work = to_delayed_work(w);
+	struct max17042_chip *chip = container_of(work,
+				struct max17042_chip, temp_worker);
+	int temp;
+	read_batt_pack_temp(chip, &temp);
+	schedule_delayed_work(&chip->temp_worker, TEMP_WRITE_INTERVAL);
 }
 
 /* Set the SOC threshold interrupt to offset percentage in S0 state */
@@ -1554,8 +1718,10 @@ static void set_soc_intr_thresholds_s3(struct max17042_chip *chip)
 		val = SOC_DEF_MAX_MIN1_THRLD;
 	else if (soc > SOC_WARNING_LEVEL2)
 		val = SOC_DEF_MAX_MIN2_THRLD;
-	else
+	else if (soc > SOC_WARNING_LEVEL3)
 		val = SOC_DEF_MAX_MIN3_THRLD;
+	else
+		val = SOC_DEF_MAX_MIN4_THRLD;
 
 	max17042_write_reg(chip->client, MAX17042_SALRT_Th, val);
 }
@@ -1685,6 +1851,7 @@ static bool is_battery_online(struct max17042_chip *chip)
 static void init_battery_props(struct max17042_chip *chip)
 {
 	chip->present = 1;
+	chip->ext_set_cap = -EINVAL;
 	chip->status = POWER_SUPPLY_STATUS_UNKNOWN;
 	chip->health = POWER_SUPPLY_HEALTH_UNKNOWN;
 	chip->technology = chip->pdata->technology;
@@ -1882,7 +2049,7 @@ static void configure_interrupts(struct max17042_chip *chip)
 
 	/* set SOC-alert threshold sholds to lowest value */
 	max17042_write_reg(chip->client, MAX17042_SALRT_Th,
-					SOC_DEF_MAX_MIN3_THRLD);
+					SOC_DEF_MAX_MIN4_THRLD);
 
 	/* enable Alerts for SOCRep */
 	if (chip->pdata->enable_current_sense)
@@ -1980,14 +2147,13 @@ static int max17042_probe(struct i2c_client *client,
 
 #ifdef CONFIG_ACPI
 	client->dev.platform_data = max17042_platform_data(NULL);
-	dev_info(&client->dev, "%s: %d: dev->irq = %d\n",
-			 __func__, __LINE__, client->irq);
 	gpio = acpi_get_gpio_by_index(&client->dev, 0, &gpio_info);
-	dev_info(&client->dev, "%s: %d: gpio no = %d\n",
-			 __func__, __LINE__, gpio);
 	client->irq = gpio_to_irq(gpio);
-	dev_info(&client->dev, "%s: %d: irq = %d\n",
-			 __func__, __LINE__, client->irq);
+	ret = gpio_request_one(gpio, GPIOF_IN, client->name);
+	if (ret < 0) {
+		dev_warn(&client->dev, "gpio request failed.");
+		return -EIO;
+	}
 #endif
 	if (!client->dev.platform_data) {
 		dev_err(&client->dev, "Platform Data is NULL");
@@ -2063,6 +2229,8 @@ static int max17042_probe(struct i2c_client *client,
 	init_battery_props(chip);
 	INIT_WORK(&chip->init_worker, max17042_init_worker);
 	INIT_WORK(&chip->evt_worker, max17042_evt_worker);
+	INIT_DEFERRABLE_WORK(&chip->temp_worker, max17042_temp_worker);
+
 	mutex_init(&chip->batt_lock);
 	mutex_init(&chip->init_lock);
 
@@ -2104,6 +2272,8 @@ static int max17042_probe(struct i2c_client *client,
 	chip->battery.external_power_changed = max17042_external_power_changed;
 	chip->battery.properties	= max17042_battery_props;
 	chip->battery.num_properties	= ARRAY_SIZE(max17042_battery_props);
+
+	chip->status = POWER_SUPPLY_STATUS_DISCHARGING;
 
 	ret = power_supply_register(&client->dev, &chip->battery);
 	if (ret) {
@@ -2199,6 +2369,8 @@ static int max17042_suspend(struct device *dev)
 		disable_irq(chip->client->irq);
 		enable_irq_wake(chip->client->irq);
 	}
+	if (fg_conf_data->cfg & CONFIG_TEX_BIT_ENBL)
+		cancel_delayed_work_sync(&chip->temp_worker);
 
 	/* max17042 IC automatically goes into shutdown mode
 	 * if the SCL and SDA were held low for more than
@@ -2231,12 +2403,14 @@ static int max17042_resume(struct device *dev)
 		}
 		/* set SOC-alert threshold sholds to lowest value */
 		max17042_write_reg(chip->client, MAX17042_SALRT_Th,
-					SOC_DEF_MAX_MIN3_THRLD);
+					SOC_DEF_MAX_MIN4_THRLD);
 		enable_irq(chip->client->irq);
 		disable_irq_wake(chip->client->irq);
 	}
 	/* update battery status and health */
 	schedule_work(&chip->evt_worker);
+	if (fg_conf_data->cfg & CONFIG_TEX_BIT_ENBL)
+		schedule_delayed_work(&chip->temp_worker, 0);
 
 	/* max17042 IC automatically wakes up if any edge
 	 * on SDCl or SDA if we set I2CSH of CONFG reg

@@ -33,8 +33,10 @@ const struct ia_css_macc_config default_macc_config = {
 void
 ia_css_macc_encode(
 	struct sh_css_isp_macc_params *to,
-	const struct ia_css_macc_config *from)
+	const struct ia_css_macc_config *from,
+	unsigned size)
 {
+	(void)size;
 	to->exp = from->exp;
 }
 

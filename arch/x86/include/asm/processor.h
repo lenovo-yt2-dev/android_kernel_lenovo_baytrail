@@ -436,6 +436,9 @@ DECLARE_PER_CPU_ALIGNED(struct stack_canary, stack_canary);
 extern unsigned int xstate_size;
 extern void free_thread_xstate(struct task_struct *);
 extern struct kmem_cache *task_xstate_cachep;
+#ifdef CONFIG_LBR_DUMP_ON_EXCEPTION
+extern unsigned int lbr_dump_on_exception;
+#endif
 
 struct perf_event;
 
@@ -894,7 +897,7 @@ extern unsigned long thread_saved_pc(struct task_struct *tsk);
 #define TASK_SIZE_OF(child)	((test_tsk_thread_flag(child, TIF_ADDR32)) ? \
 					IA32_PAGE_OFFSET : TASK_SIZE_MAX)
 
-#define STACK_TOP		0x80000000
+#define STACK_TOP		TASK_SIZE
 #define STACK_TOP_MAX		TASK_SIZE_MAX
 
 #define INIT_THREAD  { \

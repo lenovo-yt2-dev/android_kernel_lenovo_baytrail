@@ -22,13 +22,22 @@
 
 #include "otg.h"
 
+#define ULPI_PHY_GP_NUM 13
+
 enum intel_mid_pmic_type {
 	NO_PMIC,
 	SHADY_COVE,
 	BASIN_COVE
 };
 
+struct usb_phy_gp {
+	unsigned num;
+	char *label;
+};
+
 struct intel_dwc_otg_pdata {
+	unsigned device_hibernation:1;
+	unsigned tx_fifo_resize:1;
 	int is_hvp;
 	enum intel_mid_pmic_type pmic_type;
 	int charger_detect_enable;
@@ -41,10 +50,27 @@ struct intel_dwc_otg_pdata {
 	int sdp_charging;
 	enum usb_phy_intf usb2_phy_type;
 
-	/* ZHSDRV and IHSTX of VS1 register for TI1211 PHY.
-	 * They impact the eye diagram qulity. And every
-	 * platform have different value.*/
-	int ulpi_eye_calibrate;
+	/* USB2 electronic calibration value.
+	 *
+	 * ULPI(TI1211):
+	 * ZHSDRV and IHSTX of VS1 register for TI1211 PHY.
+	 * They impact the eye diagram qulity.
+	 *
+	 * UTMI(Intel):
+	 * USB2PERPORT register.
+	 * D14:  0=full-bit PE; 1=half-bit PE
+	 * D[13:11]:  PE/DE bias (0-to-7)
+	 * D[10:08]:  TX bias (0-to-7)
+	 */
+	int ulpi_eye_calibration;
+	int utmi_eye_calibration;
+
+	/* If the VUSBPHY power rail using for providing
+	 * power for USB PHY. */
+	int using_vusbphy;
+
+	/* Enable UTMI PHY WA for FS device detection issue */
+	int utmi_fs_det_wa;
 };
 
 /* timeout for disconnect from a suspended host */
@@ -173,6 +199,7 @@ struct intel_dwc_otg_pdata {
 #define PMIC_I2COVRCTRL				0x58
 #define PMIC_I2COVRCTL_I2CWR		0x01
 
+#define USBPHYRSTB				(1 << 0)
 #define USBPHYCTRL_D0			(1 << 0)
 #define PMIC_USBIDCTRL				0x19
 #define USBIDCTRL_ACA_DETEN_D1	(1 << 1)
@@ -216,4 +243,6 @@ struct intel_dwc_otg_pdata {
 #define MERR_SMIP_VIOLATE_BC_ADDR	0xFFFCE717
 #define SMIP_VIOLATE_BC_MASK	0x40
 
+/* UTMI(Intel) PHY USB2PERPORT register */
+#define UTMI_PHY_USB2PERPORT	0xf90B1200
 #endif /* __DWC3_INTEL_H */

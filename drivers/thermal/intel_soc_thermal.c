@@ -38,16 +38,26 @@
 #include <asm/msr.h>
 #include <asm/intel-mid.h>
 #include <asm/intel_mid_thermal.h>
+#include <asm/processor.h>
 
 #define DRIVER_NAME	"soc_thrm"
 
 /* SOC DTS Registers */
 #define SOC_THERMAL_SENSORS	2
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 #define SOC_THERMAL_TRIPS	2
+#define DTS_TRIP_RW		0x03
+#else
+#define SOC_THERMAL_TRIPS       0
+#define DTS_TRIP_RW             0
+#endif
 #define SOC_MAX_STATES		4
 #define DTS_ENABLE_REG		0xB0
 #define DTS_ENABLE		0x03
-#define DTS_TRIP_RW		0x03
+#ifdef CONFIG_TP_ENABLE
+#define TP_SETTING_REG		0x01
+#define ENABLE_TP_GAIN		0x10a
+#endif
 
 #define PUNIT_PORT		0x04
 #define PUNIT_TEMP_REG		0xB1
@@ -57,14 +67,13 @@
 #define TJMAX_CODE		0x7F
 
 /* Default hysteresis values in C */
-#define DEFAULT_H2C_HYST	3
+#define DEFAULT_H2C_HYST	1
 #define MAX_HYST		7
 
 /* Power Limit registers */
 #define PKG_TURBO_POWER_LIMIT	0x610
 #define PKG_TURBO_CFG		0x670
 #define MSR_THERM_CFG1		0x673
-#define CPU_PWR_BUDGET_CTL	0x02
 
 /* PKG_TURBO_PL1 holds PL1 in terms of 32mW */
 #define PL_UNIT_MW		32
@@ -78,11 +87,14 @@
 #define TRIP_STATUS_RW		0xB4
 /* TE stands for THERMAL_EVENT */
 #define TE_AUX0			0xB5
-#define ENABLE_AUX_INTRPT	0x0F
+#define TE_AUX3			0xB8
+#define ENABLE_AUX_EVENT	0x0F
 #define ENABLE_CPU0		(1 << 16)
+#define ENABLE_CPU1		(1 << 17)
 #define RTE_ENABLE		(1 << 9)
 
 static int tjmax_temp;
+static int turbo_floor_reg;
 
 static DEFINE_MUTEX(thrm_update_lock);
 
@@ -242,9 +254,19 @@ static struct thermal_device_info *initialize_sensor(int index)
 	return td_info;
 }
 
+static void initialize_floor_reg_addr(void)
+{
+	struct cpuinfo_x86 *c = &cpu_data(0);
+
+	if (c->x86_model == 0x4a || c->x86_model == 0x5a)
+		turbo_floor_reg = 0xdf;
+	else
+		turbo_floor_reg = 0x2;
+}
+
 static void enable_soc_dts(void)
 {
-	int i;
+	__maybe_unused int i;
 	u32 val, eax, edx;
 
 	rdmsr_on_cpu(0, MSR_THERM_CFG1, &eax, &edx);
@@ -259,15 +281,47 @@ static void enable_soc_dts(void)
 	write_soc_reg(DTS_ENABLE_REG, DTS_ENABLE);
 
 	val = read_soc_reg(SOC_DTS_CONTROL);
-	write_soc_reg(SOC_DTS_CONTROL, val | ENABLE_AUX_INTRPT | ENABLE_CPU0);
+	write_soc_reg(SOC_DTS_CONTROL, val | ENABLE_AUX_EVENT | ENABLE_CPU0 | ENABLE_CPU1);
 
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 	/* Enable Interrupts for all the AUX trips for the DTS */
 	for (i = 0; i < SOC_THERMAL_TRIPS; i++) {
 		val = read_soc_reg(TE_AUX0 + i);
 		write_soc_reg(TE_AUX0 + i, (val | RTE_ENABLE));
 	}
+#else
+	/* Disable interrupt for AUX3 explicitly since enabled from FW */
+	val = read_soc_reg(TE_AUX3);
+	write_soc_reg(TE_AUX3, (val & (~RTE_ENABLE)));
+#endif
+#ifdef CONFIG_TP_ENABLE
+	/* Enable TP algorithm & set gain for controlling DTS temp */
+	val = read_soc_reg(TP_SETTING_REG);
+	write_soc_reg(TP_SETTING_REG, (val | ENABLE_TP_GAIN));
+#endif
 }
 
+static int show_temp(struct thermal_zone_device *tzd, long *temp)
+{
+	struct thermal_device_info *td_info = tzd->devdata;
+	u32 val = read_soc_reg(PUNIT_TEMP_REG);
+
+	/* Extract bits[0:7] or [8:15] using sensor_index */
+	*temp =  (val >> (8 * td_info->sensor_index)) & 0xFF;
+
+	if (*temp == 0)
+		return 0;
+
+	/* Calibrate the temperature */
+	*temp = TJMAX_CODE - *temp + tjmax_temp;
+
+	/* Convert to mC */
+	*temp *= 1000;
+
+	return 0;
+}
+
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 static int show_trip_hyst(struct thermal_zone_device *tzd,
 				int trip, long *hyst)
 {
@@ -316,26 +370,6 @@ static int store_trip_hyst(struct thermal_zone_device *tzd,
 	return 0;
 }
 
-static int show_temp(struct thermal_zone_device *tzd, long *temp)
-{
-	struct thermal_device_info *td_info = tzd->devdata;
-	u32 val = read_soc_reg(PUNIT_TEMP_REG);
-
-	/* Extract bits[0:7] or [8:15] using sensor_index */
-	*temp =  (val >> (8 * td_info->sensor_index)) & 0xFF;
-
-	if (*temp == 0)
-		return 0;
-
-	/* Calibrate the temperature */
-	*temp = TJMAX_CODE - *temp + tjmax_temp;
-
-	/* Convert to mC */
-	*temp *= 1000;
-
-	return 0;
-}
-
 static int show_trip_type(struct thermal_zone_device *tzd,
 			int trip, enum thermal_trip_type *trip_type)
 {
@@ -371,8 +405,8 @@ static int store_trip_temp(struct thermal_zone_device *tzd,
 	/* Convert from mC to C */
 	trip_temp /= 1000;
 
-	/* The trip temp is 8 bits wide (unsigned) */
-	if (trip_temp > 255)
+	/* Do not program aux thresholds above TjMax */
+	if (trip_temp > tjmax_temp)
 		return -EINVAL;
 
 	/* Assign last byte to unsigned 32 */
@@ -399,6 +433,7 @@ static int store_trip_temp(struct thermal_zone_device *tzd,
 
 	return 0;
 }
+#endif
 
 /* SoC cooling device callbacks */
 static int soc_get_max_state(struct thermal_cooling_device *cdev,
@@ -426,12 +461,19 @@ static void set_floor_freq(int val)
 {
 	u32 eax;
 
-	eax = read_soc_reg(CPU_PWR_BUDGET_CTL);
+	eax = read_soc_reg(turbo_floor_reg);
+
+	/*
+	 * If autonomous frequency floor control by Punit is enabled,
+	 * do no modify floor frequency setting from iTUX
+	 */
+	if (!((eax >> 25) & 0x1))
+		return;
 
 	/* Set bits[8:14] of eax to val */
 	eax = (eax & ~(0x7F << 8)) | (val << 8);
 
-	write_soc_reg(CPU_PWR_BUDGET_CTL, eax);
+	write_soc_reg(turbo_floor_reg, eax);
 }
 
 static int disable_dynamic_turbo(struct cooling_device_info *cdev_info)
@@ -560,10 +602,18 @@ static int soc_set_force_state_override(struct thermal_cooling_device *cdev,
 }
 #endif
 
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 static void notify_thermal_event(struct thermal_zone_device *tzd,
 				long temp, int event, int level)
 {
 	char *thermal_event[5];
+
+	/*
+	 * Send UEvents only when temperature goes below the lower
+	 * temperature threshold or above the upper temperature threshold.
+	 */
+	if ((event == 0 && level == 1) || (event == 1 && level == 0))
+		return;
 
 	pr_info("Thermal Event: sensor: %s, cur_temp: %ld, event: %d, level: %d\n",
 				tzd->type, temp, event, level);
@@ -640,11 +690,12 @@ static irqreturn_t soc_dts_intrpt(int irq, void *dev_data)
 		if (irq_sts & (1 << i)) {
 			level = i;
 			event = !!(cur_sts & (1 << i));
-			/* Clear the status bit by writing 1 */
-			irq_sts |= (1 << i);
 			break;
 		}
 	}
+
+	/* Clear the status bits */
+	write_soc_reg(TRIP_STATUS_RW, irq_sts);
 
 	/* level == -1, indicates an invalid event */
 	if (level == -1) {
@@ -661,21 +712,20 @@ static irqreturn_t soc_dts_intrpt(int irq, void *dev_data)
 	/* Notify using UEvent */
 	notify_thermal_event(tzd, cur_temp, event, level);
 
-	/* Clear the status bits */
-	write_soc_reg(TRIP_STATUS_RW, irq_sts);
-
 exit:
 	mutex_unlock(&thrm_update_lock);
 	return IRQ_HANDLED;
 }
-
+#endif
 static struct thermal_zone_device_ops tzd_ops = {
 	.get_temp = show_temp,
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 	.get_trip_type = show_trip_type,
 	.get_trip_temp = show_trip_temp,
 	.set_trip_temp = store_trip_temp,
 	.get_trip_hyst = show_trip_hyst,
 	.set_trip_hyst = store_trip_hyst,
+#endif
 };
 
 static struct thermal_cooling_device_ops soc_cooling_ops = {
@@ -691,11 +741,12 @@ static struct thermal_cooling_device_ops soc_cooling_ops = {
 /*********************************************************************
  *		Driver initialization and finalization
  *********************************************************************/
-
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 static irqreturn_t soc_dts_intrpt_handler(int irq, void *dev_data)
 {
 	return IRQ_WAKE_THREAD;
 }
+#endif
 
 static int soc_thermal_probe(struct platform_device *pdev)
 {
@@ -703,6 +754,13 @@ static int soc_thermal_probe(struct platform_device *pdev)
 	int i, ret;
 	u32 eax, edx;
 	static char *name[SOC_THERMAL_SENSORS] = {"SoC_DTS0", "SoC_DTS1"};
+
+	/*
+	 * Register to configure floor frequency for DT done
+	 * using shadow register for ANN and TNG, Register address
+	 * chosen based on cpu model.[Refer:HSD:4380040]
+	 */
+	initialize_floor_reg_addr();
 
 	pdata = kzalloc(sizeof(struct platform_soc_data), GFP_KERNEL);
 	if (!pdata)
@@ -742,7 +800,7 @@ static int soc_thermal_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, pdata);
-
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 	ret = platform_get_irq(pdev, 0);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "platform_get_irq failed:%d\n", ret);
@@ -760,16 +818,17 @@ static int soc_thermal_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "request_threaded_irq failed:%d\n", ret);
 		goto exit_cdev;
 	}
-
+#endif
 	/* Enable DTS0 and DTS1 */
 	enable_soc_dts();
 
 	create_soc_dts_debugfs();
 
 	return 0;
-
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 exit_cdev:
 	thermal_cooling_device_unregister(pdata->soc_cdev);
+#endif
 exit_reg:
 	while (--i >= 0) {
 		struct thermal_device_info *td_info = pdata->tzd[i]->devdata;
@@ -794,7 +853,9 @@ static int soc_thermal_remove(struct platform_device *pdev)
 	}
 	thermal_cooling_device_unregister(pdata->soc_cdev);
 	platform_set_drvdata(pdev, NULL);
+#ifdef CONFIG_SENSORS_SOCDTS_INTERRUPT
 	free_irq(pdata->irq, pdata);
+#endif
 	kfree(pdata);
 
 	remove_soc_dts_debugfs();

@@ -36,10 +36,10 @@ extern struct sst_device *sst_dsp;
 #define SST_MIN_RATE		8000
 #define SST_MAX_RATE		48000
 #define SST_MIN_CHANNEL		1
-#define SST_MAX_CHANNEL		2
+#define SST_MAX_CHANNEL		4
 
-#define SST_MAX_BUFFER		96000 /*500ms@48K,16bit,2ch - CLV*/
-#define SST_MIN_PERIOD_BYTES	1536  /*24ms@16K,16bit,2ch - For VoIP on Mrfld*/
+#define SST_MAX_BUFFER		192000 /*500ms@48K,16bit,4ch - MRFLD*/
+#define SST_MIN_PERIOD_BYTES    80  /* 5ms@8K for VoLTE on mofd */
 #define SST_MAX_PERIOD_BYTES	48000 /*250ms@48K,16bit,2ch - CLV*/
 
 #define SST_MIN_PERIODS		2
@@ -48,6 +48,7 @@ extern struct sst_device *sst_dsp;
 #define SST_CODEC_TYPE_PCM	1
 
 #define SST_HEADSET_DAI		"Headset-cpu-dai"
+#define SST_CAPTURE_DAI		"Capture-cpu-dai"
 #define SST_SPEAKER_DAI		"Speaker-cpu-dai"
 #define SST_VOICE_DAI		"Voice-cpu-dai"
 #define SST_VIRTUAL_DAI		"Virtual-cpu-dai"
@@ -69,14 +70,29 @@ enum sst_drv_status {
 	SST_PLATFORM_DROPPED,
 };
 
+enum ssp_port {
+	SST_SSP_PORT0 = 0,
+	SST_SSP_PORT1,
+	SST_SSP_PORT2,
+	SST_SSP_LAST = SST_SSP_PORT2,
+};
+
+#define SST_NUM_SSPS		(SST_SSP_LAST + 1)	/* physical SSPs */
+
 #define SST_PIPE_CONTROL	0x0
 #define SST_COMPRESS_VOL	0x01
 
 int sst_platform_clv_init(struct snd_soc_platform *platform);
 int sst_dsp_init(struct snd_soc_platform *platform);
 int sst_dsp_init_v2_dpcm(struct snd_soc_platform *platform);
+int sst_dsp_init_v2_dpcm_dfw(struct snd_soc_platform *platform);
 int sst_send_pipe_gains(struct snd_soc_dai *dai, int stream, int mute);
+void send_ssp_cmd(struct snd_soc_platform *platform, unsigned int rate, unsigned int id, bool enable);
+void sst_handle_vb_timer(struct snd_soc_platform *platform, bool enable);
 
+int sst_fill_ssp_slot(struct sst_data *sst, unsigned int tx_mask, unsigned int rx_mask,
+									int id, int slots, int slot_width);
+int sst_fill_ssp_config(struct sst_data *sst, unsigned int id, unsigned int fmt, bool enable);
 unsigned int sst_soc_read(struct snd_soc_platform *platform, unsigned int reg);
 int sst_soc_write(struct snd_soc_platform *platform, unsigned int reg, unsigned int val);
 unsigned int sst_reg_read(struct sst_data *sst, unsigned int reg,
@@ -111,6 +127,18 @@ struct sst_lowlatency_deepbuff {
 	unsigned long	period_time;
 };
 
+struct sst_pcm_format {
+	unsigned int sample_bits;
+	unsigned int rate_min;
+	unsigned int rate_max;
+	unsigned int channels_min;
+	unsigned int channels_max;
+};
+
+struct sst_vtsv_result {
+	u8 data[VTSV_MAX_TOTAL_RESULT_ARRAY_SIZE];
+};
+
 struct sst_data {
 	struct platform_device *pdev;
 	struct sst_platform_data *pdata;
@@ -122,6 +150,8 @@ struct sst_data {
 	/* Pipe_id for probe_stream to be saved in stream map */
 	u8 pipe_id;
 	bool vtsv_enroll;
+	char *vtsv_path;
 	struct sst_lowlatency_deepbuff ll_db;
+	struct sst_vtsv_result vtsv_result;
 };
 #endif

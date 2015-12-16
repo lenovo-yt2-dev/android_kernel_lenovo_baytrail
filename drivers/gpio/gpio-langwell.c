@@ -45,9 +45,6 @@
 #define IRQ_TYPE_EDGE	(1 << 0)
 #define IRQ_TYPE_LEVEL	(1 << 1)
 
-#define TANGIER_I2C_FLIS_START	0x1D00
-#define TANGIER_I2C_FLIS_END	0x1D3C
-
 /*
  * Langwell chip has 64 pins and thus there are 2 32bit registers to control
  * each feature, while Penwell chip has 96 pins for each block, and need 3 32bit
@@ -149,23 +146,30 @@ static struct gpio_flis_pair gpio_flis_ann_mapping_table[] = {
 	{ 17,	0x1D18 },
 	{ 19,	0x1D08 },
 	{ 23,	0x1D20 },
-	{ 31,	-EINVAL }, /* No GPIO 31 in pin list */
+	{ 31,	0x111C },
 	{ 32,	0x1508 },
 	{ 44,	0x3500 },
 	{ 64,	0x312C },
 	{ 68,	0x2934 },
 	{ 70,	0x1500 },
-	{ 72,	-EINVAL }, /* No GPIO 73-76 in pin list */
+	{ 72,	0x3D00 },
 	{ 77,	0x0D00 },
+	{ 87,   0x0D2C },
+	{ 88,   0x0D28 },
+	{ 89,   0x0D30 },
 	{ 97,	0x2130 },
-	{ 98,	-EINVAL }, /* No GPIO 98-101 in pin list */
+	{ 98,	0x2D18 },
+	{ 99,	-EINVAL }, /* No GPIO 99-100 in pin list */
+	{ 101,	0x0500 },
 	{ 102,	0x1910 },
 	{ 120,	0x1900 },
 	{ 124,	0x2100 },
-	{ 136,	-EINVAL }, /* No GPIO 136-153 in pin list */
+	{ 136,	0x0504 },
+	{ 137,  0x2D00 },
+	{ 143,  0x0508 },
 	{ 154,	0x2134 },
 	{ 162,	0x2548 },
-	{ 164,	0x3914 },
+	{ 164,	0x3D14 },
 	{ 176,	0x2500 },
 
 };
@@ -178,8 +182,8 @@ static struct gpio_flis_pair gpio_flis_ann_mapping_table[] = {
  */
 static inline bool is_merr_i2c_flis(u32 offset)
 {
-	return ((offset >= TANGIER_I2C_FLIS_START)
-		&& (offset <= TANGIER_I2C_FLIS_END));
+	return ((offset >= I2C_FLIS_START)
+		&& (offset <= I2C_FLIS_END));
 }
 
 static u32 get_flis_offset_by_gpio(int gpio)
@@ -432,9 +436,18 @@ static void __iomem *gpio_reg_2bit(struct gpio_chip *chip, unsigned offset,
 
 static int lnw_gpio_request(struct gpio_chip *chip, unsigned offset)
 {
-	void __iomem *gafr = gpio_reg_2bit(chip, offset, GAFR);
-	u32 value = readl(gafr);
-	int shift = (offset % 16) << 1, af = (value >> shift) & 3;
+	struct lnw_gpio *lnw = to_lnw_priv(chip);
+	u32 value;
+	void __iomem *gafr;
+	int shift, af;
+
+	if (lnw->type > CLOVERVIEW_GPIO_CORE)
+		return 0;
+
+	gafr = gpio_reg_2bit(chip, offset, GAFR);
+	value = readl(gafr);
+	shift = (offset % 16) << 1;
+	af = (value >> shift) & 3;
 
 	if (af) {
 		value &= ~(3 << shift);
@@ -645,6 +658,7 @@ static void lnw_irq_unmask(struct irq_data *d)
 	struct lnw_gpio *lnw = irq_data_get_irq_chip_data(d);
 	u32 gpio = irqd_to_hwirq(d);
 	void __iomem *gpit;
+	void __iomem *gisr;
 
 	if (gpio >= lnw->chip.ngpio)
 		return;
@@ -659,6 +673,12 @@ static void lnw_irq_unmask(struct irq_data *d)
 
 		break;
 	case TANGIER_GPIO:
+		gpit = gpio_reg(&lnw->chip, gpio, GITR);
+		gisr = gpio_reg(&lnw->chip, gpio, GISR);
+
+		if (readl(gpit) & BIT(gpio % 32))
+			writel(BIT(gpio % 32), gisr);
+
 		lnw_set_maskunmask(d, GIMR, 1);
 		break;
 	default:
@@ -779,10 +799,11 @@ static void lnw_irq_handler(unsigned irq, struct irq_desc *desc)
 			gpio = __ffs(pending);
 			DEFINE_DEBUG_IRQ_CONUNT_INCREASE(lnw->chip.base +
 				base + gpio);
-			/* Mask irq if not requested in kernel */
 			lnw_irq = irq_find_mapping(lnw->domain, base + gpio);
 			lnw_irq_desc = irq_to_desc(lnw_irq);
-			if (lnw_irq_desc && unlikely(!lnw_irq_desc->action)) {
+			/* Mask irq if not requested in kernel, doing this only for Merrifiled */
+			if (lnw->type == TANGIER_GPIO &&
+				lnw_irq_desc && unlikely(!lnw_irq_desc->action)) {
 				lnw_irq_mask(&lnw_irq_desc->irq_data);
 				continue;
 			}

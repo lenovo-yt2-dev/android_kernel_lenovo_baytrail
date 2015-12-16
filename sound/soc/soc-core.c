@@ -40,6 +40,7 @@
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 #include <sound/soc-dpcm.h>
+#include <sound/soc-fw.h>
 #include <sound/initval.h>
 
 #define CREATE_TRACE_POINTS
@@ -1173,6 +1174,11 @@ static int soc_probe_platform(struct snd_soc_card *card,
 		    dai->playback_widget || dai->capture_widget)
 			continue;
 
+		/* dummy platform doesn't have and DAIs, don't add dummy-codec
+		 * widgets here (since dev is the same)
+		 */
+		if (!strcmp(dai->name, "snd-soc-dummy-dai"))
+			continue;
 		snd_soc_dapm_new_dai_widgets(&platform->dapm, dai);
 	}
 
@@ -1439,10 +1445,16 @@ static int soc_probe_link_dais(struct snd_soc_card *card, int num, int order)
 						codec2codec_close_delayed_work);
 
 			/* link the DAI widgets */
-			play_w = codec_dai->playback_widget;
-			capture_w = cpu_dai->capture_widget;
+			if (!dai_link->dsp_loopback) {
+				play_w = codec_dai->playback_widget;
+				capture_w = cpu_dai->capture_widget;
+			} else {
+				play_w = codec_dai->playback_widget;
+				capture_w = cpu_dai->playback_widget;
+			}
+
 			if (play_w && capture_w) {
-				ret = snd_soc_dapm_new_pcm(card, dai_link->params,
+				ret = snd_soc_dapm_new_pcm(card, dai_link,
 						   capture_w, play_w);
 				if (ret != 0) {
 					dev_err(card->dev, "ASoC: Can't link %s to %s: %d\n",
@@ -1451,10 +1463,16 @@ static int soc_probe_link_dais(struct snd_soc_card *card, int num, int order)
 				}
 			}
 
-			play_w = cpu_dai->playback_widget;
-			capture_w = codec_dai->capture_widget;
+			if (!dai_link->dsp_loopback) {
+				play_w = cpu_dai->playback_widget;
+				capture_w = codec_dai->capture_widget;
+			} else {
+				play_w = cpu_dai->capture_widget;
+				capture_w = codec_dai->capture_widget;
+			}
+
 			if (play_w && capture_w) {
-				ret = snd_soc_dapm_new_pcm(card, dai_link->params,
+				ret = snd_soc_dapm_new_pcm(card, dai_link,
 						   capture_w, play_w);
 				if (ret != 0) {
 					dev_err(card->dev, "ASoC: Can't link %s to %s: %d\n",
@@ -1894,6 +1912,9 @@ static int soc_cleanup_card_resources(struct snd_soc_card *card)
 
 	/* remove and free each DAI */
 	soc_remove_dai_links(card);
+
+	/* remove any dynamic kcontrols */
+	snd_soc_fw_dcontrols_remove_all(card, SND_SOC_FW_INDEX_ALL);
 
 	soc_cleanup_card_debugfs(card);
 
@@ -2434,7 +2455,8 @@ int snd_soc_info_enum_double(struct snd_kcontrol *kcontrol,
 	if (uinfo->value.enumerated.item > e->max - 1)
 		uinfo->value.enumerated.item = e->max - 1;
 	strcpy(uinfo->value.enumerated.name,
-		e->texts[uinfo->value.enumerated.item]);
+		snd_soc_get_enum_text(e, uinfo->value.enumerated.item));
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snd_soc_info_enum_double);
@@ -2594,7 +2616,7 @@ int snd_soc_info_enum_ext(struct snd_kcontrol *kcontrol,
 	if (uinfo->value.enumerated.item > e->max - 1)
 		uinfo->value.enumerated.item = e->max - 1;
 	strcpy(uinfo->value.enumerated.name,
-		e->texts[uinfo->value.enumerated.item]);
+		snd_soc_get_enum_text(e, uinfo->value.enumerated.item));
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snd_soc_info_enum_ext);
@@ -2652,7 +2674,9 @@ int snd_soc_info_volsw(struct snd_kcontrol *kcontrol,
 		uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
 
 	uinfo->count = snd_soc_volsw_is_stereo(mc) ? 2 : 1;
-	uinfo->value.integer.min = 0;
+
+	uinfo->value.integer.min = mc->min;
+
 	uinfo->value.integer.max = platform_max;
 	return 0;
 }
@@ -3201,7 +3225,6 @@ EXPORT_SYMBOL_GPL(snd_soc_bytes_put);
 int snd_soc_info_bytes_ext(struct snd_kcontrol *kcontrol,
 			struct snd_ctl_elem_info *ucontrol)
 {
-	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
 	struct soc_bytes_ext *params = (void *)kcontrol->private_value;
 
 	ucontrol->type = SNDRV_CTL_ELEM_TYPE_BYTES;
@@ -3679,6 +3702,7 @@ int snd_soc_register_card(struct snd_soc_card *card)
 	if (card->rtd == NULL)
 		return -ENOMEM;
 	card->num_rtd = 0;
+
 	card->rtd_aux = &card->rtd[card->num_links];
 
 	for (i = 0; i < card->num_links; i++)
@@ -3686,6 +3710,9 @@ int snd_soc_register_card(struct snd_soc_card *card)
 
 	INIT_LIST_HEAD(&card->list);
 	INIT_LIST_HEAD(&card->dapm_dirty);
+	INIT_LIST_HEAD(&card->denums);
+	INIT_LIST_HEAD(&card->dmixers);
+	INIT_LIST_HEAD(&card->dbytes);
 	card->instantiated = 0;
 	mutex_init(&card->mutex);
 	mutex_init(&card->dapm_mutex);
@@ -3958,6 +3985,9 @@ int snd_soc_add_platform(struct device *dev, struct snd_soc_platform *platform,
 	platform->dapm.platform = platform;
 	platform->dapm.stream_event = platform_drv->stream_event;
 	mutex_init(&platform->mutex);
+	INIT_LIST_HEAD(&platform->denums);
+	INIT_LIST_HEAD(&platform->dmixers);
+	INIT_LIST_HEAD(&platform->dbytes);
 
 	mutex_lock(&client_mutex);
 	list_add(&platform->list, &platform_list);
@@ -4121,6 +4151,9 @@ int snd_soc_register_codec(struct device *dev,
 	codec->driver = codec_drv;
 	codec->num_dai = num_dai;
 	mutex_init(&codec->mutex);
+	INIT_LIST_HEAD(&codec->denums);
+	INIT_LIST_HEAD(&codec->dmixers);
+	INIT_LIST_HEAD(&codec->dbytes);
 
 	/* allocate CODEC register cache */
 	if (codec_drv->reg_cache_size && codec_drv->reg_word_size) {

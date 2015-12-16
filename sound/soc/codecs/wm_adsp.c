@@ -158,9 +158,6 @@
 #define ADSP2_RAM_RDY_SHIFT                    0
 #define ADSP2_RAM_RDY_WIDTH                    1
 
-extern struct device_node *of_get_next_child(const struct device_node *node,
-                                             struct device_node *prev);
-
 struct wm_adsp_buf {
 	struct list_head list;
 	void *buf;
@@ -336,6 +333,7 @@ static struct wm_adsp_fw_caps ez2control_caps[] = {
 		.desc = {
 			.max_ch = 1,
 			.sample_rates = { 16000 },
+			.num_sample_rates = 1,
 			.formats = SNDRV_PCM_FMTBIT_S16_LE,
 		},
 		.num_host_regions = ARRAY_SIZE(ez2control_regions),
@@ -371,6 +369,7 @@ static struct wm_adsp_fw_caps trace_caps[] = {
 				24000,32000,44100,48000,64000,88200,
 				96000,176400,192000
 			},
+			.num_sample_rates = 15,
 			.formats = SNDRV_PCM_FMTBIT_S16_LE,
 		},
 		.num_host_regions = ARRAY_SIZE(trace_regions),
@@ -378,7 +377,6 @@ static struct wm_adsp_fw_caps trace_caps[] = {
 	},
 };
 
-/* WB firmware is same with NB, only coeff file has difference */
 static struct wm_adsp_fw_defs wm_adsp_fw[WM_ADSP_NUM_FW] = {
 	[WM_ADSP_FW_MBC_VSS] =    { .file = "mbc-vss" },
 	[WM_ADSP_FW_TX] =         { .file = "tx" },
@@ -723,7 +721,9 @@ static int wmfw_add_ctl(struct wm_adsp *adsp, struct wm_coeff_ctl *ctl)
 	ctl->kcontrol = snd_soc_card_get_kcontrol(adsp->card,
 						  ctl->name);
 
+	mutex_lock(&adsp->ctl_lock);
 	list_add(&ctl->list, &adsp->ctl_list);
+	mutex_unlock(&adsp->ctl_lock);
 	return 0;
 
 err_kcontrol:
@@ -864,6 +864,7 @@ static int wm_adsp_load(struct wm_adsp *dsp)
 	snprintf(file, PAGE_SIZE, "%s-dsp%d-%s.wmfw", dsp->part, dsp->num,
 		 dsp->firmwares[dsp->fw].file);
 	file[PAGE_SIZE - 1] = '\0';
+
 	ret = request_firmware(&firmware, file, dsp->dev);
 	if (ret != 0) {
 		adsp_err(dsp, "Failed to request '%s'\n", file);
@@ -1013,23 +1014,38 @@ static int wm_adsp_load(struct wm_adsp *dsp)
 		}
 
 		if (reg) {
-			buf = wm_adsp_buf_alloc(region->data,
-						le32_to_cpu(region->len),
-						&buf_list);
-			if (!buf) {
-				adsp_err(dsp, "Out of memory\n");
-				return -ENOMEM;
-			}
+			size_t to_write = PAGE_SIZE;
+			size_t remain = le32_to_cpu(region->len);
+			const u8 *data = region->data;
 
-			ret = regmap_raw_write_async(regmap, reg, buf->buf,
-						     le32_to_cpu(region->len));
-			if (ret != 0) {
-				adsp_err(dsp,
-					"%s.%d: Failed to write %d bytes at %d in %s: %d\n",
-					file, regions,
-					le32_to_cpu(region->len), offset,
-					region_name, ret);
-				goto out_fw;
+			while (remain > 0) {
+				if (remain < PAGE_SIZE)
+					to_write = remain;
+
+				buf = wm_adsp_buf_alloc(data,
+							to_write,
+							&buf_list);
+				if (!buf) {
+					adsp_err(dsp, "Out of memory\n");
+					ret = -ENOMEM;
+					goto out_buf;
+				}
+
+				ret = regmap_raw_write_async(regmap, reg,
+							     buf->buf,
+							     to_write);
+				if (ret != 0) {
+					adsp_err(dsp,
+						"%s.%d: Failed to write %zd bytes at %d in %s: %d\n",
+						file, regions,
+						to_write, offset,
+						region_name, ret);
+					goto out_buf;
+				}
+
+				data += to_write;
+				reg += to_write / 2;
+				remain -= to_write;
 			}
 		}
 
@@ -1040,16 +1056,16 @@ static int wm_adsp_load(struct wm_adsp *dsp)
 	ret = regmap_async_complete(regmap);
 	if (ret != 0) {
 		adsp_err(dsp, "Failed to complete async write: %d\n", ret);
-		goto out_fw;
+		goto out_buf;
 	}
 
 	if (pos > firmware->size)
 		adsp_warn(dsp, "%s.%d: %zu bytes at end of file\n",
 			  file, regions, pos - firmware->size);
 
-out_fw:
-	regmap_async_complete(regmap);
+out_buf:
 	wm_adsp_buf_free(&buf_list);
+out_fw:
 	release_firmware(firmware);
 out:
 	kfree(file);
@@ -1135,6 +1151,7 @@ static int wm_adsp_create_control(struct wm_adsp *dsp,
 		region_name = "ZM";
 		break;
 	default:
+		kfree(name);
 		return -EINVAL;
 	}
 
@@ -1146,6 +1163,8 @@ static int wm_adsp_create_control(struct wm_adsp *dsp,
 		if (!strcmp(ctl->name, name)) {
 			if (!ctl->enabled)
 				ctl->enabled = 1;
+
+			kfree(name);
 			return 0;
 		}
 	}
@@ -1516,8 +1535,10 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 				}
 			} else {
 				region = kzalloc(sizeof(*region), GFP_KERNEL);
-				if (!region)
-					return -ENOMEM;
+				if (!region) {
+					ret = -ENOMEM;
+					goto out;
+				}
 				region->type = WMFW_ADSP1_DM;
 				region->alg = be32_to_cpu(adsp1_alg[i].alg.id);
 				region->base = be32_to_cpu(adsp1_alg[i].dm);
@@ -1534,8 +1555,10 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 				}
 
 				region = kzalloc(sizeof(*region), GFP_KERNEL);
-				if (!region)
-					return -ENOMEM;
+				if (!region) {
+					ret = -ENOMEM;
+					goto out;
+				}
 				region->type = WMFW_ADSP1_ZM;
 				region->alg = be32_to_cpu(adsp1_alg[i].alg.id);
 				region->base = be32_to_cpu(adsp1_alg[i].zm);
@@ -1572,8 +1595,10 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 				}
 			} else {
 				region = kzalloc(sizeof(*region), GFP_KERNEL);
-				if (!region)
-					return -ENOMEM;
+				if (!region) {
+					ret = -ENOMEM;
+					goto out;
+				}
 				region->type = WMFW_ADSP2_XM;
 				region->alg = be32_to_cpu(adsp2_alg[i].alg.id);
 				region->base = be32_to_cpu(adsp2_alg[i].xm);
@@ -1590,8 +1615,10 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 				}
 
 				region = kzalloc(sizeof(*region), GFP_KERNEL);
-				if (!region)
-					return -ENOMEM;
+				if (!region) {
+					ret = -ENOMEM;
+					goto out;
+				}
 				region->type = WMFW_ADSP2_YM;
 				region->alg = be32_to_cpu(adsp2_alg[i].alg.id);
 				region->base = be32_to_cpu(adsp2_alg[i].ym);
@@ -1608,8 +1635,10 @@ static int wm_adsp_setup_algs(struct wm_adsp *dsp)
 				}
 
 				region = kzalloc(sizeof(*region), GFP_KERNEL);
-				if (!region)
-					return -ENOMEM;
+				if (!region) {
+					ret = -ENOMEM;
+					goto out;
+				}
 				region->type = WMFW_ADSP2_ZM;
 				region->alg = be32_to_cpu(adsp2_alg[i].alg.id);
 				region->base = be32_to_cpu(adsp2_alg[i].zm);
@@ -1644,7 +1673,8 @@ static int wm_adsp_load_coeff(struct wm_adsp *dsp)
 	const struct wm_adsp_region *mem;
 	struct wm_adsp_alg_region *alg_region;
 	const char *region_name;
-	int ret, pos, blocks, type, offset, reg;
+	int ret = 0;
+	int err, pos, blocks, type, offset, reg;
 	char *file;
 	struct wm_adsp_buf *buf;
 	int tmp;
@@ -1786,7 +1816,7 @@ static int wm_adsp_load_coeff(struct wm_adsp *dsp)
 			if (!buf) {
 				adsp_err(dsp, "Out of memory\n");
 				ret = -ENOMEM;
-				goto out_fw;
+				goto out_async;
 			}
 
 			adsp_dbg(dsp, "%s.%d: Writing %d bytes at %x\n",
@@ -1810,13 +1840,17 @@ static int wm_adsp_load_coeff(struct wm_adsp *dsp)
 		blocks++;
 	}
 
-	ret = regmap_async_complete(regmap);
-	if (ret != 0)
-		adsp_err(dsp, "Failed to complete async write: %d\n", ret);
-
 	if (pos > firmware->size)
 		adsp_warn(dsp, "%s.%d: %zu bytes at end of file\n",
 			  file, blocks, pos - firmware->size);
+
+out_async:
+	err = regmap_async_complete(regmap);
+	if (err != 0) {
+		adsp_err(dsp, "Failed to complete async write: %d\n", err);
+		if (!ret)
+			ret = err;
+	}
 
 out_fw:
 	release_firmware(firmware);
@@ -2077,7 +2111,7 @@ int wm_adsp2_early_event(struct snd_soc_dapm_widget *w,
 		break;
 	default:
 		break;
-	};
+	}
 
 	return 0;
 }
@@ -2204,6 +2238,7 @@ err:
 }
 EXPORT_SYMBOL_GPL(wm_adsp2_event);
 
+#ifdef CONFIG_OF
 static int wm_adsp_of_parse_caps(struct wm_adsp *adsp,
 				 struct device_node *np,
 				 struct wm_adsp_fw_defs *fw)
@@ -2217,6 +2252,9 @@ static int wm_adsp_of_parse_caps(struct wm_adsp *adsp,
 		return -EINVAL;
 
 	len_prop /= sizeof(u32);
+
+	if (len_prop < 5 || len_prop > 5 + MAX_NUM_SAMPLE_RATES)
+		return -EOVERFLOW;
 
 	fw->num_caps = 1;
 	fw->caps = devm_kzalloc(adsp->dev,
@@ -2246,11 +2284,11 @@ static int wm_adsp_of_parse_caps(struct wm_adsp *adsp,
 	of_property_read_u32_index(np, prop, 3, &of_cap);
 	fw->compr_direction = of_cap;
 
-	//for (i = 4; i < len_prop; ++i) {
+	for (i = 4; i < len_prop; ++i) {
 		of_property_read_u32_index(np, prop, i, &of_cap);
-	//	fw->caps->desc.sample_rates[i - 4] = of_cap;
-		fw->caps->desc.sample_rates = of_cap;
-	//}
+		fw->caps->desc.sample_rates[i - 4] = of_cap;
+	}
+	fw->caps->desc.num_sample_rates = i - 4;
 
 	return 0;
 }
@@ -2346,6 +2384,12 @@ static int wm_adsp_of_parse_adsp(struct wm_adsp *adsp)
 
 	return wm_adsp_of_parse_firmware(adsp, core);
 }
+#else
+static inline int wm_adsp_of_parse_adsp(struct wm_adsp *adsp)
+{
+	return 0;
+}
+#endif
 
 int wm_adsp2_init(struct wm_adsp *adsp, bool dvfs)
 {
@@ -2366,38 +2410,39 @@ int wm_adsp2_init(struct wm_adsp *adsp, bool dvfs)
 	INIT_LIST_HEAD(&adsp->alg_regions);
 	INIT_LIST_HEAD(&adsp->ctl_list);
 	INIT_WORK(&adsp->boot_work, wm_adsp2_boot_work);
+	mutex_init(&adsp->ctl_lock);
 
 	if (dvfs) {
         if (arizona && arizona->dcvdd)
             adsp->dvfs = arizona->dcvdd;
         else {
-            adsp->dvfs = regulator_get(adsp->dev, "DCVDD");
-            if (IS_ERR(adsp->dvfs)) {
-            	ret = PTR_ERR(adsp->dvfs);
-            	dev_err(adsp->dev, "Failed to get DCVDD: %d\n", ret);
-                return ret;
-            }
+			adsp->dvfs = devm_regulator_get(adsp->dev, "DCVDD");
+			if (IS_ERR(adsp->dvfs)) {
+				ret = PTR_ERR(adsp->dvfs);
+				dev_err(adsp->dev, "Failed to get DCVDD: %d\n", ret);
+				return ret;
+		}
         }
 
 		ret = regulator_enable(adsp->dvfs);
 		if (ret != 0) {
 			dev_err(adsp->dev, "Failed to enable DCVDD: %d\n",
 				ret);
-			goto err_dcvdd;
+			return ret;
 		}
 
 		ret = regulator_set_voltage(adsp->dvfs, 1200000, 1800000);
 		if (ret != 0) {
 			dev_err(adsp->dev, "Failed to initialise DVFS: %d\n",
 				ret);
-			goto err_dcvdd;
+			return ret;
 		}
 
 		ret = regulator_disable(adsp->dvfs);
 		if (ret != 0) {
 			dev_err(adsp->dev, "Failed to disable DCVDD: %d\n",
 				ret);
-			goto err_dcvdd;
+			return ret;
 		}
 	}
 
@@ -2407,10 +2452,6 @@ int wm_adsp2_init(struct wm_adsp *adsp, bool dvfs)
 	}
 
 	return 0;
-
-err_dcvdd:
-//	regulator_put(adsp->dvfs);
-	return ret;
 }
 EXPORT_SYMBOL_GPL(wm_adsp2_init);
 
@@ -2465,8 +2506,8 @@ bool wm_adsp_format_supported(const struct wm_adsp *adsp,
 		if (!(caps->desc.formats & (1 << params->codec.format)))
 			continue;
 
-//		for (j = 0; j < caps->desc.num_sample_rates; ++j)
-			if (caps->desc.sample_rates ==
+		for (j = 0; j < caps->desc.num_sample_rates; ++j)
+			if (caps->desc.sample_rates[j] ==
 			    params->codec.sample_rate)
 				return true;
 	}
@@ -2959,3 +3000,5 @@ int wm_adsp_stream_avail(const struct wm_adsp *adsp)
 			adsp->capt_buf_size);
 }
 EXPORT_SYMBOL_GPL(wm_adsp_stream_avail);
+
+MODULE_LICENSE("GPL v2");

@@ -429,20 +429,13 @@ static int soc_compr_set_params_fe(struct snd_compr_stream *cstream,
 	struct snd_pcm_substream *fe_substream = fe->pcm->streams[0].substream;
 	struct snd_soc_platform *platform = fe->platform;
 	struct snd_soc_dai *cpu_dai = fe->cpu_dai;
-	struct snd_soc_dai *codec_dai =  fe->codec_dai;
 
-	struct snd_pcm_hw_params *hw_params;
 	int ret = 0, stream;
 
 	if (cstream->direction == SND_COMPRESS_PLAYBACK)
 		stream = SNDRV_PCM_STREAM_PLAYBACK;
 	else
 		stream = SNDRV_PCM_STREAM_CAPTURE;
-
-	hw_params = kzalloc(sizeof(*hw_params), GFP_KERNEL);
-	if (hw_params == NULL)
-		return -ENOMEM;
-
 	mutex_lock_nested(&fe->card->mutex, SND_SOC_CARD_CLASS_RUNTIME);
 
 	/* first we call set_params for the platform driver
@@ -463,7 +456,12 @@ static int soc_compr_set_params_fe(struct snd_compr_stream *cstream,
 			goto out;
 	}
 
-	memcpy(&fe->dpcm[fe_substream->stream].hw_params, params,
+	/*
+	 * Create an empty hw_params for the BE as the machine driver must
+	 * fix this up to match DSP decoder and ASRC configuration.
+	 * I.e. machine driver fixup for compressed BE is mandatory.
+	 */
+	memset(&fe->dpcm[fe_substream->stream].hw_params, 0,
 			sizeof(struct snd_pcm_hw_params));
 
 	fe->dpcm[stream].runtime_update = SND_SOC_DPCM_UPDATE_FE;

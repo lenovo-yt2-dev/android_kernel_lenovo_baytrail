@@ -21,87 +21,77 @@
 #include <asm/intel_mid_remoteproc.h>
 #include "platform_mrfl_thermal.h"
 
-/* 'enum' of Thermal ADC channels */
-enum thermal_adc_channels { SYS0, SYS1, SYS2, PMIC_DIE };
-
-static int linear_temp_correlation(void *info, long temp, long *res)
-{
-	struct intel_mid_thermal_sensor *sensor = info;
-
-	*res = ((temp * sensor->slope) / 1000) + sensor->intercept;
-
-	return 0;
-}
-
-/*
- * Naming convention:
- * skin0 -> front skin,
- * skin1--> back skin
- */
-
 static struct intel_mid_thermal_sensor mrfl_sensors[] = {
 	{
-		.name = SKIN0_NAME,
-		.index = SYS2,
-		.slope = 870,
-		.intercept = 765,
-		.temp_correlation = linear_temp_correlation,
-		.direct = false,
+		.name = "SYSTHERM0",
+		.index = 0,
 	},
 	{
-		.name = SKIN1_NAME,
-		.index = SYS0,
-		.slope = 525,
-		.intercept = 13674,
-		.temp_correlation = linear_temp_correlation,
-		.direct = false,
+		.name = "SYSTHERM1",
+		.index = 1,
+	},
+	{
+		.name = "SYSTHERM2",
+		.index = 2,
 	},
 	{
 		.name = MSIC_DIE_NAME,
-		.index = PMIC_DIE,
-		.slope = 1000,
-		.intercept = 0,
-		.temp_correlation = linear_temp_correlation,
 		.direct = true,
+		.index = 3,
+	},
+	{
+		.name = "FrontSkin",
+	},
+	{
+		.name = "BackSkin",
 	},
 };
 
 /* Bodegabay - PRh thermal sensor list */
 static struct intel_mid_thermal_sensor bdgb_sensors[] = {
 	{
-		.name = SKIN0_NAME,
-		.index = SYS0,
-		.slope = 410,
-		.intercept = 16808,
-		.temp_correlation = linear_temp_correlation,
-		.direct = false,
+		.name = "SYSTHERM0",
+		.index = 0,
 	},
 	{
-		.name = SKIN1_NAME,
-		.index = SYS0,
-		.slope = 665,
-		.intercept = 8375,
-		.temp_correlation = linear_temp_correlation,
-		.direct = false,
+		.name = "SYSTHERM1",
+		.index = 1,
+	},
+	{
+		.name = "SYSTHERM2",
+		.index = 2,
 	},
 	{
 		.name = MSIC_DIE_NAME,
-		.index = PMIC_DIE,
-		.slope = 1000,
-		.intercept = 0,
-		.temp_correlation = linear_temp_correlation,
 		.direct = true,
+		.index = 3,
+	},
+	{	/*
+		 * Weight/Offset & systherm to be used in xml for bodegabay
+		 * FrontSkin:slope=410, intercept=16808
+		 * Systherm = SYSTHERM0
+		 */
+		.name = "FrontSkin",
+	},
+	{	/*
+		 * Weight/Offset & systherm to be used in xml for bodegabay
+		 * FrontSkin:slope=665, intercept=8375
+		 * Systherm = SYSTHERM0
+		 */
+		.name = "BackSkin",
 	},
 };
 
 static struct intel_mid_thermal_platform_data pdata[] = {
 	[mrfl_thermal] = {
-		.num_sensors = 3,
+		.num_sensors = 4,
 		.sensors = mrfl_sensors,
+		.num_virtual_sensors = 2,
 	},
 	[bdgb_thermal] = {
-		.num_sensors = 3,
+		.num_sensors = 4,
 		.sensors = bdgb_sensors,
+		.num_virtual_sensors = 2,
 	},
 };
 
@@ -109,8 +99,6 @@ void __init *mrfl_thermal_platform_data(void *info)
 {
 	struct platform_device *pdev;
 	struct sfi_device_table_entry *entry = info;
-
-	pr_err("inside mrfl_thermal_platform_data\n");
 
 	pdev = platform_device_alloc(MRFL_THERM_DEV_NAME, -1);
 	if (!pdev) {

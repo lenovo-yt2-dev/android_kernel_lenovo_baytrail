@@ -21,7 +21,10 @@
 
 #include "ia_css_types.h"
 #include "sh_css_defs.h"
+#ifndef IA_CSS_NO_DEBUG
+/* FIXME: See BZ 4427 */
 #include "ia_css_debug.h"
+#endif
 #include "csc/csc_1.0/ia_css_csc.host.h"
 #include "vamem.h"
 
@@ -40,43 +43,52 @@ const struct ia_css_cc_config default_rgb2yuv_cc_config = {
 void
 ia_css_yuv2rgb_encode(
 	struct sh_css_isp_csc_params *to,
-	const struct ia_css_cc_config *from)
+	const struct ia_css_cc_config *from,
+	unsigned size)
 {
-	ia_css_encode_cc(to, from);
+	ia_css_encode_cc(to, from, size);
 }
 
 void
 ia_css_rgb2yuv_encode(
 	struct sh_css_isp_csc_params *to,
-	const struct ia_css_cc_config *from)
+	const struct ia_css_cc_config *from,
+	unsigned size)
 {
-	ia_css_encode_cc(to, from);
+	ia_css_encode_cc(to, from, size);
 }
 
 void
 ia_css_r_gamma_vamem_encode(
 	struct sh_css_isp_rgb_gamma_vamem_params *to,
-	const struct ia_css_rgb_gamma_table *from)
+	const struct ia_css_rgb_gamma_table *from,
+	unsigned size)
 {
+	(void)size;
 	memcpy (&to->gc,  &from->data, sizeof(to->gc));
 }
 
 void
 ia_css_g_gamma_vamem_encode(
 	struct sh_css_isp_rgb_gamma_vamem_params *to,
-	const struct ia_css_rgb_gamma_table *from)
+	const struct ia_css_rgb_gamma_table *from,
+	unsigned size)
 {
+	(void)size;
 	memcpy (&to->gc,  &from->data, sizeof(to->gc));
 }
 
 void
 ia_css_b_gamma_vamem_encode(
 	struct sh_css_isp_rgb_gamma_vamem_params *to,
-	const struct ia_css_rgb_gamma_table *from)
+	const struct ia_css_rgb_gamma_table *from,
+	unsigned size)
 {
+	(void)size;
 	memcpy (&to->gc,  &from->data, sizeof(to->gc));
 }
 
+#ifndef IA_CSS_NO_DEBUG
 void
 ia_css_yuv2rgb_dump(
 	const struct sh_css_isp_csc_params *yuv2rgb,
@@ -101,3 +113,5 @@ ia_css_rgb_gamma_table_debug_dtrace(
 	(void)config;
 	(void)level;
 }
+#endif
+

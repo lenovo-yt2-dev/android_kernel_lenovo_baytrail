@@ -22,10 +22,15 @@
 #ifndef __IA_CSS_FRAME_PUBLIC_H
 #define __IA_CSS_FRAME_PUBLIC_H
 
+/** @file
+ * This file contains structs to describe various frame-formats supported by the ISP.
+ */
+
 #include <type_support.h>
 #include "ia_css_err.h"
 #include "ia_css_types.h"
 #include "ia_css_frame_format.h"
+#include "ia_css_buffer.h"
 
 /** For RAW input, the bayer order needs to be specified separately. There
  *  are 4 possible orders. The name is constructed by taking the first two
@@ -96,6 +101,15 @@ struct ia_css_frame_plane6_planes {
 	struct ia_css_frame_plane b_at_r; /**< Blue at red plane */
 };
 
+/* Crop info struct - stores the lines to be cropped in isp */
+struct ia_css_crop_info {
+	/* the final start column and start line
+	 * sum of lines to be cropped + bayer offset
+	 */
+	unsigned int start_column;
+	unsigned int start_line;
+};
+
 /** Frame info struct. This describes the contents of an image frame buffer.
   */
 struct ia_css_frame_info {
@@ -106,7 +120,24 @@ struct ia_css_frame_info {
 					 only valid for RAW bayer frames */
 	enum ia_css_bayer_order raw_bayer_order; /**< bayer order, only valid
 						      for RAW bayer frames */
+	/* the params below are computed based on bayer_order
+	 * we can remove the raw_bayer_order if it is redundant
+	 * keeping it for now as bxt and fpn code seem to use it
+	 */
+	struct ia_css_crop_info crop_info;
 };
+
+#define IA_CSS_BINARY_DEFAULT_FRAME_INFO \
+{ \
+	{0,                      /* width */ \
+	 0},                     /* height */ \
+	0,                       /* padded_width */ \
+	IA_CSS_FRAME_FORMAT_NUM, /* format */ \
+	0,                       /* raw_bit_depth */ \
+	IA_CSS_BAYER_ORDER_NUM,  /* raw_bayer_order */ \
+	{0,                       /*start col */ \
+	 0},                       /*start line */ \
+}
 
 /**
  *  Specifies the DVS loop delay in "frame periods"
@@ -136,11 +167,19 @@ struct ia_css_frame {
 	 * >=0 if data address can change per pipeline/frame iteration
 	 *     index to dynamic data: ia_css_frame_in, ia_css_frame_out
 	 *                            ia_css_frame_out_vf
+	 *     index to host-sp queue id: queue_0, queue_1 etc.
 	 */
-	int dynamic_data_index;
+	int dynamic_queue_id;
+	/*
+	 * if it is dynamic frame, buf_type indicates which buffer type it
+	 * should use for event generation. we have this because in vf_pp
+	 * binary, we use output port, but we expect VF_OUTPUT_DONE event
+	 */
+	enum ia_css_buffer_type buf_type;
 	enum ia_css_frame_flash_state flash_state;
-	unsigned int exp_id; /**< exposure id, only valid for continuous
-				capture cases */
+	unsigned int exp_id;
+	/**< exposure id, see ia_css_event_public.h for more detail */
+	uint32_t isp_config_id; /**< Unique ID to track which config was actually applied to a particular frame */
 	bool valid; /**< First video output frame is not valid */
 	bool contiguous; /**< memory is allocated physically contiguously */
 	union {
@@ -156,6 +195,21 @@ struct ia_css_frame {
 	} planes; /**< frame planes, select the right one based on
 		       info.format */
 };
+
+#define DEFAULT_FRAME \
+{ \
+	IA_CSS_BINARY_DEFAULT_FRAME_INFO,	/* info */ \
+	0,					/* data */ \
+	0,					/* data_bytes */ \
+	SH_CSS_INVALID_QUEUE_ID,		/* dynamic_data_index */ \
+	IA_CSS_BUFFER_TYPE_INVALID,			/* buf_type */ \
+	IA_CSS_FRAME_FLASH_STATE_NONE,		/* flash_state */ \
+	0,					/* exp_id */ \
+	0,					/* isp_config_id */ \
+	false,					/* valid */ \
+	false,					/* contiguous  */ \
+	{ 0 }					/* planes */ \
+}
 
 /** @brief Fill a frame with zeros
  *

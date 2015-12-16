@@ -27,11 +27,7 @@
 #include <media/videobuf-vmalloc.h>
 #include <linux/delay.h>
 
-#ifdef CSS20
 #include "ia_css.h"
-#else /* CSS20 */
-#include <sh_css.h>
-#endif /* CSS20 */
 
 #include "atomisp_cmd.h"
 #include "atomisp_common.h"
@@ -146,7 +142,7 @@ static int file_input_s_mbus_fmt(struct v4l2_subdev *sd,
 	file_input_g_mbus_fmt(sd, fmt);
 	return 0;
 }
-
+#ifndef CONFIG_GMIN_INTEL_MID
 static int file_input_g_chip_ident(struct v4l2_subdev *sd,
 			       struct v4l2_dbg_chip_ident *chip)
 {
@@ -155,7 +151,7 @@ static int file_input_g_chip_ident(struct v4l2_subdev *sd,
 
 	return 0;
 }
-
+#endif
 static int file_input_log_status(struct v4l2_subdev *sd)
 {
 	/*to fake*/
@@ -224,7 +220,9 @@ static const struct v4l2_subdev_video_ops file_input_video_ops = {
 };
 
 static const struct v4l2_subdev_core_ops file_input_core_ops = {
+#ifndef CONFIG_GMIN_INTEL_MID
 	.g_chip_ident = file_input_g_chip_ident,
+#endif
 	.log_status = file_input_log_status,
 	.queryctrl = file_input_queryctrl,
 	.g_ctrl = file_input_g_ctrl,

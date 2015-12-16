@@ -214,6 +214,8 @@ void apply_ANN_A0_workarounds(int islands, int pre_po)
 	switch (islands) {
 	case OSPM_DISPLAY_ISLAND:
 		/*  When display is powered-on. */
+		if (!pre_po)
+			apply_HSD_4582616(dev);
 		break;
 
 	case OSPM_GRAPHICS_ISLAND:

@@ -20,6 +20,13 @@ menuconfig DRM
 	  details.  You should also select and configure AGP
 	  (/dev/agpgart) support if it is available for your platform.
 
+config DLP
+	bool "dlp driver is support"
+	depends on DRM
+	default n
+	help 
+         for add the ti 's dpp3430 driver and mipi interface.
+  
 config DRM_USB
 	tristate
 	depends on DRM

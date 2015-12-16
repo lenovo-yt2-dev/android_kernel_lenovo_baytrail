@@ -60,6 +60,7 @@
 #include <linux/ktime.h>
 #include <asm/div64.h>
 #include <linux/wakelock.h>
+#include <linux/tablet_config.h>
 
 #define AL3320_DRV_NAME	"al3320"
 #define DRIVER_VERSION		"1.04"
@@ -184,7 +185,11 @@ static u8 al3320_reg[AL3320_NUM_CACHABLE_REGS] =
 // AL3320 range
 static long al3320_range[8] = {33280,8320,2080,650,100000,25000,6250,1950};
 
+#if defined(BLADE2_8) || defined(BLADE2_10)
+int cali = 660;
+#elif defined(BLADE2_13)
 int cali = 100;
+#endif
 u8 suspend_mode;
 
 /* ============================================================================================ */

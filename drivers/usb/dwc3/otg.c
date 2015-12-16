@@ -97,6 +97,7 @@ EXPORT_SYMBOL_GPL(dwc3_get_otg);
 /* Caller must hold otg->lock */
 void dwc3_wakeup_otg_thread(struct dwc_otg2 *otg)
 {
+    printk("yangyu dwc3_wakeup_otg_thread\n");
 	if (!otg->main_thread)
 		return;
 
@@ -489,6 +490,7 @@ static enum dwc_otg_state do_charger_detection(struct dwc_otg2 *otg)
 		state = DWC_STATE_B_PERIPHERAL;
 		break;
 	case POWER_SUPPLY_CHARGER_TYPE_ACA_DOCK:
+	case POWER_SUPPLY_CHARGER_TYPE_B_DEVICE:
 		state = DWC_STATE_A_HOST;
 		break;
 	case POWER_SUPPLY_CHARGER_TYPE_USB_DCP:
@@ -503,6 +505,7 @@ static enum dwc_otg_state do_charger_detection(struct dwc_otg2 *otg)
 			break;
 		}
 	};
+	printk("yangyu do_charger_detection charger %d\n",charger);
 
 	switch (charger) {
 	case POWER_SUPPLY_CHARGER_TYPE_ACA_DOCK:
@@ -512,9 +515,10 @@ static enum dwc_otg_state do_charger_detection(struct dwc_otg2 *otg)
 	case POWER_SUPPLY_CHARGER_TYPE_USB_DCP:
 	case POWER_SUPPLY_CHARGER_TYPE_USB_CDP:
 	case POWER_SUPPLY_CHARGER_TYPE_SE1:
-		ma = 1800;/*YT2 Chrg Curr 1800*/
+		ma = 1500;
 		break;
 	case POWER_SUPPLY_CHARGER_TYPE_USB_SDP:
+	case POWER_SUPPLY_CHARGER_TYPE_B_DEVICE:
 		break;
 	default:
 		otg_err(otg, "Charger type is not valid to notify battery\n");
@@ -571,14 +575,15 @@ stay_b_idle:
 	ret = sleep_until_event(otg, otg_mask,
 			user_mask, &events,
 			&user_events, 0);
+	printk("yangyu do_connector_id_status ret %d events %x\n",ret,events);
 	if (ret < 0)
 		return DWC_STATE_EXIT;
 
 	if (events & OEVT_B_DEV_SES_VLD_DET_EVNT) {
-		if (get_id(otg) == RID_GND) {
-			otg_dbg(otg, "Stay DWC_STATE_INIT\n");
-			goto stay_b_idle;
-		}
+        if (get_id(otg) == RID_GND) {
+           otg_dbg(otg, "Stay DWC_STATE_INIT\n");
+           goto stay_b_idle;
+        }
 		otg_dbg(otg, "OEVT_B_DEV_SES_VLD_DET_EVNT\n");
 		return DWC_STATE_CHARGER_DETECTION;
 	}
@@ -651,8 +656,7 @@ stay_host:
 
 	user_mask = USER_A_BUS_DROP |
 				USER_ID_B_CHANGE_EVENT;
-	otg_mask = OEVT_CONN_ID_STS_CHNG_EVNT |
-			OEVT_A_DEV_SESS_END_DET_EVNT;
+	otg_mask = OEVT_CONN_ID_STS_CHNG_EVNT;
 
 	rc = sleep_until_event(otg,
 			otg_mask, user_mask,
@@ -765,7 +769,7 @@ static int do_b_peripheral(struct dwc_otg2 *otg)
 			&otg_events, &user_events, 0);
 	if (rc < 0)
 		return DWC_STATE_EXIT;
-
+    printk("yangyu do_b_peripheral otg_events %x\n",otg_events);
 	if (otg_events & OEVT_A_DEV_SESS_END_DET_EVNT) {
 		otg_dbg(otg, "OEVT_A_DEV_SESS_END_DET_EVNT\n");
 		dwc_otg_notify_charger_type(otg,
@@ -775,7 +779,8 @@ static int do_b_peripheral(struct dwc_otg2 *otg)
 
 	if (user_events & USER_ID_A_CHANGE_EVENT) {
 		otg_dbg(otg, "USER_ID_A_CHANGE_EVENT\n");
-		otg->user_events |= USER_ID_A_CHANGE_EVENT;
+		if (!dwc3_is_cht())
+			otg->user_events |= USER_ID_A_CHANGE_EVENT;
 		return DWC_STATE_B_IDLE;
 	}
 
@@ -824,26 +829,32 @@ int otg_main_thread(void *data)
 		switch (otg->state) {
 		case DWC_STATE_B_IDLE:
 			otg_dbg(otg, "DWC_STATE_B_IDLE\n");
+			printk("yangyu otg_main_thread DWC_STATE_B_IDLE\n");
 			next = do_connector_id_status(otg);
 			break;
 		case DWC_STATE_CHARGER_DETECTION:
 			otg_dbg(otg, "DWC_STATE_CHARGER_DETECTION\n");
+			printk("yangyu otg_main_thread DWC_STATE_CHARGER_DETECTION\n");
 			next = do_charger_detection(otg);
 			break;
 		case DWC_STATE_WAIT_VBUS_FALL:
 			otg_dbg(otg, "DWC_STATE_WAIT_VBUS_FALL\n");
+			printk("yangyu otg_main_thread DWC_STATE_WAIT_VBUS_FALL\n");
 			next = do_wait_vbus_fall(otg);
 			break;
 		case DWC_STATE_CHARGING:
 			otg_dbg(otg, "DWC_STATE_CHARGING\n");
+			printk("yangyu otg_main_thread DWC_STATE_CHARGING\n");
 			next = do_charging(otg);
 			break;
 		case DWC_STATE_A_HOST:
 			otg_dbg(otg, "DWC_STATE_A_HOST\n");
+			printk("yangyu otg_main_thread DWC_STATE_A_HOST\n");
 			next = do_a_host(otg);
 			break;
 		case DWC_STATE_B_PERIPHERAL:
 			otg_dbg(otg, "DWC_STATE_B_PERIPHERAL\n");
+			printk("yangyu otg_main_thread DWC_STATE_B_PERIPHERAL\n");
 			start_peripheral(otg);
 			next = do_b_peripheral(otg);
 
@@ -851,14 +862,18 @@ int otg_main_thread(void *data)
 			break;
 		case DWC_STATE_EXIT:
 			otg_dbg(otg, "DWC_STATE_EXIT\n");
+			printk("yangyu otg_main_thread DWC_STATE_EXIT\n");
 			next = DWC_STATE_TERMINATED;
 			break;
 		case DWC_STATE_INVALID:
 			otg_dbg(otg, "DWC_STATE_INVALID!!!\n");
+			printk("yangyu otg_main_thread DWC_STATE_INVALID\n");
 		default:
 			otg_dbg(otg, "Unknown State %d, sleeping...\n",
 					otg->state);
+			printk("yangyu otg_main_thread Unknown State %d, sleeping...\n",otg->state);
 			sleep_main_thread(otg);
+			printk("yangyu otg_main_thread after sleeping...\n");
 			break;
 		}
 
@@ -878,12 +893,17 @@ static void start_main_thread(struct dwc_otg2 *otg)
 {
 	enum dwc3_otg_mode mode = dwc3_otg_pdata->mode;
 	bool children_ready = false;
-
+	struct pci_dev	*pdev = container_of(otg->dev, struct pci_dev, dev);
 	mutex_lock(&lock);
 
 	if ((mode == DWC3_DEVICE_ONLY) &&
-			otg->otg.gadget)
-		children_ready = true;
+			otg->otg.gadget) {
+		/* CHT: wait host driver to map MUX register space  */
+		if (pdev->device == PCI_DEVICE_ID_DWC_CHT && !otg->otg.host)
+			children_ready = false;
+		else
+			children_ready = true;
+	}
 
 	if ((mode == DWC3_HOST_ONLY) &&
 			otg->otg.host)
@@ -916,7 +936,7 @@ static int dwc_otg2_set_peripheral(struct usb_otg *x,
 		struct usb_gadget *gadget)
 {
 	struct dwc_otg2 *otg;
-
+	printk("yangyu dwc_otg2_set_peripheral\n");
 	if (!x)
 		return -ENODEV;
 
@@ -938,6 +958,7 @@ static int dwc_otg2_set_peripheral(struct usb_otg *x,
 static int dwc_otg2_set_host(struct usb_otg *x, struct usb_bus *host)
 {
 	struct dwc_otg2 *otg;
+	printk("yangyu dwc_otg2_set_host\n");
 
 	if (!x)
 		return -ENODEV;
@@ -959,7 +980,7 @@ static int dwc_otg2_set_host(struct usb_otg *x, struct usb_bus *host)
 static int ulpi_read(struct usb_phy *phy, u32 reg)
 {
 	struct dwc_otg2 *otg = container_of(phy, struct dwc_otg2, usb2_phy);
-	u32 val32 = 0, count = 200;
+	u32 val32 = 0, count = 10000;
 	u8 val, tmp;
 
 	if (phy->intf != USB2_PHY_ULPI)
@@ -969,7 +990,7 @@ static int ulpi_read(struct usb_phy *phy, u32 reg)
 
 	while (count) {
 		if (otg_read(otg, GUSB2PHYACC0) & GUSB2PHYACC0_VSTSBSY)
-			udelay(5);
+			udelay(1);
 		else
 			break;
 
@@ -981,7 +1002,7 @@ static int ulpi_read(struct usb_phy *phy, u32 reg)
 		return -EBUSY;
 	}
 
-	count = 200;
+	count = 10000;
 	/* Determine if use extend registers access */
 	if (reg & EXTEND_ULPI_REGISTER_ACCESS_MASK) {
 		otg_dbg(otg, "Access extend registers 0x%x\n", reg);
@@ -1004,6 +1025,7 @@ static int ulpi_read(struct usb_phy *phy, u32 reg)
 			goto cleanup;
 		}
 
+		udelay(1);
 		count--;
 	}
 
@@ -1024,7 +1046,7 @@ cleanup:
 static int ulpi_write(struct usb_phy *phy, u32 val, u32 reg)
 {
 	struct dwc_otg2 *otg = container_of(phy, struct dwc_otg2, usb2_phy);
-	u32 val32 = 0, count = 200;
+	u32 val32 = 0, count = 10000;
 	u8 tmp;
 
 	if (phy->intf != USB2_PHY_ULPI)
@@ -1035,7 +1057,7 @@ static int ulpi_write(struct usb_phy *phy, u32 val, u32 reg)
 
 	while (count) {
 		if (otg_read(otg, GUSB2PHYACC0) & GUSB2PHYACC0_VSTSBSY)
-			udelay(5);
+			udelay(1);
 		else
 			break;
 
@@ -1046,8 +1068,6 @@ static int ulpi_write(struct usb_phy *phy, u32 val, u32 reg)
 		otg_err(otg, "USB2 PHY always busy!!\n");
 		return -EBUSY;
 	}
-
-	count = 200;
 
 	if (reg & EXTEND_ULPI_REGISTER_ACCESS_MASK) {
 		otg_dbg(otg, "Access extend registers 0x%x\n", reg);
@@ -1064,6 +1084,7 @@ static int ulpi_write(struct usb_phy *phy, u32 val, u32 reg)
 	}
 	otg_write(otg, GUSB2PHYACC0, val32);
 
+	count = 10000;
 	while (count) {
 		if (otg_read(otg, GUSB2PHYACC0) & GUSB2PHYACC0_VSTSDONE) {
 			otg_dbg(otg, "%s - reg 0x%x data 0x%x write done\n",
@@ -1071,10 +1092,11 @@ static int ulpi_write(struct usb_phy *phy, u32 val, u32 reg)
 			goto cleanup;
 		}
 
+		udelay(1);
 		count--;
 	}
 
-	otg_err(otg, "%s read PHY data failed.\n", __func__);
+	otg_err(otg, "%s write PHY data failed.\n", __func__);
 
 	return -ETIMEDOUT;
 
@@ -1369,15 +1391,18 @@ static void dwc_otg_remove(struct pci_dev *pdev)
 	struct dwc_otg2 *otg = the_transceiver;
 	int resource, len;
 
+	pm_runtime_forbid(&pdev->dev);
+	pm_runtime_set_suspended(&pdev->dev);
+
+	if (dwc3_otg_pdata->platform_exit)
+		dwc3_otg_pdata->platform_exit(otg);
+
+	wake_lock_destroy(&wakelock);
+
 	if (otg->gadget)
 		platform_device_unregister(otg->gadget);
 	if (otg->host)
 		platform_device_unregister(otg->host);
-
-	wake_lock_destroy(&wakelock);
-
-	pm_runtime_forbid(&pdev->dev);
-	pm_runtime_set_suspended(&pdev->dev);
 
 	kfree(platform_par);
 	iounmap(otg->usb2_phy.io_priv);
@@ -1464,6 +1489,7 @@ static DEFINE_PCI_DEVICE_TABLE(pci_ids) = {
 		.vendor = PCI_VENDOR_ID_INTEL,
 		.device = PCI_DEVICE_ID_DWC_VLV,
 	},
+	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_DWC_CHT)},
 	{ /* end: all zeroes */ }
 };
 

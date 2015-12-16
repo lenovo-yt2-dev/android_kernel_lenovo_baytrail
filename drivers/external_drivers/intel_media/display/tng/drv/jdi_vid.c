@@ -24,6 +24,7 @@
  * Austin Hu <austin.hu@intel.com>
  */
 
+#include <asm/intel_scu_ipcutil.h>
 #include <asm/intel_scu_pmic.h>
 #include <asm/intel_mid_rpmsg.h>
 #include <asm/intel_mid_remoteproc.h>
@@ -36,9 +37,12 @@
 static int mipi_reset_gpio;
 static int bias_en_gpio;
 
-static u8 jdi_set_address_mode[] = {0x36, 0xc0, 0x00, 0x00};
+static u8 jdi_set_address_mode[] = {0x36, 0x00, 0x00, 0x00};
 static u8 jdi_write_display_brightness[] = {0x51, 0x0f, 0xff, 0x00};
 
+static u8 jdi_mcs_clumn_addr[] = {0x2a, 0x00, 0x00, 0x02, 0xcf};
+static u8 jdi_mcs_page_addr[] = {0x2b, 0x00, 0x00, 0x04, 0xff};
+static u8 jdi_set_mode[] = {0xb3, 0x35};
 int mdfld_dsi_jdi_ic_init(struct mdfld_dsi_config *dsi_config)
 {
 	struct mdfld_dsi_pkg_sender *sender
@@ -77,23 +81,27 @@ int mdfld_dsi_jdi_ic_init(struct mdfld_dsi_config *dsi_config)
 		goto ic_init_err;
 	}
 
-	/* Write control display */
-	err = mdfld_dsi_send_mcs_short_hs(sender, write_ctrl_display, 0x24, 1,
-			MDFLD_DSI_SEND_PACKAGE);
-	if (err) {
-		DRM_ERROR("%s: %d: Write Control Display\n", __func__,
-				__LINE__);
-		goto ic_init_err;
-	}
-
 	/* Write control CABC */
-	err = mdfld_dsi_send_mcs_short_hs(sender, write_ctrl_cabc, STILL_IMAGE,
-			1, MDFLD_DSI_SEND_PACKAGE);
+	err = mdfld_dsi_send_mcs_short_hs(sender,
+		write_ctrl_cabc, dsi_config->cabc_mode, 1,
+		MDFLD_DSI_SEND_PACKAGE);
 	if (err) {
 		DRM_ERROR("%s: %d: Write Control CABC\n", __func__, __LINE__);
 		goto ic_init_err;
 	}
+	err = mdfld_dsi_send_mcs_long_hs(sender,jdi_mcs_clumn_addr,
+			5, MDFLD_DSI_SEND_PACKAGE);
+	if (err) {
+		DRM_ERROR("%s: %d: Set Clumn Address\n",__func__, __LINE__);
+		goto ic_init_err;
+	}
 
+	err = mdfld_dsi_send_mcs_long_hs(sender,jdi_mcs_page_addr,
+			5, MDFLD_DSI_SEND_PACKAGE);
+	if (err) {
+		DRM_ERROR("%s: %d: Set Page Address\n",__func__, __LINE__);
+		goto ic_init_err;
+	}
 	return 0;
 
 ic_init_err:
@@ -115,6 +123,10 @@ void mdfld_dsi_jdi_dsi_controller_init(struct mdfld_dsi_config *dsi_config)
 	int ip_tg_config = 0x4;
 
 	PSB_DEBUG_ENTRY("\n");
+
+	/* Override global default to set special initial cabc mode for
+	 * this display type. */
+	dsi_config->cabc_mode = CABC_MODE_OFF;
 
 	/*reconfig lane configuration*/
 	dsi_config->lane_count = 3;
@@ -216,6 +228,27 @@ static int mdfld_dsi_jdi_power_on(struct mdfld_dsi_config *dsi_config)
 	/* Wait for 6 frames after exit_sleep_mode. */
 	msleep(100);
 
+	err = mdfld_dsi_send_gen_short_hs(sender,access_protect, 0x4, 2,
+                        MDFLD_DSI_SEND_PACKAGE);
+	if (err) {
+		DRM_ERROR("%s: %d: Set MCAP\n",__func__, __LINE__);
+		goto power_on_err;
+	}
+
+	err = mdfld_dsi_send_gen_long_hs(sender, jdi_set_mode,2,
+			MDFLD_DSI_SEND_PACKAGE);
+	if (err) {
+		DRM_ERROR("%s: %d: Set Mode\n", __func__, __LINE__);
+		goto power_on_err;
+	}
+
+	err = mdfld_dsi_send_gen_short_hs(sender,access_protect, 0x3, 2,
+                        MDFLD_DSI_SEND_PACKAGE);
+	if (err) {
+		DRM_ERROR("%s: %d: Set MCAP\n",__func__, __LINE__);
+		goto power_on_err;
+	}
+
 	/* Set Display on */
 	err = mdfld_dsi_send_mcs_short_hs(sender, set_display_on, 0, 0,
 			MDFLD_DSI_SEND_PACKAGE);
@@ -233,6 +266,15 @@ static int mdfld_dsi_jdi_power_on(struct mdfld_dsi_config *dsi_config)
 		goto power_on_err;
 	}
 
+	/* Write control display */
+	err = mdfld_dsi_send_mcs_short_hs(sender, write_ctrl_display, 0x24, 1,
+			MDFLD_DSI_SEND_PACKAGE);
+	if (err) {
+		DRM_ERROR("%s: %d: Write Control Display\n", __func__,
+				__LINE__);
+		goto power_on_err;
+	}
+
 	return 0;
 
 power_on_err:
@@ -240,22 +282,37 @@ power_on_err:
 	return err;
 }
 
+#define MSIC_VPROG2_MRFLD_CTRL          0xAD
+#define MSIC_B0_VPROG2_MRFLD_CTRL       0x141
+#define PMIC_ID_ADDR                    0x00
+#define PMIC_CHIP_ID_B0_VAL             0x08
+
 static void __vpro2_power_ctrl(bool on)
 {
-	u8 addr, value;
-	addr = 0xad;
-	if (intel_scu_ipc_ioread8(addr, &value))
-		DRM_ERROR("%s: %d: failed to read vPro2\n", __func__, __LINE__);
+        u8 value, addr = MSIC_VPROG2_MRFLD_CTRL;
+        int ret = 0xFF;
+        uint8_t pmic_id = 0;
 
-	/* Control vPROG2 power rail with 2.85v. */
-	if (on)
-		value |= 0x1;
-	else
-		value &= ~0x1;
+	ret  = intel_scu_ipc_ioread8(PMIC_ID_ADDR, &pmic_id);
 
-	if (intel_scu_ipc_iowrite8(addr, value))
-		DRM_ERROR("%s: %d: failed to write vPro2\n",
-				__func__, __LINE__);
+	if (!ret) {
+		if (PMIC_CHIP_ID_B0_VAL == pmic_id)
+			addr = MSIC_B0_VPROG2_MRFLD_CTRL;
+
+		if (intel_scu_ipc_ioread8(addr, &value))
+			DRM_ERROR("%s: %d: failed to read vPro2\n", __func__, __LINE__);
+
+		/* Control vPROG2 power rail with 2.85v. */
+		if (on)
+			value |= 0x1;
+		else
+			value &= ~0x1;
+
+		if (intel_scu_ipc_iowrite8(addr, value))
+			DRM_ERROR("%s: %d: failed to write vPro2\n",__func__, __LINE__);
+	} else {
+		DRM_ERROR("%s: %d: failed to read pmic id \n",__func__, __LINE__);
+	}
 }
 
 static int mdfld_dsi_jdi_power_off(struct mdfld_dsi_config *dsi_config)
@@ -317,9 +374,9 @@ power_off_err:
 static int mdfld_dsi_jdi_set_brightness(struct mdfld_dsi_config *dsi_config,
 		int level)
 {
-	struct mdfld_dsi_pkg_sender *sender =
+    struct mdfld_dsi_pkg_sender *sender =
 		mdfld_dsi_get_pkg_sender(dsi_config);
-	int duty_val = 0;
+	u8 duty_val = 0;
 
 	PSB_DEBUG_ENTRY("level = %d\n", level);
 
@@ -328,18 +385,10 @@ static int mdfld_dsi_jdi_set_brightness(struct mdfld_dsi_config *dsi_config,
 		return -EINVAL;
 	}
 
-	duty_val = (0xFFF * level) / 100;
-
-	/*
-	 * Note: the parameters of write_display_brightness in JDI R69001 spec
-	 * map DBV[7:4] as MSB.
-	 */
-	jdi_write_display_brightness[0] = 0x51;
-	jdi_write_display_brightness[1] = duty_val & 0xF;
-	jdi_write_display_brightness[2] = ((duty_val & 0xFF0) >> 4);
-	jdi_write_display_brightness[3] = 0x0;
-	mdfld_dsi_send_mcs_long_hs(sender, jdi_write_display_brightness, 4, 0);
-
+	duty_val = (0xFF * level) / 255;
+	mdfld_dsi_send_mcs_short_hs(sender,
+			0x51, duty_val, 1,
+			MDFLD_DSI_SEND_PACKAGE);
 	return 0;
 }
 
@@ -362,7 +411,7 @@ static int mdfld_dsi_jdi_panel_reset(struct mdfld_dsi_config *dsi_config)
 					NULL, 0,
 					SECURE_I2C_FLIS_REG, 0);
 
-	__vpro2_power_ctrl(true);
+	intel_scu_ipc_msic_vprog2(true);
 
 	/* For meeting tRW1 panel spec */
 	usleep_range(2000, 2500);
@@ -381,13 +430,13 @@ static int mdfld_dsi_jdi_panel_reset(struct mdfld_dsi_config *dsi_config)
 		if (ret < 0) {
 			DRM_ERROR("Faild to get panel reset gpio, " \
 				  "use default reset pin\n");
-			return;
+			return -EINVAL;
 		}
 		mipi_reset_gpio = ret;
 		ret = gpio_request(mipi_reset_gpio, "mipi_display");
 		if (ret) {
 			DRM_ERROR("Faild to request panel reset gpio\n");
-			return;
+			return -EINVAL;
 		}
 		gpio_direction_output(mipi_reset_gpio, 0);
 	}
@@ -396,9 +445,9 @@ static int mdfld_dsi_jdi_panel_reset(struct mdfld_dsi_config *dsi_config)
 	gpio_set_value_cansleep(bias_en_gpio, 0);
 	gpio_set_value_cansleep(mipi_reset_gpio, 0);
 	usleep_range(2000, 2500);
-	gpio_set_value_cansleep(mipi_reset_gpio, 1);
-	usleep_range(2000, 2500);
 	gpio_set_value_cansleep(bias_en_gpio, 1);
+	usleep_range(2000, 2500);
+	gpio_set_value_cansleep(mipi_reset_gpio, 1);
 	usleep_range(2000, 2500);
 	/* switch i2c scl pin back */
 	reg_value_scl |= 0x1000;
@@ -449,8 +498,8 @@ static void jdi_vid_get_panel_info(int pipe, struct panel_info *pi)
 		return;
 
 	if (pipe == 0) {
-		pi->width_mm = JDI_PANEL_WIDTH;
-		pi->height_mm = JDI_PANEL_HEIGHT;
+		pi->width_mm = 56;
+		pi->height_mm = 99;
 	}
 
 	return;
@@ -469,4 +518,6 @@ void jdi_vid_init(struct drm_device *dev, struct panel_funcs *p_funcs)
 	p_funcs->power_on = mdfld_dsi_jdi_power_on;
 	p_funcs->power_off = mdfld_dsi_jdi_power_off;
 	p_funcs->set_brightness = mdfld_dsi_jdi_set_brightness;
+	p_funcs->drv_set_cabc_mode = display_cmn_set_cabc_mode;
+	p_funcs->drv_get_cabc_mode = display_cmn_get_cabc_mode;
 }

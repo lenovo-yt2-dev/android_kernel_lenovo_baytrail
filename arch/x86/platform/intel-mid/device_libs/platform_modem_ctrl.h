@@ -20,4 +20,5 @@ extern void *modem_platform_data(void *data) __attribute__((weak));
 
 extern void sfi_handle_mdm(struct sfi_device_table_entry *pentry,
 				struct devs_id *dev);
+
 #endif

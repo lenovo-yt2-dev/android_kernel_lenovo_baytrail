@@ -110,4 +110,5 @@ static int __init bq27541_platform_init(void)
 	
 	return 0;
 }
-device_initcall(bq27541_platform_init);
+rootfs_initcall(bq27541_platform_init);
+//device_initcall(bq27541_platform_init);

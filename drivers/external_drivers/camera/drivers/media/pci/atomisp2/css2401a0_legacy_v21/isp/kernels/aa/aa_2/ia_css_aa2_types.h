@@ -22,6 +22,11 @@
 #ifndef __IA_CSS_AA2_TYPES_H
 #define __IA_CSS_AA2_TYPES_H
 
+/** @file
+* CSS-API header file for Anti-Aliasing parameters.
+*/
+
+
 /** Anti-Aliasing configuration.
  *
  *  This structure is used both for YUV AA and Bayer AA.

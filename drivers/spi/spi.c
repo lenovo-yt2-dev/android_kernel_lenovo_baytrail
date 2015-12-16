@@ -366,7 +366,11 @@ int spi_add_device(struct spi_device *spi)
 	}
 
 	/* Set the bus ID string */
-	dev_set_name(&spi->dev, "%s.%u", dev_name(&spi->master->dev),
+	if (!strcmp(spi->modalias, "spidev"))
+		dev_set_name(&spi->dev, "spidev%u.%u", spi->master->bus_num,
+			spi->chip_select);
+	else
+		dev_set_name(&spi->dev, "%s.%u", dev_name(&spi->master->dev),
 			spi->chip_select);
 
 
@@ -1506,7 +1510,6 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message,
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 	int status;
-    int ret;
 	struct spi_master *master = spi->master;
 
 	message->complete = spi_complete;
@@ -1521,13 +1524,8 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message,
 		mutex_unlock(&master->bus_lock_mutex);
 
 	if (status == 0) {
-		ret = wait_for_completion_timeout(&done, msecs_to_jiffies(3000));
+		wait_for_completion(&done);
 		status = message->status;
-        if (!ret) {
-            dev_err(&master->dev, "%s timeout, stop spi hardware and restore\n", __func__);
-            master->unprepare_transfer_hardware(master);
-            status = -EIO;
-        }
 	}
 	message->context = NULL;
 	return status;

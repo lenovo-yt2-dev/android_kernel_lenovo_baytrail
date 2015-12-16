@@ -37,6 +37,7 @@
 #include "dx_init_cc_abi.h"
 #include "sep_sw_desc.h"
 #include "dx_sep_kapi.h"
+#include "sep_power.h"
 #include <linux/delay.h>
 
 #define SEP_STATE_CHANGE_TIMEOUT_MSEC 2500
@@ -55,6 +56,7 @@ struct sep_power_control {
 	struct completion state_changed;
 	volatile enum dx_sep_state last_state;
 	volatile unsigned long state_jiffies;
+	struct work_struct pm_cycle;
 };
 
 /* Global context for power management */
@@ -91,6 +93,11 @@ void dx_sep_state_change_handler(struct sep_drvdata *drvdata)
 	power_control.state_jiffies = jiffies;
 	power_control.last_state = GET_SEP_STATE(drvdata);
 	complete(&power_control.state_changed);
+
+	if (power_control.last_state == DX_SEP_STATE_DONE_FW_INIT
+		&& !drvdata->host_init_resume) {
+		(void)schedule_work(&power_control.pm_cycle);
+	}
 }
 
 /**
@@ -132,6 +139,12 @@ void dx_sep_pm_runtime_put(void)
 {
 	pm_runtime_mark_last_busy(power_control.drvdata->dev);
 	pm_runtime_put_autosuspend(power_control.drvdata->dev);
+}
+
+static void sep_pm_cycle(struct work_struct *work)
+{
+		dx_sep_pm_runtime_get();
+		dx_sep_pm_runtime_put();
 }
 
 /**
@@ -421,6 +434,7 @@ void dx_sep_power_init(struct sep_drvdata *drvdata)
 	/* Init. recorded last state */
 	power_control.last_state = GET_SEP_STATE(drvdata);
 	power_control.state_jiffies = jiffies;
+	INIT_WORK(&power_control.pm_cycle, sep_pm_cycle);
 }
 
 /**

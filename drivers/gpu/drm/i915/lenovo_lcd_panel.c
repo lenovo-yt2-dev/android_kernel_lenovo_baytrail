@@ -1,20 +1,42 @@
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include "lenovo_lcd_panel.h"
+#include <linux/tablet_config.h>
+#include <linux/gpio.h>
+#include "linux/mfd/intel_mid_pmic.h"
 
 #define NAME_SIZE 25
-
+#ifndef BLADE2_13
 static struct lcd_panel lenovo_lcd_panel;
+#else
+#define GPIO1P5 381
+#define LCD_ID GPIO1P5
+#define PMIC_GPIO1P0_BASE_ADDRESS 0x3b
+#define PMIC_GPIO1P5_OFFSET 0x5
+#define PMIC_GPIO1P5_ADDRESS PMIC_GPIO1P0_BASE_ADDRESS+PMIC_GPIO1P5_OFFSET
+#define GPIO_INPUT_NO_DRV 0x0
+#endif
 extern int i915_dpst_switch(bool on);
 extern bool i915_get_dpst_status(void);
-
+struct mutex lcd_mutex;
+#ifdef BLADE2_13
+char enable_ce_command[1]={0x08};
+char disable_ce_command[1]={0x00};
+char enable_cabc_command[1] = {0x10};
+char disable_cabc_command[1] = {0x00};
+extern int intel_dp_aux_extern_write( uint16_t address, uint8_t *send, int send_bytes);
+extern int intel_dp_aux_extern_read( uint16_t address, uint8_t *recv, int recv_bytes);
+extern struct intel_dp *g_intel_dp;
+#endif
 ssize_t lenovo_lcd_get_cabc(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	ssize_t ret = 0;
+#ifndef BLADE2_13
 	int index = 1;
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 	struct hal_panel_ctrl_data ctrl;
@@ -45,12 +67,30 @@ ssize_t lenovo_lcd_get_cabc(struct device *dev, struct device_attribute *attr, c
 
 	ret = strlen(buf)+1;
     /*printk("[LCD]: %s: ==jinjt==line=%d ret=%d\n",__func__,__LINE__,ret);*/
-
+#endif 
 	return ret;
 }
 
 ssize_t lenovo_lcd_set_cabc(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
+#ifdef BLADE2_13
+//	char tmp[10];
+
+	if (strncmp(buf, "on", 2) == 0)
+	{
+		//intel_dp_aux_extern_write(0x0405,enable_cabc_command,1);
+		intel_dp_aux_extern_write(0x0721,enable_cabc_command,1);
+		printk("enable cabc \n");
+	}
+	else if ((strncmp(buf, "off", 3) == 0))
+	{
+	//	intel_dp_aux_extern_write(0x0405,disable_cabc_command,1);
+		intel_dp_aux_extern_write(0x0721,disable_cabc_command,1);
+		printk("disable cabc \n");
+	}
+
+
+#else
 	int index = 0, ret = 0;
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 	struct intel_dsi *dsi = lcd_panel->dsi;
@@ -82,12 +122,15 @@ ssize_t lenovo_lcd_set_cabc(struct device *dev, struct device_attribute *attr, c
 	}
 
     /*printk("[LCD]: %s: ==jinjt==line=%d\n",__func__,__LINE__);*/
+#endif 
 	return count;
 }
 
 ssize_t lenovo_lcd_get_ce(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	ssize_t ret = 0;
+
+#ifndef BLADE2_13
 	int index = 1;
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 	struct hal_panel_ctrl_data ctrl;
@@ -118,12 +161,24 @@ ssize_t lenovo_lcd_get_ce(struct device *dev, struct device_attribute *attr, cha
 
 	ret = strlen(buf)+1;
 
-    printk("[LCD]: %s: ==jinjt==buf=%s  ret=%d  line=%d\n",__func__,buf,ret,__LINE__);
+#endif 
 	return ret;
 }
 
 ssize_t lenovo_lcd_set_ce(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
+#ifdef BLADE2_13
+	if (strncmp(buf, "1", 1) == 0)
+	{
+		intel_dp_aux_extern_write(0x720,enable_ce_command,1);
+		printk("enable ce \n");
+	}
+	else if ((strncmp(buf, "0", 1) == 0))
+	{
+		intel_dp_aux_extern_write(0x720,disable_ce_command,1);
+		printk("disable ce \n");
+	}
+#else
 	int index = 0, ret = 0;
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 	struct intel_dsi *dsi = lcd_panel->dsi;
@@ -152,12 +207,14 @@ ssize_t lenovo_lcd_set_ce(struct device *dev, struct device_attribute *attr, con
 		printk("[LCD]: errored from set effect\n");
 
     printk("[LCD]: %s: ==jinjt==line=%d ctrl.level=%d\n",__func__,__LINE__,ctrl.level);
+#endif 
 	return count;
 }
 
 ssize_t lenovo_lcd_get_name(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret = 0;
+#ifndef BLADE2_13
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 
     /*printk("[LCD]: %s: ==jinjt==line=%d\n",__func__,__LINE__);*/
@@ -167,7 +224,32 @@ ssize_t lenovo_lcd_get_name(struct device *dev, struct device_attribute *attr, c
 	}
 
 	sprintf(buf, "%s\n", lcd_panel->name);
+#else
+	int lcd_id = 0 ;
+	ret = gpio_request(LCD_ID, "lcd_id");
+        if (ret < 0)
+                 printk("[lcd_id] request fail\n");
+        ret = gpio_direction_input(LCD_ID);
+        if(ret< 0)
+        	printk("[lcd_id]: Failed to config gpio lcd_id\n");
+ 
+         //set gpio1p2 function state
+        intel_mid_pmic_writeb(PMIC_GPIO1P5_ADDRESS, GPIO_INPUT_NO_DRV);
+ 
+        lcd_id = gpio_get_value_cansleep(LCD_ID);
+        printk("[lcd_id]:%s,gpio1P5 value: 0x%x\n",__func__,lcd_id);
+       
+    if(lcd_id==0)
+    	{
+    	 sprintf(buf, "%s\n", "BOE_2560x1440_panel" );
+    	}
+	else
+	{
+	 sprintf(buf, "%s\n", "INL_2560x1440_panel" );
+	}
 
+	//sprintf(buf, "lcd_type: %d\n", lcd_id);
+#endif
 	ret = strlen(buf) + 1;
 
     /*printk("[LCD]: %s: ==jinjt==name=%s   line=%d\n",__func__,buf,__LINE__);*/
@@ -177,12 +259,15 @@ ssize_t lenovo_lcd_get_dpst(struct device *dev, struct device_attribute *attr, c
 {
 	ssize_t ret = 0;
     bool status;
+#ifndef BLADE2_13
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 
     printk("[LCD]: %s: ==jinjt== line=%d\n",__func__,__LINE__);
 	if(lcd_panel == NULL)
 		return ret;
-    status = i915_get_dpst_status();
+#endif
+	//status = i915_get_dpst_status();
+    status = 0;
     if(status == true)
         sprintf(buf, "1\n");
     else
@@ -194,55 +279,10 @@ ssize_t lenovo_lcd_get_dpst(struct device *dev, struct device_attribute *attr, c
 ssize_t lenovo_lcd_set_dpst(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
     int ret = 0;
-	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
-    struct hal_panel_ctrl_data ctrl;
-	int index = 0;
-	struct intel_dsi *dsi = lcd_panel->dsi;
-	struct drm_device *drmdev = dsi->base.base.dev;
-	struct drm_i915_private *dev_priv = drmdev->dev_private;
 
-    //printk("[LCD]: %s: ===jinjt===%s\n",__func__, buf);
 
-	if(lcd_panel == NULL )
-	{
-		printk("[LCD]: %s: ==jinjt==lcd_panel is NULL\n",__func__);
-		return ret;
-	}
+    return ret;
 
-	if(!dev_priv->backlight.enabled || lcd_panel-> status !=  ON){
-		printk("[LCD]: %s=jinjt=lcd already powered down  %d   %d\n", __func__, dev_priv->backlight.enabled, lcd_panel-> status);
-		return ret;
-	}
-	
-	if(lcd_panel->get_effect_index_by_name){
-		index = lcd_panel->get_effect_index_by_name("cabc");
-		if(index < 0 ){
-			printk("[LCD]: %s: Not support cabc function\n",__func__);
-			return ret;
-			}
-	}
-
-	ctrl.index = index;
-	if (strncmp(buf, "1", 1) == 0)
-    {
-        ctrl.level = 0;
-        if(lcd_panel->set_effect(&ctrl, dsi)!= 0){
-            printk("[LCD]: errored from set effect\n");
-            return ret;
-        }
-        i915_dpst_switch(true);
-    }
-	else
-    {
-        ctrl.level = 1;
-        if(lcd_panel->set_effect(&ctrl, dsi)!= 0){
-            printk("[LCD]: errored from set effect\n");
-            return ret;
-        }
-        i915_dpst_switch(false);
-    }
-    printk("[LCD]: %s: ==jinjt==line=%d ctrl.level=%d\n",__func__,__LINE__,ctrl.level);
-	return count;
 }
 static DEVICE_ATTR(cabc_onoff, S_IRUGO | S_IWUSR | S_IWGRP, lenovo_lcd_get_cabc, lenovo_lcd_set_cabc);
 static DEVICE_ATTR(ce_onoff, S_IRUGO | S_IWUSR | S_IWGRP, lenovo_lcd_get_ce, lenovo_lcd_set_ce);
@@ -260,13 +300,13 @@ static struct attribute *lenovo_lcd_attrs[] = {
 static struct attribute_group lenovo_lcd_attr_group = {
 	.attrs = lenovo_lcd_attrs,
 };
-
+#ifndef BLADE2_13
 static int lenovo_lcd_panel_open(struct inode *inode, struct file *filp)
 {
 	int ret = -1;
 	struct lcd_panel_dev *lcd_panel =  lenovo_lcd_panel.lcd_device;
 
-    /*printk("[LCD]: %s: ==jinjt==line=%d\n",__func__,__LINE__);*/
+    printk("[LCD]: %s: ==jinjt==line=%d\n",__func__,__LINE__);
 	if(lcd_panel == NULL)
 		return ret;
 
@@ -285,9 +325,10 @@ static long lenovo_lcd_panel_ioctl(struct file *filp, unsigned int cmd, unsigned
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 	struct intel_dsi *dsi = lcd_panel->dsi;
 	struct hal_panel_ctrl_data *hal_panel_data = (struct hal_panel_ctrl_data *)argp;
-	struct drm_device *dev = dsi->base.base.dev;
+#ifndef BLADE2_13	
+    struct drm_device *dev = dsi->base.base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
-
+#endif
 /*printk("[LCD]: %s: ==jinjt==line=%d LCD_IOCTL_GET_SUPPORTED_EFFECT=%d\n",__func__,__LINE__,LCD_IOCTL_GET_SUPPORTED_EFFECT);*/
 /*printk("[LCD]: %s: ==jinjt==line=%d LCD_IOCTL_GET_EFFECT_LEVELS=%d\n",__func__,__LINE__,LCD_IOCTL_GET_EFFECT_LEVELS);*/
 /*printk("[LCD]: %s: ==jinjt==line=%d LCD_IOCTL_GET_SUPPORTED_MODE=%d\n",__func__,__LINE__,LCD_IOCTL_GET_SUPPORTED_MODE);*/
@@ -427,7 +468,7 @@ int lenovo_lcd_panel_register(struct lcd_panel_dev *lcd_panel_device)
 struct file_operations lcd_panel_fops = {
 	.owner = THIS_MODULE,
 	.open = lenovo_lcd_panel_open,
-	.unlocked_ioctl = lenovo_lcd_panel_ioctl,
+	.compat_ioctl = lenovo_lcd_panel_ioctl,
 };
 
 static int lenovo_lcd_panel_dev_init(struct cdev *cdev, dev_t *devno)
@@ -448,16 +489,27 @@ static int lenovo_lcd_panel_dev_init(struct cdev *cdev, dev_t *devno)
 
 	return ret;
 }
-
+#endif 
+#ifdef BLADE2_13
+int lenovo_lcd_panel_register(struct lcd_panel_dev *lcd_panel_device)
+{
+	return 1;
+}
+#endif
 static int __init lcd_panel_init(void)
 {
+
 	int ret = 0;
+	struct kobject *lcd_kobject;
+#ifndef BLADE2_13
+	
 	struct cdev *lcd_cdev;
 	dev_t *lcd_devno;
-	struct kobject *lcd_kobject;
+	
 
 	lcd_cdev  = &lenovo_lcd_panel.lcd_panel_cdev;
 	lcd_devno = &lenovo_lcd_panel.lcd_panel_devno;
+    mutex_init(&lcd_mutex);
 
 
 	ret = lenovo_lcd_panel_dev_init(lcd_cdev, lcd_devno);
@@ -474,16 +526,17 @@ static int __init lcd_panel_init(void)
 
 	/*create dev file */
     device_create(lenovo_lcd_panel.lcd_panel_class, NULL, *lcd_devno,NULL,"lcd%d",0);
-	
+#endif 	
 	//add kobject to sys filesystem
-    lcd_kobject = kobject_create_and_add("lcd_panel",NULL);
-		if(ret){
-			printk("[LCD]: failed to add kobject\n");
-			return ret;
-		}else
-			lenovo_lcd_panel.lcd_kobj = lcd_kobject;
-
-	ret = sysfs_create_group(lcd_kobject, &lenovo_lcd_attr_group);
+    	lcd_kobject = kobject_create_and_add("lcd_panel",NULL);
+		
+	if(lcd_kobject)
+	{   
+#ifndef BLADE2_13
+                lenovo_lcd_panel.lcd_kobj = lcd_kobject;
+#endif
+		ret = sysfs_create_group(lcd_kobject, &lenovo_lcd_attr_group);
+	}
 	if(ret){
 		printk("[LCD]: failed to create group\n");
 		kobject_put(lcd_kobject);
@@ -494,7 +547,7 @@ static int __init lcd_panel_init(void)
 
 static void __exit lcd_panel_exit(void)
 {
-
+#ifndef BLADE2_13
 	struct cdev *lcd_cdev = &lenovo_lcd_panel.lcd_panel_cdev;
 	struct class *lcd_class = lenovo_lcd_panel.lcd_panel_class;
 	dev_t lcd_devno =  lenovo_lcd_panel.lcd_panel_devno;
@@ -509,7 +562,7 @@ static void __exit lcd_panel_exit(void)
 	unregister_chrdev_region(lcd_devno, 1);
 
 	kobject_put(lcd_kobject);
-
+#endif 
 	return;
 
 }

@@ -18,11 +18,10 @@
 #include <asm/intel-mid.h>
 #include <media/v4l2-subdev.h>
 #include "platform_camera.h"
+#include "platform_fsa642.h"
 #include "platform_imx132.h"
 
-
-static int camera_reset;
-static int camera_power_down;
+static int camera_reset = -1;
 
 static int camera_vprog1_on;
 static struct regulator *vprog1_reg;
@@ -33,7 +32,8 @@ static struct regulator *vprog1_reg;
 
 static int is_moorefield(void)
 {
-	return INTEL_MID_BOARD(1, PHONE, MOFD);
+	return INTEL_MID_BOARD(1, PHONE, MOFD) ||
+		INTEL_MID_BOARD(1, TABLET, MOFD);
 }
 
 static int imx132_gpio_ctrl(struct v4l2_subdev *sd, int flag)
@@ -41,7 +41,7 @@ static int imx132_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 	int ret;
 	if (camera_reset < 0) {
 		ret = camera_sensor_gpio(-1, GP_CAMERA_1_RESET,
-					GPIOF_DIR_OUT, 1);
+					 GPIOF_DIR_OUT, 1);
 		if (ret < 0)
 			return ret;
 		camera_reset = ret;
@@ -49,6 +49,8 @@ static int imx132_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 
 	if (flag) {
 		gpio_set_value(camera_reset, 1);
+		fsa642_gpio_ctrl(0); /* Flip CSI mux in favor of imx132 */
+
 		/* imx132 initializing time - t1+t2
 		 * 427us(t1) - 8192 mclk(19.2Mhz) before sccb communication
 		 * 1ms(t2) - sccb stable time when using internal dvdd
@@ -78,14 +80,15 @@ static int imx132_power_ctrl(struct v4l2_subdev *sd, int flag)
 
 	if (is_moorefield()) {
 #ifdef CONFIG_INTEL_SCU_IPC_UTIL
-		ret = intel_scu_ipc_msic_vprog1(flag);
+		ret = camera_set_vprog_power(CAMERA_VPROG1, flag,
+					     DEFAULT_VOLTAGE);
 #else
 		ret = -ENODEV;
 #endif
 		if (ret)
 			pr_err("imx132 voltage setting failed\n");
 		if (flag)
-			usleep_range(1000, 1200);
+			usleep_range(10000, 12000);
 		return ret;
 	}
 
@@ -93,7 +96,7 @@ static int imx132_power_ctrl(struct v4l2_subdev *sd, int flag)
 		if (!camera_vprog1_on) {
 			ret = regulator_enable(vprog1_reg);
 			if (!ret) {
-				usleep_range(1000, 1200);
+				usleep_range(10000, 12000);
 				camera_vprog1_on = 1;
 			}
 			return ret;
@@ -141,6 +144,9 @@ static int imx132_platform_deinit(void)
 	if (!is_moorefield())
 		regulator_put(vprog1_reg);
 
+	camera_sensor_gpio_free(camera_reset);
+	camera_reset = -1;
+
 	return 0;
 }
 
@@ -154,8 +160,6 @@ static struct camera_sensor_platform_data imx132_sensor_platform_data = {
 };
 void *imx132_platform_data(void *info)
 {
-	camera_reset = -1;
-	camera_power_down = -1;
 	return &imx132_sensor_platform_data;
 }
 

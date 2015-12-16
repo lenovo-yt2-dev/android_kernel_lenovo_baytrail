@@ -57,55 +57,32 @@ u32 dma_reg_off[] = {0x2C0, 0x2C8, 0x2D0, 0x2D8, 0x2E0, 0x2E8,
 		0x380, 0x388, 0x390, 0x398, 0x3A0, 0x3A8, 0x3B0, 0x3C8, 0x3D0,
 		0x3D8, 0x3E0, 0x3E8, 0x3F0, 0x3F8};
 
+static inline int is_fw_running(struct intel_sst_drv *drv);
+
 static ssize_t sst_debug_shim_read(struct file *file, char __user *user_buf,
 				   size_t count, loff_t *ppos)
 {
 	struct intel_sst_drv *drv = file->private_data;
-	unsigned long long val = 0;
-	unsigned int addr;
-	char buf[512];
-	char name[8];
-	int pos = 0;
+	char *buf;
+	int  ret = 0;
 
-	buf[0] = 0;
-	if (drv->sst_state == SST_SUSPENDED) {
-		pr_err("FW suspended, cannot read SHIM registers\n");
-		return -EFAULT;
+	ret = is_fw_running(drv);
+	if (ret) {
+		pr_err("FW not running, cannot read SHIM registers\n");
+		return ret;
 	}
+	buf = sst_get_shim_buf(drv);
 
-	for (addr = SST_SHIM_BEGIN; addr <= SST_SHIM_END; addr += 8) {
-		switch (drv->pci_id) {
-		case SST_CLV_PCI_ID:
-			val = sst_shim_read(drv->shim, addr);
-			break;
-		case SST_MRFLD_PCI_ID:
-		case PCI_DEVICE_ID_INTEL_SST_MOOR:
-		case SST_BYT_PCI_ID:
-		case SST_CHT_PCI_ID:
-			val = sst_shim_read64(drv->shim, addr);
-			break;
-		}
+	sst_pm_runtime_put(drv);
 
-		name[0] = 0;
-		switch (addr) {
-		case SST_ISRX:
-			strcpy(name, "ISRX"); break;
-		case SST_ISRD:
-			strcpy(name, "ISRD"); break;
-		case SST_IPCX:
-			strcpy(name, "IPCX"); break;
-		case SST_IPCD:
-			strcpy(name, "IPCD"); break;
-		case SST_IMRX:
-			strcpy(name, "IMRX"); break;
-		case SST_IMRD:
-			strcpy(name, "IMRD"); break;
-		}
-		pos += sprintf(buf + pos, "0x%.2x: %.8llx  %s\n", addr, val, name);
+	if (!buf) {
+		pr_err("Unable to allocate shim buffer\n");
+		return -ENOMEM;
 	}
-
-	return simple_read_from_buffer(user_buf, count, ppos,
+	ret = simple_read_from_buffer(user_buf, count, ppos,
 			buf, strlen(buf));
+	kfree(buf);
+	return ret;
 }
 
 static ssize_t sst_debug_shim_write(struct file *file,
@@ -116,16 +93,17 @@ static ssize_t sst_debug_shim_write(struct file *file,
 	char *start = buf, *end;
 	unsigned long long value;
 	unsigned long reg_addr;
-	int ret_val;
+	int ret_val = 0;
 	size_t buf_size = min(count, sizeof(buf)-1);
 
 	if (copy_from_user(buf, user_buf, buf_size))
 		return -EFAULT;
 	buf[buf_size] = 0;
 
-	if (drv->sst_state == SST_SUSPENDED) {
-		pr_err("FW suspended, cannot write SHIM registers\n");
-		return -EFAULT;
+	ret_val = is_fw_running(drv);
+	if (ret_val) {
+		pr_err("FW not running, cannot read SHIM registers\n");
+		return ret_val;
 	}
 
 	while (*start == ' ')
@@ -138,11 +116,12 @@ static ssize_t sst_debug_shim_write(struct file *file,
 	ret_val = kstrtoul(start, 16, &reg_addr);
 	if (ret_val) {
 		pr_err("kstrtoul failed, ret_val = %d\n", ret_val);
-		return ret_val;
+		goto put_pm_runtime;
 	}
 	if (!(SST_SHIM_BEGIN < reg_addr && reg_addr < SST_SHIM_END)) {
 		pr_err("invalid shim address: 0x%lx\n", reg_addr);
-		return -EINVAL;
+		ret_val = -EINVAL;
+		goto put_pm_runtime;
 	}
 
 	start = end + 1;
@@ -152,7 +131,7 @@ static ssize_t sst_debug_shim_write(struct file *file,
 	ret_val = kstrtoull(start, 16, &value);
 	if (ret_val) {
 		pr_err("kstrtoul failed, ret_val = %d\n", ret_val);
-		return ret_val;
+		goto put_pm_runtime;
 	}
 
 	pr_debug("writing shim: 0x%.2lx=0x%.8llx", reg_addr, value);
@@ -165,7 +144,11 @@ static ssize_t sst_debug_shim_write(struct file *file,
 
 	/* Userspace has been fiddling around behind the kernel's back */
 	add_taint(TAINT_USER, LOCKDEP_NOW_UNRELIABLE);
-	return buf_size;
+	ret_val = buf_size;
+
+put_pm_runtime:
+	sst_pm_runtime_put(drv);
+	return ret_val;
 }
 
 static const struct file_operations sst_debug_shim_ops = {
@@ -305,7 +288,7 @@ static ssize_t sst_debug_sram_ia_lpe_mbox_read(struct file *file,
 	if (ret)
 		return ret;
 	ret = copy_sram_to_user_buffer(user_buf, count, ppos, IA_LPE_MAILBOX_DUMP_SZ,
-				       (u32 *)(drv->mailbox + SST_MAILBOX_SEND),
+				       (u32 *)(drv->ipc_mailbox + SST_MAILBOX_SEND),
 				       SST_MAILBOX_SEND);
 	sst_pm_runtime_put(drv);
 	return ret;
@@ -329,7 +312,7 @@ static ssize_t sst_debug_sram_lpe_ia_mbox_read(struct file *file,
 		return ret;
 
 	ret = copy_sram_to_user_buffer(user_buf, count, ppos, LPE_IA_MAILBOX_DUMP_SZ,
-				       (u32 *)(drv->mailbox + drv->mailbox_recv_offset),
+				       (u32 *)(drv->ipc_mailbox + drv->mailbox_recv_offset),
 				       drv->mailbox_recv_offset);
 	sst_pm_runtime_put(drv);
 	return ret;
@@ -623,7 +606,7 @@ static ssize_t sst_debug_readme_read(struct file *file, char __user *user_buf,
 		"Valid address range is between 0x00 to 0x80 in increments of 8.\n"
 		"3. echo 1 > fw_clear_context , This sets the flag to skip the context restore\n"
 		"4. echo 1 > fw_clear_cache , This sets the flag to clear the cached copy of firmware\n"
-		"5. echo 1 > fw_reset_state ,This sets the fw state to uninit\n"
+		"5. echo 1 > fw_reset_state ,This sets the fw state to RESET\n"
 		"6. echo memcpy > fw_dwnld_mode, This will set the firmware download mode to memcpy\n"
 		"   echo lli > fw_dwnld_mode, This will set the firmware download mode to\n"
 					"dma lli mode\n"
@@ -631,7 +614,8 @@ static ssize_t sst_debug_readme_read(struct file *file, char __user *user_buf,
 					"dma single block mode\n"
 		"7. iram_dump, dram_dump, interfaces provide mmap support to\n"
 		"get the iram and dram dump, these buffers will have data only\n"
-		"after the recovery is triggered\n";
+		"after the recovery is triggered\n"
+		"8. lpe_stack, dumps lpe stack area. Valid only when LPE is active\n";
 
 	const char *ctp_buf =
 		"8. Enable input clock by 'echo enable > osc_clk0'.\n"
@@ -837,7 +821,7 @@ static ssize_t sst_debug_fw_reset_state_write(struct file *file,
 	buf[sz] = 0;
 
 	if (!strncmp(buf, "1\n", sz))
-		sst_set_fw_state_locked(sst_drv_ctx, SST_UN_INIT);
+		sst_set_fw_state_locked(sst_drv_ctx, SST_RESET);
 	else
 		return -EINVAL;
 
@@ -876,9 +860,9 @@ static ssize_t sst_debug_dwnld_mode_write(struct file *file,
 	char buf[16];
 	int sz = min(count, sizeof(buf)-1);
 
-	if (sst_drv_ctx->sst_state != SST_SUSPENDED &&
-	    sst_drv_ctx->sst_state != SST_UN_INIT) {
-		pr_err("FW should be in suspended/uninit state\n");
+	if (atomic_read(&sst_drv_ctx->pm_usage_count) &&
+	    sst_drv_ctx->sst_state != SST_RESET) {
+		pr_err("FW should be in suspended/RESET state\n");
 		return -EFAULT;
 	}
 
@@ -1051,6 +1035,35 @@ static const struct file_operations sst_debug_dma_reg = {
 		.read = sst_debug_dma_reg_read,
 };
 
+static ssize_t sst_debug_lpe_stack_read(struct file *file,
+		char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int retval = 0;
+	struct intel_sst_drv *sst = file->private_data;
+	void __iomem *addr;
+
+
+	retval = is_fw_running(sst);
+	if (retval)
+		return retval;
+
+	addr = sst->dram + SST_LPE_STACK_OFFSET;
+
+	pr_debug("Dumping DCCM from %p, num_dwrds %d...\n", (u32 *)addr, SST_LPE_STACK_SIZE);
+
+	retval = copy_sram_to_user_buffer(user_buf, count, ppos, SST_LPE_STACK_SIZE/(sizeof(u32)),
+				       (u32 *)(addr), 0);
+	sst_pm_runtime_put(sst);
+
+
+	return retval;
+}
+
+static const struct file_operations sst_debug_lpe_stack_dump = {
+		.open = simple_open,
+		.read = sst_debug_lpe_stack_read,
+};
+
 /**
  * sst_debug_remap - function remaps the iram/dram buff to userspace
  *
@@ -1206,8 +1219,11 @@ static ssize_t sst_debug_ipc_write(struct file *file,
 
 		if (msg_id == IPC_GET_PARAMS) {
 			unsigned char *r = block->data;
-			memcpy(ctx->debugfs.get_params_data, r, dsp_hdr->length);
-			ctx->debugfs.get_params_len = dsp_hdr->length;
+			/* Copy the IPC header first and then append dsp header
+			 * and payload data*/
+			memcpy(ctx->debugfs.get_params_data, &msg->mrfld_header.full, sizeof(msg->mrfld_header.full));
+			memcpy(ctx->debugfs.get_params_data + sizeof(msg->mrfld_header.full), r, dsp_hdr->length);
+			ctx->debugfs.get_params_len = sizeof(msg->mrfld_header.full) + dsp_hdr->length;
 		}
 
 	}
@@ -1235,6 +1251,7 @@ static const struct file_operations sst_debug_ipc_ops = {
 	.open = simple_open,
 	.write = sst_debug_ipc_write,
 	.read = sst_debug_ipc_read,
+	.llseek = default_llseek,
 };
 
 struct sst_debug {
@@ -1255,6 +1272,7 @@ static const struct sst_debug sst_common_dbg_entries[] = {
 	{"sram_ia_lpe_mailbox", &sst_debug_sram_ia_lpe_mbox_ops, 0400},
 	{"sram_lpe_ia_mailbox", &sst_debug_sram_lpe_ia_mbox_ops, 0400},
 	{"README", &sst_debug_readme_ops, 0400},
+	{"lpe_stack", &sst_debug_lpe_stack_dump, 0400},
 };
 
 static const struct sst_debug ctp_dbg_entries[] = {

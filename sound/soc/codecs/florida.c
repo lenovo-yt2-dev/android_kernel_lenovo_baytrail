@@ -46,6 +46,7 @@ struct florida_compr {
 
 	size_t total_copied;
 	bool trig;
+	bool forced;
 };
 
 struct florida_priv {
@@ -145,6 +146,41 @@ static const struct reg_default florida_sysclk_revd_patch[] = {
 	{ 0x33fb, 0xfe00 },
 };
 
+static const struct reg_default florida_sysclk_reve_patch[] = {
+	{ 0x325C, 0xE410 },
+	{ 0x325D, 0x3066 },
+	{ 0x325E, 0xE410 },
+	{ 0x325F, 0x3070 },
+	{ 0x3260, 0xE410 },
+	{ 0x3261, 0x3078 },
+	{ 0x3262, 0xE410 },
+	{ 0x3263, 0x3080 },
+	{ 0x3266, 0xE414 },
+	{ 0x3267, 0x3066 },
+	{ 0x3268, 0xE414 },
+	{ 0x3269, 0x3070 },
+	{ 0x326A, 0xE414 },
+	{ 0x326B, 0x3078 },
+	{ 0x326C, 0xE414 },
+	{ 0x326D, 0x3080 },
+	{ 0x3270, 0xE410 },
+	{ 0x3271, 0x3078 },
+	{ 0x3272, 0xE410 },
+	{ 0x3273, 0x3070 },
+	{ 0x3274, 0xE410 },
+	{ 0x3275, 0x3066 },
+	{ 0x3276, 0xE410 },
+	{ 0x3277, 0x3056 },
+	{ 0x327A, 0xE414 },
+	{ 0x327B, 0x3078 },
+	{ 0x327C, 0xE414 },
+	{ 0x327D, 0x3070 },
+	{ 0x327E, 0xE414 },
+	{ 0x327F, 0x3066 },
+	{ 0x3280, 0xE414 },
+	{ 0x3281, 0x3056 },
+};
+
 static int florida_sysclk_ev(struct snd_soc_dapm_widget *w,
 			    struct snd_kcontrol *kcontrol, int event)
 {
@@ -160,7 +196,9 @@ static int florida_sysclk_ev(struct snd_soc_dapm_widget *w,
 		patch_size = ARRAY_SIZE(florida_sysclk_revd_patch);
 		break;
 	default:
-		return 0;
+		patch = florida_sysclk_reve_patch;
+		patch_size = ARRAY_SIZE(florida_sysclk_reve_patch);
+		break;
 	}
 
 	switch (event) {
@@ -183,7 +221,23 @@ static int florida_virt_dsp_power_ev(struct snd_soc_dapm_widget *w,
 {
 	struct florida_priv *florida = snd_soc_codec_get_drvdata(w->codec);
 
-	florida->compr_info.trig = false;
+	mutex_lock(&florida->compr_info.lock);
+
+	if (!florida->compr_info.stream)
+		florida->compr_info.trig = false;
+
+	switch (event) {
+	case SND_SOC_DAPM_POST_PMU:
+		florida->compr_info.forced = true;
+		break;
+	case SND_SOC_DAPM_PRE_PMD:
+		florida->compr_info.forced = false;
+		break;
+	default:
+		break;
+	}
+
+	mutex_unlock(&florida->compr_info.lock);
 
 	return 0;
 }
@@ -394,6 +448,11 @@ SOC_SINGLE("HPOUT2 SC Protect Switch", ARIZONA_HP2_SHORT_CIRCUIT_CTRL,
 SOC_SINGLE("HPOUT3 SC Protect Switch", ARIZONA_HP3_SHORT_CIRCUIT_CTRL,
 	   ARIZONA_HP3_SC_ENA_SHIFT, 1, 0),
 
+SOC_SINGLE("SPKDAT1 High Performance Switch", ARIZONA_OUTPUT_PATH_CONFIG_5L,
+	   ARIZONA_OUT5_OSR_SHIFT, 1, 0),
+SOC_SINGLE("SPKDAT2 High Performance Switch", ARIZONA_OUTPUT_PATH_CONFIG_6L,
+	   ARIZONA_OUT6_OSR_SHIFT, 1, 0),
+
 SOC_DOUBLE_R("HPOUT1 Digital Switch", ARIZONA_DAC_DIGITAL_VOLUME_1L,
 	     ARIZONA_DAC_DIGITAL_VOLUME_1R, ARIZONA_OUT1L_MUTE_SHIFT, 1, 1),
 SOC_DOUBLE_R("HPOUT2 Digital Switch", ARIZONA_DAC_DIGITAL_VOLUME_2L,
@@ -446,6 +505,8 @@ SOC_SINGLE("Noise Gate Switch", ARIZONA_NOISE_GATE_CONTROL,
 SOC_SINGLE_TLV("Noise Gate Threshold Volume", ARIZONA_NOISE_GATE_CONTROL,
 	       ARIZONA_NGATE_THR_SHIFT, 7, 1, ng_tlv),
 SOC_ENUM("Noise Gate Hold", arizona_ng_hold),
+
+SOC_VALUE_ENUM("Output Rate 1", arizona_output_rate),
 
 FLORIDA_NG_SRC("HPOUT1L", ARIZONA_NOISE_GATE_SELECT_1L),
 FLORIDA_NG_SRC("HPOUT1R", ARIZONA_NOISE_GATE_SELECT_1R),
@@ -956,10 +1017,12 @@ SND_SOC_DAPM_AIF_IN("AIF3RX2", NULL, 0,
 
 SND_SOC_DAPM_PGA_E("OUT1L", SND_SOC_NOPM,
 		   ARIZONA_OUT1L_ENA_SHIFT, 0, NULL, 0, arizona_hp_ev,
-		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
+		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD |
+		   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_PGA_E("OUT1R", SND_SOC_NOPM,
 		   ARIZONA_OUT1R_ENA_SHIFT, 0, NULL, 0, arizona_hp_ev,
-		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
+		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD |
+		   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_PGA_E("OUT2L", ARIZONA_OUTPUT_ENABLES_1,
 		   ARIZONA_OUT2L_ENA_SHIFT, 0, NULL, 0, arizona_out_ev,
 		   SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMU),
@@ -1064,7 +1127,7 @@ SND_SOC_DAPM_VIRT_MUX("DSP3 Virtual Input", SND_SOC_NOPM, 0, 0,
 
 SND_SOC_DAPM_VIRT_MUX_E("DSP Virtual Output Mux", SND_SOC_NOPM, 0, 0,
 		      &florida_dsp_output_mux[0], florida_virt_dsp_power_ev,
-		      SND_SOC_DAPM_POST_PMU),
+		      SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
 
 ARIZONA_MUX_WIDGETS(ISRC1DEC1, "ISRC1DEC1"),
 ARIZONA_MUX_WIDGETS(ISRC1DEC2, "ISRC1DEC2"),
@@ -1509,6 +1572,8 @@ static const struct snd_soc_dapm_route florida_dapm_routes[] = {
 	{ "SPKDAT2L", NULL, "OUT6L" },
 	{ "SPKDAT2R", NULL, "OUT6R" },
 
+	{ "MICSUPP", NULL, "SYSCLK" },
+
 	{ "DRC1 Signal Activity", NULL, "DRC1L" },
 	{ "DRC1 Signal Activity", NULL, "DRC1R" },
 	{ "DRC2 Signal Activity", NULL, "DRC2L" },
@@ -1713,11 +1778,11 @@ static irqreturn_t adsp2_irq(int irq, void *data)
 
 	mutex_lock(&florida->compr_info.lock);
 
-	if (florida->core.arizona->pdata.ez2ctrl_trigger &&
-	    !florida->compr_info.trig &&
+	if (!florida->compr_info.trig &&
 	    florida->core.adsp[2].fw_id == 0x4000d &&
 	    florida->core.adsp[2].running) {
-		florida->core.arizona->pdata.ez2ctrl_trigger();
+		if (florida->core.arizona->pdata.ez2ctrl_trigger)
+			florida->core.arizona->pdata.ez2ctrl_trigger();
 		florida->compr_info.trig = true;
 	}
 
@@ -1794,7 +1859,8 @@ static int florida_free(struct snd_compr_stream *stream)
 
 	florida->compr_info.stream = NULL;
 	florida->compr_info.total_copied = 0;
-	florida->compr_info.trig = false;
+	if (!florida->compr_info.forced)
+		florida->compr_info.trig = false;
 
 	wm_adsp_stream_free(florida->compr_info.adsp);
 
@@ -1843,12 +1909,20 @@ static int florida_trigger(struct snd_compr_stream *stream, int cmd)
 	struct snd_soc_pcm_runtime *rtd = stream->private_data;
 	struct florida_priv *florida = snd_soc_codec_get_drvdata(rtd->codec);
 	int ret = 0;
+	bool pending = false;
 
 	mutex_lock(&florida->compr_info.lock);
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		ret = wm_adsp_stream_start(florida->compr_info.adsp);
+
+		/**
+		 * If the stream has already triggered before the stream
+		 * opened better process any outstanding data
+		 */
+		if (florida->compr_info.trig)
+			pending = true;
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 		break;
@@ -1858,6 +1932,9 @@ static int florida_trigger(struct snd_compr_stream *stream, int cmd)
 	}
 
 	mutex_unlock(&florida->compr_info.lock);
+
+	if (pending)
+		adsp2_irq(0, florida);
 
 	return ret;
 }
@@ -1944,7 +2021,9 @@ static int florida_codec_probe(struct snd_soc_codec *codec)
 	if (ret != 0)
 		return ret;
 
+	mutex_lock(&codec->card->dapm_mutex);
 	snd_soc_dapm_disable_pin(&codec->dapm, "HAPTICS");
+	mutex_unlock(&codec->card->dapm_mutex);
 
 	priv->core.arizona->dapm = &codec->dapm;
 
@@ -1964,7 +2043,10 @@ static int florida_codec_probe(struct snd_soc_codec *codec)
 		return ret;
 	}
 
+	mutex_lock(&codec->card->dapm_mutex);
 	snd_soc_dapm_enable_pin(&codec->dapm, "DRC2 Signal Activity");
+	mutex_unlock(&codec->card->dapm_mutex);
+
 	ret = regmap_update_bits(arizona->regmap, ARIZONA_IRQ2_STATUS_3_MASK,
 				 ARIZONA_IM_DRC2_SIG_DET_EINT2,
 				 ARIZONA_IM_DRC2_SIG_DET_EINT2);

@@ -111,7 +111,7 @@ static inline uint32_t psb_mmu_pd_index(uint32_t offset)
 }
 
 #if defined(CONFIG_X86)
-static inline void psb_clflush(void *addr)
+static inline void psb_clflush(volatile void *addr)
 {
 	__asm__ __volatile__("clflush (%0)\n" : : "r"(addr) : "memory");
 }
@@ -129,7 +129,7 @@ static inline void psb_mmu_clflush(struct psb_mmu_driver *driver,
 
 static void psb_page_clflush(struct psb_mmu_driver *driver, struct page* page)
 {
-	uint32_t clflush_add = driver->clflush_add >> PAGE_SHIFT;
+	uint32_t clflush_add = (driver->clflush_add * sizeof(uint32_t)) >> PAGE_SHIFT;
 	uint32_t clflush_count = PAGE_SIZE / clflush_add;
 	int i;
 	uint8_t *clf;
@@ -214,6 +214,25 @@ static void psb_mmu_flush_pd(struct psb_mmu_driver *driver, int force)
 	up_write(&driver->sem);
 }
 #endif
+
+static void psb_virtual_addr_clflush(struct psb_mmu_driver *driver,
+			void *vaddr, uint32_t num_pages)
+{
+	int i, j;
+	uint8_t *clf = (uint8_t*)vaddr;
+	uint32_t clflush_add = (driver->clflush_add * sizeof(uint32_t)) >> PAGE_SHIFT;
+	uint32_t clflush_count = PAGE_SIZE / clflush_add;
+
+	DRM_DEBUG("clflush pages %d\n", num_pages);
+	mb();
+	for (i = 0; i < num_pages; ++i) {
+		for (j = 0; j < clflush_count; ++j) {
+			psb_clflush(clf);
+			clf += clflush_add;
+		}
+	}
+	mb();
+}
 
 void psb_mmu_flush(struct psb_mmu_driver *driver, int rc_prot)
 {
@@ -407,7 +426,7 @@ static struct psb_mmu_pt *psb_mmu_alloc_pt(struct psb_mmu_pd *pd)
 {
 	struct psb_mmu_pt *pt = kmalloc(sizeof(*pt), GFP_KERNEL);
 	void *v;
-	uint32_t clflush_add = pd->driver->clflush_add >> PAGE_SHIFT;
+	uint32_t clflush_add = (pd->driver->clflush_add * sizeof(uint32_t)) >> PAGE_SHIFT;
 	uint32_t clflush_count = PAGE_SIZE / clflush_add;
 	spinlock_t *lock = &pd->driver->lock;
 	uint8_t *clf;
@@ -1242,3 +1261,36 @@ void psb_mmu_pgtable_dump(struct drm_device *dev)
 	printk(KERN_INFO "%s: finish dump mmu page table\n", __func__);
 }
 */
+
+int psb_ttm_bo_clflush(struct psb_mmu_driver *mmu,
+			struct ttm_buffer_object *bo)
+{
+	int ret = 0;
+	bool is_iomem;
+	void *addr;
+	struct ttm_bo_kmap_obj bo_kmap;
+
+	if (unlikely(!mmu || !bo)) {
+		DRM_ERROR("NULL pointer, mmu:%p bo:%p\n", mmu, bo);
+		return 1;
+	}
+
+	/*map surface parameters*/
+	ret = ttm_bo_kmap(bo, 0, bo->num_pages,
+                          &bo_kmap);
+        if (ret) {
+                DRM_ERROR("ttm_bo_kmap failed: %d.\n", ret);
+                return ret;
+        }
+
+	addr = (void *)ttm_kmap_obj_virtual(&bo_kmap, &is_iomem);
+	if (unlikely(!addr)) {
+		DRM_ERROR("failed to ttm_kmap_obj_virtual\n");
+		ret = 1;
+	}
+
+	psb_virtual_addr_clflush(mmu, addr, bo->num_pages);
+
+	ttm_bo_kunmap(&bo_kmap);
+	return ret;
+}

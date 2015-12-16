@@ -20,7 +20,11 @@
  * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 /* Up to 16 ms to halt an HC */
-#define XHCI_MAX_HALT_USEC	(16*1000)
+/*FIXME: Extend 16ms to 200ms. 16ms is not enough for Synopsys controller
+ * resume. And xHCI spec haven't define the timeout about this case. Extend
+ * to 200ms instead of 16ms.
+ */
+#define XHCI_MAX_HALT_USEC	(200*1000)
 /* HC not running - set to 1 when run/stop bit is cleared. */
 #define XHCI_STS_HALT		(1<<0)
 

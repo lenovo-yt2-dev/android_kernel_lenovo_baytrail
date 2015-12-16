@@ -22,6 +22,8 @@ struct bq24261_plat_data {
 	int safety_timer;
 	int boost_mode_ma;
 	bool is_ts_enabled;
+	int max_cc;
+	bool is_wdt_kick_needed;
 
 	int (*enable_charging) (bool val);
 	int (*enable_charger) (bool val);
@@ -30,6 +32,7 @@ struct bq24261_plat_data {
 	int (*set_cv) (int val);
 	int (*set_iterm) (int val);
 	int (*enable_vbus) (bool val);
+	int (*handle_otgmode) (bool val);
 	/* WA for ShadyCove VBUS removal detect issue */
 	int (*handle_low_supply) (void);
 	void (*dump_master_regs) (void);

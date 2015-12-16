@@ -43,7 +43,9 @@
 #include <asm/intel-mid.h>
 #include "../core/usb.h"
 #include <linux/intel_mid_pm.h>
-
+#if defined(CONFIG_ME372CG_BATTERY_SMB345)
+extern int setSMB345Charger(int usb_state);
+#endif
 #include <linux/usb/penwell_otg.h>
 
 #define	DRIVER_DESC		"Intel Penwell USB OTG transceiver driver"
@@ -856,6 +858,10 @@ static int penwell_otg_set_vbus(struct usb_otg *otg, bool enabled)
 						enabled ? "ON" : "OFF");
 			atomic_notifier_call_chain(&pnw->iotg.otg.notifier,
 				USB_EVENT_DRIVE_VBUS, &enabled);
+#if defined(CONFIG_ME372CG_BATTERY_SMB345)
+
+			setSMB345Charger(enabled ? ENABLE_5V : DISABLE_5V);
+#endif
 			kfree(evt);
 			goto done;
 		}
@@ -3192,6 +3198,10 @@ static void penwell_otg_work(struct work_struct *work)
 				/* DCP: set charger type, current, notify EM */
 				penwell_otg_update_chrg_cap(CHRG_DCP,
 							CHRG_CURR_DCP);
+#if defined(CONFIG_ME372CG_BATTERY_SMB345)
+
+				setSMB345Charger(AC_IN);
+#endif
 				set_client_mode();
 				break;
 
@@ -3253,7 +3263,10 @@ static void penwell_otg_work(struct work_struct *work)
 						"MFLD WA: enable PHY int\n");
 					penwell_otg_phy_intr(0);
 				}
+#if defined(CONFIG_ME372CG_BATTERY_SMB345)
 
+				setSMB345Charger(AC_IN);
+#endif
 				/* CDP: set charger type, current, notify EM */
 				penwell_otg_update_chrg_cap(CHRG_CDP,
 							CHRG_CURR_CDP);
@@ -3272,7 +3285,10 @@ static void penwell_otg_work(struct work_struct *work)
 				}
 			} else if (charger_type == CHRG_SDP) {
 				dev_info(pnw->dev, "SDP detected\n");
+#if defined(CONFIG_ME372CG_BATTERY_SMB345)
 
+				setSMB345Charger(USB_IN);
+#endif
 				/* MFLD WA: MSIC issue need disable phy intr */
 				if (!is_clovertrail(pdev)) {
 					dev_dbg(pnw->dev,
@@ -3305,7 +3321,10 @@ static void penwell_otg_work(struct work_struct *work)
 						INVALID_SDP_TIMEOUT);
 			} else if (charger_type == CHRG_UNKNOWN) {
 				dev_info(pnw->dev, "Unknown Charger Found\n");
+#if defined(CONFIG_ME372CG_BATTERY_SMB345)
 
+				setSMB345Charger(USB_IN);
+#endif
 				/* Unknown: set charger type */
 				penwell_otg_update_chrg_cap(CHRG_UNKNOWN, 0);
 			}
@@ -3399,6 +3418,10 @@ static void penwell_otg_work(struct work_struct *work)
 				penwell_otg_update_chrg_cap(CHRG_UNKNOWN,
 						CHRG_CURR_DISCONN);
 			}
+#if defined(CONFIG_ME372CG_BATTERY_SMB345)
+
+			setSMB345Charger(CABLE_OUT);
+#endif
 		}
 		break;
 

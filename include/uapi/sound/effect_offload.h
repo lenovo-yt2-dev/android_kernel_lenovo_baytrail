@@ -30,33 +30,33 @@
 
 struct snd_effect {
 	char uuid[16];  /* effect UUID */
-	int device;	/* streaming interface for effect insertion */
-	int pos;	/* position of effect to be placed in effect chain */
-	int mode;	/* Backend for Global device (Headset/Speaker) */
-};
+	u32 device;	/* streaming interface for effect insertion */
+	u32 pos;	/* position of effect to be placed in effect chain */
+	u32 mode;	/* Backend for Global device (Headset/Speaker) */
+} __packed;
 
 struct snd_effect_params {
 	char uuid[16];
-	int device;
+	u32 device;
 	u32 size;	/* size of parameter blob */
-	char *buffer;
-};
+	u64 buffer_ptr;
+} __packed;
 
 struct snd_effect_caps {
 	u32 size;	/* size of buffer to read effect descriptors */
-	char *buffer;
-};
+	u64 buffer_ptr;
+} __packed;
 
 #define SNDRV_CTL_IOCTL_EFFECT_VERSION		_IOR('E', 0x00, int)
 #define SNDRV_CTL_IOCTL_EFFECT_CREATE		_IOW('E', 0x01,\
-						struct snd_effect *)
+						struct snd_effect)
 #define SNDRV_CTL_IOCTL_EFFECT_DESTROY		_IOW('E', 0x02,\
-						struct snd_effect *)
+						struct snd_effect)
 #define SNDRV_CTL_IOCTL_EFFECT_SET_PARAMS	_IOW('E', 0x03,\
-						struct snd_effect_params *)
+						struct snd_effect_params)
 #define SNDRV_CTL_IOCTL_EFFECT_GET_PARAMS	_IOWR('E', 0x04,\
-						struct snd_effect_params *)
+						struct snd_effect_params)
 #define SNDRV_CTL_IOCTL_EFFECT_QUERY_NUM	_IOR('E', 0x05, int)
 #define SNDRV_CTL_IOCTL_EFFECT_QUERY_CAPS	_IOWR('E', 0x06,\
-						struct snd_effect_caps *)
+						struct snd_effect_caps)
 #endif

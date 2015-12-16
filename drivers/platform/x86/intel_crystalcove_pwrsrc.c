@@ -355,7 +355,8 @@ static int crystalcove_pwrsrc_probe(struct platform_device *pdev)
 		handle_pwrsrc_event(info, pwrsrcirq);
 
 	ret = request_threaded_irq(info->irq, NULL, crystalcove_pwrsrc_isr,
-				IRQF_ONESHOT, PWRSRC_DRV_NAME, info);
+				IRQF_ONESHOT | IRQF_NO_SUSPEND,
+				PWRSRC_DRV_NAME, info);
 	if (ret) {
 		dev_err(&pdev->dev, "unable to register irq %d\n", info->irq);
 		goto intr_teg_failed;
@@ -427,7 +428,7 @@ static int __init crystalcove_pwrsrc_init(void)
 {
 	return platform_driver_register(&crystalcove_pwrsrc_driver);
 }
-fs_initcall(crystalcove_pwrsrc_init);
+device_initcall(crystalcove_pwrsrc_init);
 
 static void __exit crystalcove_pwrsrc_exit(void)
 {

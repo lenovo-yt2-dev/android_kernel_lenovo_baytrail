@@ -36,7 +36,13 @@
 #include "intel_dsi.h"
 #include "intel_dsi_cmd.h"
 #include "intel_dsi_pll.h"
-
+#ifdef CONFIG_DLP
+#include <linux/gpio.h>
+#include <drm/intel_dual_display.h>
+#include "dsi_mod_vbt_generic.h"
+extern struct intel_dual_display_status dual_display_status;
+int dlp_inited = 0;
+#endif
 struct intel_dsi_device *intel_dsi_dev = NULL;
 /* the sub-encoders aka panel drivers */
 static const struct intel_dsi_device intel_dsi_devices[] = {
@@ -103,6 +109,19 @@ static const struct intel_dsi_device intel_dsi_devices[] = {
 		.name = "cpt-nt51011-dsi-vid-mode-display",
 		.dev_ops = &cpt_nt51011_dsi_display_ops,
 	},
+	{
+		.panel_id = MIPI_DSI_TI_DPP3430_PANEL_ID,
+		.type = INTEL_DSI_VIDEO_MODE,
+		.name = "ti-dpp3430-dsi-vid-mode-display",
+		.dev_ops = &ti_dpp3430_dsi_display_ops,
+	},
+	/* Dummy panel config */
+	{
+		.panel_id = MIPI_DSI_DUMMY_PANEL_ID,
+		.type = INTEL_DSI_VIDEO_MODE,
+		.name = "dumy-display",
+		.dev_ops = &dummy_panel_dsi_display_ops,
+	},
 };
 
 static struct intel_dsi *intel_attached_dsi(struct drm_connector *connector)
@@ -137,11 +156,26 @@ static bool intel_dsi_compute_config(struct intel_encoder *encoder,
 	struct drm_display_mode *mode = &config->requested_mode;
 	struct intel_crtc *intel_crtc = encoder->new_crtc;
 	struct drm_device *dev = encoder->base.dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
 
 	DRM_DEBUG_KMS("\n");
 
 	if (fixed_mode)
 		intel_fixed_panel_mode(fixed_mode, adjusted_mode);
+
+	/* Panel native resolution and desired mode can be different in
+	these two cases:
+	1. Generic driver specifies scaling reqd flag.
+	2. Static driver for Panasonic panel with BYT_CR
+
+	Fixme: Remove static driver's panel ID check as we are planning to
+	enable generic driver by default */
+	if ((dev_priv->scaling_reqd) ||
+		(BYT_CR_CONFIG && (i915_mipi_panel_id ==
+		MIPI_DSI_PANASONIC_VXX09F006A00_PANEL_ID)))  {
+		intel_connector->panel.fitting_mode = AUTOSCALE;
+		DRM_DEBUG_DRIVER("Enabling panel fitter as scaling required flag set\n");
+	}
 
 	if (IS_VALLEYVIEW(dev)) {
 		intel_gmch_panel_fitting(intel_crtc, config,
@@ -152,7 +186,10 @@ static bool intel_dsi_compute_config(struct intel_encoder *encoder,
 		return intel_dsi->dev.dev_ops->mode_fixup(&intel_dsi->dev,
 							  mode, adjusted_mode);
 
+	config->dither = config->pipe_bpp == 18 ? 1 : 0;
+
 	return true;
+
 }
 
 static void intel_dsi_pre_pll_enable(struct intel_encoder *encoder)
@@ -184,17 +221,17 @@ void intel_dsi_device_ready(struct intel_encoder *encoder)
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
 	int pipe = intel_crtc->pipe;
 	u32 tmp;
+	int count = 1;
 
 	DRM_DEBUG_KMS("\n");
 
 	/* program rcomp for compliance
 	 * reduce form 50 ohms to 45 ohms */
-	intel_flisdsi_write32(dev_priv, 0x04, 0x00f0);
+	intel_flisdsi_write32(dev_priv, 0x04, 0x0004);
 
 	band_gap_reset(dev_priv);
 
 #ifdef CONFIG_CRYSTAL_COVE
-	/* Panel Enable */
 	if (BYT_CR_CONFIG) {
 		/*  cabc disable */
 		vlv_gpio_nc_write(dev_priv, GPIO_NC_9_PCONF0, 0x2000CC00);
@@ -206,7 +243,6 @@ void intel_dsi_device_ready(struct intel_encoder *encoder)
 		udelay(500);
 	} else
 		intel_mid_pmic_writeb(PMIC_PANEL_EN, 0x01);
-
 #else
 	/* need to code for BYT-CR for example where things have changed */
 	DRM_ERROR("PANEL Enable to supported yet\n");
@@ -226,24 +262,135 @@ void intel_dsi_device_ready(struct intel_encoder *encoder)
 	I915_WRITE(DSPCLK_GATE_D, tmp);
 
 	intel_enable_dsi_pll(intel_dsi);
+#ifdef CONFIG_DLP
+	if(pipe!=0)
+	{
+		I915_WRITE_BITS(MIPI_PORT_CTRL(0), LP_OUTPUT_HOLD,LP_OUTPUT_HOLD);
+		usleep_range(1000, 1500);
 
-	I915_WRITE_BITS(MIPI_PORT_CTRL(pipe), LP_OUTPUT_HOLD,
-						LP_OUTPUT_HOLD);
+	}
+#endif
+	if (intel_dsi->operation_mode == DSI_VIDEO_MODE) {
+//in dual display config, dsi 0 is not init. so this function may not
+    //be called with pipe0. set this flag for pipe0 so that pipe b can work
+#ifdef CONFIG_DLP  
+    if(pipe != 0)
+    {
 
-	usleep_range(1000, 1500);
-	I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), DEVICE_READY |
-			ULPS_STATE_EXIT, DEVICE_READY |
-			ULPS_STATE_MASK);
+        I915_WRITE_BITS(MIPI_PORT_CTRL(0), LP_OUTPUT_HOLD,
+                LP_OUTPUT_HOLD);
 
-	usleep_range(2000, 2500);
-	I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), DEVICE_READY,
-			DEVICE_READY | ULPS_STATE_MASK);
-	usleep_range(2000, 2500);
-	I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), 0x00,
-			DEVICE_READY | ULPS_STATE_MASK);
-	usleep_range(2000, 2500);
-	I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), DEVICE_READY,
-			DEVICE_READY | ULPS_STATE_MASK);
+        usleep_range(1000, 1500);
+    }
+#endif
+		I915_WRITE_BITS(MIPI_PORT_CTRL(pipe), LP_OUTPUT_HOLD,
+							LP_OUTPUT_HOLD);
+
+		usleep_range(1000, 1500);
+
+		if (intel_dsi->dual_link)
+			count = 2;
+		do {
+
+			I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), DEVICE_READY |
+					ULPS_STATE_EXIT, DEVICE_READY |
+					ULPS_STATE_MASK);
+
+			usleep_range(2000, 2500);
+			I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), DEVICE_READY,
+					DEVICE_READY | ULPS_STATE_MASK);
+			usleep_range(2000, 2500);
+			I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), 0x00,
+					DEVICE_READY | ULPS_STATE_MASK);
+			usleep_range(2000, 2500);
+			I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), DEVICE_READY,
+					DEVICE_READY | ULPS_STATE_MASK);
+			usleep_range(2000, 2500);
+			/* For Port C for dual link */
+			pipe = PIPE_B;
+		} while (--count > 0);
+	}
+}
+
+void intel_dsi_port_enable(struct intel_encoder *encoder)
+{
+	struct drm_device *dev = encoder->base.dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->base.crtc);
+	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
+	int pipe = intel_crtc->pipe;
+	u32 val, port_control = 0;
+
+	if (intel_dsi->dual_link) {
+		port_control = (intel_dsi->dual_link - 1)
+						<< DUAL_LINK_MODE_SHIFT;
+		if (pipe == PIPE_A)
+			port_control |= LANE_CONFIGURATION_DUAL_LINK_A;
+		else
+			port_control |= LANE_CONFIGURATION_DUAL_LINK_B;
+
+		/*Pixel overlap count; only for VLV CO stepping */
+		if (IS_VALLEYVIEW_C0(dev) && (intel_dsi->dual_link & MIPI_DUAL_LINK_FRONT_BACK)) {
+			val = I915_READ(VLV_CHICKEN_3);
+			val &= ~PIXEL_OVERLAP_CNT_MASK |
+				intel_dsi->pixel_overlap <<
+				PIXEL_OVERLAP_CNT_SHIFT;
+			I915_WRITE(VLV_CHICKEN_3, val);
+		}
+
+		/* Port A */
+		val = I915_READ(MIPI_PORT_CTRL(0));
+		val = val | port_control;
+		I915_WRITE(MIPI_PORT_CTRL(0), val | DPI_ENABLE);
+
+		if (!IS_VALLEYVIEW_C0(dev)) {
+			/* for stepping before C0; we need to enable
+			* PORTC explicitly. From C0 onwards enable PORT A
+			* also enabled PORT C for dual link
+			*/
+			val = I915_READ(MIPI_PORT_CTRL(1));
+			I915_WRITE(MIPI_PORT_CTRL(1), val | DPI_ENABLE);
+		} else {
+			if (intel_crtc->config.dither) {
+				val = I915_READ(MIPI_PORT_CTRL(0));
+				val = val | DITHERING_ENABLE;
+				I915_WRITE(MIPI_PORT_CTRL(0), val);
+				val = I915_READ(MIPI_PORT_CTRL(1));
+				val = val | DITHERING_ENABLE;
+				I915_WRITE(MIPI_PORT_CTRL(1), val);
+			}
+		}
+		usleep_range(2000, 2500);
+	} else {
+		val = I915_READ(MIPI_PORT_CTRL(pipe));
+		val = val | port_control;
+		if (intel_crtc->config.dither && IS_VALLEYVIEW_C0(dev))
+			val |= DITHERING_ENABLE;
+		I915_WRITE(MIPI_PORT_CTRL(pipe), val | DPI_ENABLE);
+		usleep_range(2000, 2500);
+	}
+
+}
+
+void intel_dsi_port_disable(struct intel_encoder *encoder)
+{
+	struct drm_device *dev = encoder->base.dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->base.crtc);
+	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
+	int pipe = intel_crtc->pipe;
+
+	if (intel_dsi->dual_link) {
+		I915_WRITE_BITS(MIPI_PORT_CTRL(0), 0, DPI_ENABLE);
+		POSTING_READ(MIPI_PORT_CTRL(0));
+
+		I915_WRITE_BITS(MIPI_PORT_CTRL(1), 0, DPI_ENABLE);
+		POSTING_READ(MIPI_PORT_CTRL(1));
+	} else {
+		I915_WRITE_BITS(MIPI_PORT_CTRL(pipe), 0, DPI_ENABLE);
+		POSTING_READ(MIPI_PORT_CTRL(pipe));
+	}
+
 	usleep_range(2000, 2500);
 }
 
@@ -254,58 +401,63 @@ static void intel_dsi_pre_enable(struct intel_encoder *encoder)
 	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->base.crtc);
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
 	int pipe = intel_crtc->pipe;
-	bool is_dsi;
-	u32 temp;
 	DRM_DEBUG_KMS("\n");
 
-	is_dsi = intel_pipe_has_type(encoder->base.crtc, INTEL_OUTPUT_DSI);
 	intel_enable_dsi_pll(intel_dsi);
-
+#ifdef CONFIG_DLP
+	printk("====>DLP3430 debug 2.20.\n");
+#endif
 	if (is_cmd_mode(intel_dsi)) {
 		/* XXX: Implement me */
 		I915_WRITE(MIPI_MAX_RETURN_PKT_SIZE(pipe), 8 * 4);
 	}
 	else {
-		intel_dsi->hs = 1;
+		intel_dsi->hs = 0;
 		dpi_send_cmd(intel_dsi, TURN_ON);
 		usleep_range(1000, 1500);
-
 		if (intel_dsi->dev.dev_ops->enable)
 			intel_dsi->dev.dev_ops->enable(&intel_dsi->dev);
 
-		temp = I915_READ(MIPI_PORT_CTRL(pipe));
-		temp = temp | intel_dsi->port_bits;
-
-		if (is_dsi && intel_crtc->config.dither)
-			temp |= DITHERING_ENABLE;
-		I915_WRITE(MIPI_PORT_CTRL(pipe), temp | DPI_ENABLE);
-		usleep_range(2000, 2500);
+		intel_dsi_port_enable(encoder);
 	}
 }
 
 static void intel_dsi_enable(struct intel_encoder *encoder)
 {
+#ifndef CONFIG_DLP
 	struct drm_device *dev = encoder->base.dev;
 	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->base.crtc);
+#endif
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
+#ifndef CONFIG_DLP
 	int pipe = intel_crtc->pipe;
+#endif
+	DRM_DEBUG_KMS("\n");
+
 	/* Adjust backlight timing for specific panel */
 	if (intel_dsi->backlight_on_delay >= 20)
 		msleep(intel_dsi->backlight_on_delay);
 	else
 		usleep_range(intel_dsi->backlight_on_delay * 1000,
 			(intel_dsi->backlight_on_delay * 1000) + 500);
+#ifndef CONFIG_DLP
 	intel_panel_enable_backlight(dev, pipe);
+#endif
 }
 
 static void intel_dsi_disable(struct intel_encoder *encoder)
 {
+#ifndef CONFIG_DLP
 	struct drm_device *dev = encoder->base.dev;
+#endif
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
 
 	DRM_DEBUG_KMS("\n");
 
+//XXX dual display use mipi backlight for debug only
+#ifndef CONFIG_DLP
 	intel_panel_disable_backlight(dev);
+#endif
 	if (intel_dsi->backlight_off_delay >= 20)
 		msleep(intel_dsi->backlight_off_delay);
 	else
@@ -316,9 +468,10 @@ static void intel_dsi_disable(struct intel_encoder *encoder)
 		/* XXX Impementation TBD */
 	} else {
 		/* Send Shutdown command to the panel in LP mode */
-		intel_dsi->hs = 1;
+		intel_dsi->hs = 0;
 		dpi_send_cmd(intel_dsi, SHUTDOWN);
 		usleep_range(1000, 1500);
+
 	}
 }
 
@@ -329,30 +482,42 @@ void intel_dsi_clear_device_ready(struct intel_encoder *encoder)
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
 	int pipe = intel_crtc->pipe;
 	u32 val;
+	int count = 1;
 
 	DRM_DEBUG_KMS("\n");
 
-	I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), ULPS_STATE_ENTER | DEVICE_READY,
-							ULPS_STATE_MASK | DEVICE_READY);
-	usleep_range(2000, 2500);
+	if (intel_dsi->dual_link)
+		count = 2;
 
-	I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), ULPS_STATE_EXIT | DEVICE_READY,
-							ULPS_STATE_MASK | DEVICE_READY);
-	usleep_range(2000, 2500);
+	do {
+		I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), ULPS_STATE_ENTER | DEVICE_READY,
+								ULPS_STATE_MASK | DEVICE_READY);
+		usleep_range(2000, 2500);
 
-	I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), ULPS_STATE_ENTER | DEVICE_READY,
-							ULPS_STATE_MASK | DEVICE_READY);
-	usleep_range(2000, 2500);
+		I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), ULPS_STATE_EXIT | DEVICE_READY,
+								ULPS_STATE_MASK | DEVICE_READY);
+		usleep_range(2000, 2500);
 
-	if (wait_for(((I915_READ(MIPI_PORT_CTRL(pipe)) & 0x20000)
-					== 0x00000), 30))
-		DRM_ERROR("DSI LP not going Low\n");
+		I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), ULPS_STATE_ENTER | DEVICE_READY,
+								ULPS_STATE_MASK | DEVICE_READY);
+		usleep_range(2000, 2500);
+#ifndef CONFIG_DLP
+		if (pipe == PIPE_A) 
+#endif
+    {
+			if (wait_for(((I915_READ(MIPI_PORT_CTRL(0)) & 0x20000)
+							== 0x00000), 30))
+				DRM_ERROR("DSI LP not going Low\n");
 
-	I915_WRITE_BITS(MIPI_PORT_CTRL(pipe), 0, LP_OUTPUT_HOLD);
-	usleep_range(1000, 1500);
+			I915_WRITE_BITS(MIPI_PORT_CTRL(0), 0, LP_OUTPUT_HOLD);
+			usleep_range(1000, 1500);
+	}
 
-	I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), 0x00, DEVICE_READY);
-	usleep_range(2000, 2500);
+		I915_WRITE_BITS(MIPI_DEVICE_READY(pipe), 0x00, DEVICE_READY);
+		usleep_range(2000, 2500);
+
+		pipe = PIPE_B;
+	} while (--count > 0);
 
 	intel_disable_dsi_pll(intel_dsi);
 
@@ -386,33 +551,39 @@ static void intel_dsi_post_disable(struct intel_encoder *encoder)
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(&encoder->base);
 	int pipe = intel_crtc->pipe;
 	u32 tmp;
-
+	int count = 1;
 	wait_for_dsi_fifo_empty(intel_dsi);
-
-	I915_WRITE_BITS(MIPI_PORT_CTRL(pipe), 0, DPI_ENABLE);
-	POSTING_READ(MIPI_PORT_CTRL(pipe));
-	usleep_range(2000, 2500);
+	intel_dsi_port_disable(encoder);
 
 	/* Panel commands can be sent when clock is in LP11 */
-	tmp = I915_READ(MIPI_DEVICE_READY(pipe));
-	tmp &= ~DEVICE_READY;
-	I915_WRITE(MIPI_DEVICE_READY(pipe), tmp);
 
-	tmp = I915_READ(MIPI_CTRL(pipe));
-	tmp &= ~ESCAPE_CLOCK_DIVIDER_MASK;
-	I915_WRITE(MIPI_CTRL(pipe), tmp |
-		intel_dsi->escape_clk_div <<
-			ESCAPE_CLOCK_DIVIDER_SHIFT);
+	if (intel_dsi->dual_link)
+		count = 2;
+	do {
+		tmp = I915_READ(MIPI_DEVICE_READY(pipe));
+		tmp &= ~DEVICE_READY;
+		I915_WRITE(MIPI_DEVICE_READY(pipe), tmp);
 
-	tmp = I915_READ(MIPI_DSI_FUNC_PRG(pipe));
-	tmp &= ~VID_MODE_FORMAT_MASK;
-	I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), tmp);
+		tmp = I915_READ(MIPI_CTRL(pipe));
+		tmp &= ~ESCAPE_CLOCK_DIVIDER_MASK;
+		I915_WRITE(MIPI_CTRL(pipe), tmp |
+				intel_dsi->escape_clk_div <<
+				ESCAPE_CLOCK_DIVIDER_SHIFT);
 
-	I915_WRITE(MIPI_EOT_DISABLE(pipe), CLOCKSTOP);
+		tmp = I915_READ(MIPI_DSI_FUNC_PRG(pipe));
+		tmp &= ~VID_MODE_FORMAT_MASK;
+		I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), tmp);
 
-	tmp = I915_READ(MIPI_DEVICE_READY(pipe));
-	tmp &= DEVICE_READY;
-	I915_WRITE(MIPI_DEVICE_READY(pipe), tmp);
+		I915_WRITE(MIPI_EOT_DISABLE(pipe), CLOCKSTOP);
+		tmp = I915_READ(MIPI_DSI_FUNC_PRG(pipe));
+		tmp &= ~VID_MODE_FORMAT_MASK;
+		I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), tmp);
+
+		tmp = I915_READ(MIPI_DEVICE_READY(pipe));
+		tmp &= DEVICE_READY;
+		I915_WRITE(MIPI_DEVICE_READY(pipe), tmp);
+		pipe = PIPE_B;
+	} while (--count > 0);
 
 	/* if disable packets are sent before sending shutdown packet then in
 	* some next enable sequence send turn on packet error is observed */
@@ -481,11 +652,216 @@ static int intel_dsi_mode_valid(struct drm_connector *connector,
 	return intel_dsi->dev.dev_ops->mode_valid(&intel_dsi->dev, mode);
 }
 
+/* This function is used to generate lp_byte_clk, dphy_reg, hs_to_lp_count, clk_lp_to_hs_count and clk_hs_to_lp_count */
+bool intel_dsi_generate_phy_reg(struct intel_dsi *intel_dsi, struct mipi_phy_config *config)
+{
+	u32 tlpx_ns, extra_byte_count, bitrate, tlpx_ui;
+	u32 ui_num, ui_den;
+	u32 prepare_cnt, exit_zero_cnt, clk_zero_cnt, trail_cnt;
+	u32 ths_prepare_ns, tclk_trail_ns;
+	u32 tclk_prepare_clkzero, ths_prepare_hszero;
+	u32 bits_per_pixel = 24;
+	struct drm_display_mode *mode = NULL;
+
+	if ((intel_dsi == NULL) || (intel_dsi->lane_count == 0)) {
+		DRM_ERROR("Invalid parameter.\n");
+		return false;
+	}
+
+	mode = intel_dsi->dev.dev_ops->get_modes(&intel_dsi->dev);
+	if (!mode) {
+		DRM_ERROR("Can't get a display mode.\n");
+		return false;
+	}
+
+	if (intel_dsi->pixel_format == VID_MODE_FORMAT_RGB666)
+		bits_per_pixel = 18;
+	else if (intel_dsi->pixel_format == VID_MODE_FORMAT_RGB565)
+		bits_per_pixel = 16;
+
+	bitrate = (mode->clock * bits_per_pixel) / intel_dsi->lane_count;
+
+	switch (intel_dsi->escape_clk_div) {
+	case 0:
+		tlpx_ns = 50;
+		break;
+	case 1:
+		tlpx_ns = 100;
+		break;
+
+	case 2:
+		tlpx_ns = 200;
+		break;
+	default:
+		tlpx_ns = 50;
+		break;
+	}
+
+	switch (intel_dsi->lane_count) {
+	case 1:
+	case 2:
+		extra_byte_count = 2;
+		break;
+	case 3:
+		extra_byte_count = 4;
+		break;
+	case 4:
+	default:
+		extra_byte_count = 3;
+		break;
+	}
+
+	/*
+	 * ui(s) = 1/f [f in hz]
+	 * ui(ns) = 10^9/f*10^6 [f in Mhz] -> 10^3/f(Mhz)
+	 *
+	 * LP byte clock = TLPX/8ui
+	 *
+	 * Since txddrclkhs_i is 2xUI, the count values programmed in
+	 * DPHY param register are divided by 2
+	 *
+	 */
+
+	/* in Kbps */
+	ui_num = bitrate;
+	ui_den = NS_MHZ_RATIO;
+
+	tclk_prepare_clkzero = config->tclk_prepare_clkzero;
+	ths_prepare_hszero = config->ths_prepare_hszero;
+
+	/* B060 */
+	intel_dsi->lp_byte_clk = ceil_div(tlpx_ns * ui_num, 8 * ui_den);
+
+	/* count values in UI = (ns value) * (bitrate / (2 * 10^6)) */
+	/* prepare count */
+	ths_prepare_ns =
+		(config->ths_prepare >  config->tclk_prepare) ?
+				config->ths_prepare :
+				config->tclk_prepare;
+
+	prepare_cnt = ceil_div(ths_prepare_ns * ui_num,	ui_den * 2);
+
+	/* exit zero count */
+	exit_zero_cnt = ceil_div(
+				(ths_prepare_hszero - ths_prepare_ns) * ui_num,
+				ui_den * 2
+				);
+
+	/*
+	 * Exit zero  is unified val ths_zero and ths_exit
+	 * minimum value for ths_exit = 110ns
+	 * min (exit_zero_cnt * 2) = 110/UI
+	 * exit_zero_cnt = 55/UI
+	 */
+	 if (exit_zero_cnt < (55 * ui_num / ui_den))
+		if ((55 * ui_num) % ui_den)
+			exit_zero_cnt += 1;
+
+	/* clk zero count */
+	clk_zero_cnt = ceil_div(
+			(tclk_prepare_clkzero -	ths_prepare_ns)
+			* ui_num, 2 * ui_den);
+
+	/* trail count */
+	tclk_trail_ns = (config->tclk_trail > config->ths_trail) ?
+			config->tclk_trail : config->ths_trail;
+	trail_cnt = ceil_div(tclk_trail_ns * ui_num, 2 * ui_den);
+
+	if (prepare_cnt > PREPARE_CNT_MAX ||
+		exit_zero_cnt > EXIT_ZERO_CNT_MAX ||
+		clk_zero_cnt > CLK_ZERO_CNT_MAX ||
+		trail_cnt > TRAIL_CNT_MAX)
+		DRM_DEBUG_DRIVER("Values crossing maximum limits\n");
+
+	if (prepare_cnt > PREPARE_CNT_MAX)
+		prepare_cnt = PREPARE_CNT_MAX;
+
+	if (exit_zero_cnt > EXIT_ZERO_CNT_MAX)
+		exit_zero_cnt = EXIT_ZERO_CNT_MAX;
+
+	if (clk_zero_cnt > CLK_ZERO_CNT_MAX)
+		clk_zero_cnt = CLK_ZERO_CNT_MAX;
+
+	if (trail_cnt > TRAIL_CNT_MAX)
+		trail_cnt = TRAIL_CNT_MAX;
+
+	/* B080 */
+	intel_dsi->dphy_reg = exit_zero_cnt << 24 | trail_cnt << 16 |
+						clk_zero_cnt << 8 | prepare_cnt;
+
+	/*
+	 * LP to HS switch count = 4TLPX + PREP_COUNT * 2 + EXIT_ZERO_COUNT * 2
+	 *					+ 10UI + Extra Byte Count
+	 *
+	 * HS to LP switch count = THS-TRAIL + 2TLPX + Extra Byte Count
+	 * Extra Byte Count is calculated according to number of lanes.
+	 * High Low Switch Count is the Max of LP to HS and
+	 * HS to LP switch count
+	 *
+	 */
+	tlpx_ui = ceil_div(tlpx_ns * ui_num, ui_den);
+
+	/* B044 */
+	intel_dsi->hs_to_lp_count =
+		ceil_div(
+			4 * tlpx_ui + prepare_cnt * 2 +
+			exit_zero_cnt * 2 + 10,
+			8);
+
+	intel_dsi->hs_to_lp_count += extra_byte_count;
+
+	/* B088 */
+	/* LP -> HS for clock lanes
+	 * LP clk sync + LP11 + LP01 + tclk_prepare + tclk_zero +
+	 *						extra byte count
+	 * 2TPLX + 1TLPX + 1 TPLX(in ns) + prepare_cnt * 2 + clk_zero_cnt *
+	 *					2(in UI) + extra byte count
+	 * In byteclks = (4TLPX + prepare_cnt * 2 + clk_zero_cnt *2 (in UI)) /
+	 *					8 + extra byte count
+	 */
+	intel_dsi->clk_lp_to_hs_count =
+		ceil_div(
+			4 * tlpx_ui + prepare_cnt * 2 +
+			clk_zero_cnt * 2,
+			8);
+
+	intel_dsi->clk_lp_to_hs_count += extra_byte_count;
+
+	/* HS->LP for Clock Lanes
+	 * Low Power clock synchronisations + 1Tx byteclk + tclk_trail +
+	 *						Extra byte count
+	 * 2TLPX + 8UI + (trail_count*2)(in UI) + Extra byte count
+	 * In byteclks = (2*TLpx(in UI) + trail_count*2 +8)(in UI)/8 +
+	 *						Extra byte count
+	 */
+	intel_dsi->clk_hs_to_lp_count =
+		ceil_div(2 * tlpx_ui + trail_cnt * 2 + 8,
+			8);
+	intel_dsi->clk_hs_to_lp_count += extra_byte_count;
+
+	DRM_INFO("HS to LP Count 0x%x\n", intel_dsi->hs_to_lp_count);
+	DRM_INFO("LP Byte Clock %d\n", intel_dsi->lp_byte_clk);
+	DRM_INFO("LP to HS Clock Count 0x%x\n", intel_dsi->clk_lp_to_hs_count);
+	DRM_INFO("HS to LP Clock Count 0x%x\n", intel_dsi->clk_hs_to_lp_count);
+	DRM_INFO("B060 = 0x%Xx, B080 = 0x%x, B044 = 0x%x, B088 = 0x%x\n",
+			intel_dsi->lp_byte_clk, intel_dsi->dphy_reg, intel_dsi->hs_to_lp_count,
+			(intel_dsi->clk_lp_to_hs_count << LP_HS_SSW_CNT_SHIFT) |
+			(intel_dsi->clk_hs_to_lp_count << HS_LP_PWR_SW_CNT_SHIFT));
+
+	kfree(mode);
+
+	return true;
+}
 
 /* return pixels in terms of txbyteclkhs */
-static u32 txbyteclkhs(u32 pixels, int bpp, int lane_count)
+static u32 txbyteclkhs(u32 pixels, int bpp, int lane_count,
+							int burst_mode_ratio)
 {
-	return DIV_ROUND_UP(pixels * bpp, 8 * lane_count);
+	/* burst_mode_ratio is multiplied by 100 when calculated to protect
+	 * precision so divide by 100 here */
+
+	return DIV_ROUND_UP(pixels * bpp * burst_mode_ratio,
+							8 * lane_count * 100);
 }
 
 static void set_dsi_timings(struct drm_encoder *encoder,
@@ -498,6 +874,8 @@ static void set_dsi_timings(struct drm_encoder *encoder,
 	int pipe = intel_crtc->pipe;
 	unsigned int bpp = intel_crtc->config.pipe_bpp;
 	unsigned int lane_count = intel_dsi->lane_count;
+	int count = 1;
+	u16 mode_hactive;
 
 	u16 hactive, hfp, hsync, hbp, vfp, vsync, vbp;
 
@@ -507,15 +885,32 @@ static void set_dsi_timings(struct drm_encoder *encoder,
 	hsync = mode->hsync_end - mode->hsync_start;
 	hbp = mode->htotal - mode->hsync_end;
 
+	if (intel_dsi->dual_link) {
+		hactive /= 2;
+		if (IS_VALLEYVIEW_C0(dev) &&
+			(intel_dsi->dual_link & MIPI_DUAL_LINK_FRONT_BACK))
+			hactive += intel_dsi->pixel_overlap;
+		hfp /= 2;
+		hsync /= 2;
+		hbp /= 2;
+
+		count = 2;
+	}
+
+	mode_hactive = hactive;
 	vfp = mode->vsync_start - mode->vdisplay;
 	vsync = mode->vsync_end - mode->vsync_start;
 	vbp = mode->vtotal - mode->vsync_end;
 
 	/* horizontal values are in terms of high speed byte clock */
-	hactive = txbyteclkhs(hactive, bpp, lane_count);
-	hfp = txbyteclkhs(hfp, bpp, lane_count);
-	hsync = txbyteclkhs(hsync, bpp, lane_count);
-	hbp = txbyteclkhs(hbp, bpp, lane_count);
+	hactive = txbyteclkhs(hactive, bpp, lane_count,
+					intel_dsi->burst_mode_ratio);
+	hfp = txbyteclkhs(hfp, bpp, lane_count,
+					intel_dsi->burst_mode_ratio);
+	hsync = txbyteclkhs(hsync, bpp, lane_count,
+					intel_dsi->burst_mode_ratio);
+	hbp = txbyteclkhs(hbp, bpp, lane_count,
+					intel_dsi->burst_mode_ratio);
 
 	/* FIXME: Find better way to do this */
 	/* For 7x10 panel we need to have BLLP added to active */
@@ -533,18 +928,26 @@ static void set_dsi_timings(struct drm_encoder *encoder,
 	if (dev_priv->mipi_panel_id == MIPI_DSI_AUO_B080XAT_PANEL_ID)
 		hactive = (hactive * 10) / 8;
 
-	I915_WRITE(MIPI_HACTIVE_AREA_COUNT(pipe), hactive);
-	I915_WRITE(MIPI_HFP_COUNT(pipe), hfp);
+	do {
 
-	/* meaningful for video mode non-burst sync pulse mode only, can be zero
-	 * for non-burst sync events and burst modes */
-	I915_WRITE(MIPI_HSYNC_PADDING_COUNT(pipe), hsync);
-	I915_WRITE(MIPI_HBP_COUNT(pipe), hbp);
+		I915_WRITE(MIPI_HACTIVE_AREA_COUNT(pipe), hactive);
+		I915_WRITE(MIPI_HFP_COUNT(pipe), hfp);
 
-	/* vertical values are in terms of lines */
-	I915_WRITE(MIPI_VFP_COUNT(pipe), vfp);
-	I915_WRITE(MIPI_VSYNC_PADDING_COUNT(pipe), vsync);
-	I915_WRITE(MIPI_VBP_COUNT(pipe), vbp);
+		/* meaningful for video mode non-burst sync pulse mode only,
+		 * can be zero for non-burst sync events and burst modes */
+		I915_WRITE(MIPI_HSYNC_PADDING_COUNT(pipe), hsync);
+		I915_WRITE(MIPI_HBP_COUNT(pipe), hbp);
+
+		/* vertical values are in terms of lines */
+		I915_WRITE(MIPI_VFP_COUNT(pipe), vfp);
+		I915_WRITE(MIPI_VSYNC_PADDING_COUNT(pipe), vsync);
+		I915_WRITE(MIPI_VBP_COUNT(pipe), vbp);
+
+		I915_WRITE(MIPI_DPI_RESOLUTION(pipe),
+			(mode->vdisplay << VERTICAL_ADDRESS_SHIFT) |
+			(mode_hactive << HORIZONTAL_ADDRESS_SHIFT));
+		pipe = PIPE_B;
+	} while (--count > 0);
 }
 
 static void dsi_config(struct drm_encoder *encoder)
@@ -555,25 +958,33 @@ static void dsi_config(struct drm_encoder *encoder)
 	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->crtc);
 	int pipe = intel_crtc->pipe;
 	u32 tmp;
+	int count = 1;
 
 	DRM_DEBUG_KMS("\n");
 
-	/* escape clock divider, 20MHz, shared for A and C. device ready must be
-	 * off when doing this! txclkesc? */
-	tmp = I915_READ(MIPI_CTRL(0));
-	tmp &= ~ESCAPE_CLOCK_DIVIDER_MASK;
-	I915_WRITE(MIPI_CTRL(0), tmp | ESCAPE_CLOCK_DIVIDER_1);
+	if (intel_dsi->dual_link)
+		count = 2;
 
-	/* read request priority is per pipe */
-	tmp = I915_READ(MIPI_CTRL(pipe));
-	tmp &= ~READ_REQUEST_PRIORITY_MASK;
-	I915_WRITE(MIPI_CTRL(pipe), tmp | READ_REQUEST_PRIORITY_HIGH);
+	do {
+		/* escape clock divider, 20MHz, shared for A and C. device ready must be
+		 * off when doing this! txclkesc? */
+		tmp = I915_READ(MIPI_CTRL(0));
+		tmp &= ~ESCAPE_CLOCK_DIVIDER_MASK;
+		I915_WRITE(MIPI_CTRL(0), tmp | ESCAPE_CLOCK_DIVIDER_1);
 
-	/* XXX: why here, why like this? handling in irq handler?! */
-	I915_WRITE(MIPI_INTR_EN(pipe), 0xffffffff);
+		/* read request priority is per pipe */
+		tmp = I915_READ(MIPI_CTRL(pipe));
+		tmp &= ~READ_REQUEST_PRIORITY_MASK;
+		I915_WRITE(MIPI_CTRL(pipe), tmp | READ_REQUEST_PRIORITY_HIGH);
 
-	/* why here, was elsewhere... also 2a, 0c, 60, 08 for values */
-	I915_WRITE(MIPI_DPHY_PARAM(pipe), intel_dsi->dphy_reg);
+		/* XXX: why here, why like this? handling in irq handler?! */
+		I915_WRITE(MIPI_INTR_EN(pipe), 0xffffffff);
+
+		/* why here, was elsewhere... also 2a, 0c, 60, 08 for values */
+		I915_WRITE(MIPI_DPHY_PARAM(pipe), intel_dsi->dphy_reg);
+
+		pipe = PIPE_B;
+	} while (--count > 0);
 }
 
 static void intel_dsi_mode_set(struct intel_encoder *intel_encoder)
@@ -586,109 +997,128 @@ static void intel_dsi_mode_set(struct intel_encoder *intel_encoder)
 	int pipe = intel_crtc->pipe;
 	unsigned int bpp = intel_crtc->config.pipe_bpp;
 	struct drm_display_mode *adjusted_mode = &intel_crtc->config.adjusted_mode;
-	u32 val;
+	u32 val, count = 1;
 
-	intel_dsi_device_ready(intel_encoder);
+	if (intel_dsi->dual_link)
+		count = 2;
 
-	I915_WRITE(MIPI_DEVICE_READY(pipe), 0x0);
+	do {
+		intel_dsi_device_ready(intel_encoder);
 
-	dsi_config(encoder);
+		I915_WRITE(MIPI_DEVICE_READY(pipe), 0x0);
 
-	I915_WRITE(MIPI_LP_RX_TIMEOUT(pipe), intel_dsi->lp_rx_timeout);
-	I915_WRITE(MIPI_TURN_AROUND_TIMEOUT(pipe),
-					intel_dsi->turn_arnd_val);
-	I915_WRITE(MIPI_DEVICE_RESET_TIMER(pipe),
-					intel_dsi->rst_timer_val);
-	/* in terms of low power clock */
-	I915_WRITE(MIPI_INIT_COUNT(pipe), intel_dsi->init_count);
+		dsi_config(encoder);
 
-	I915_WRITE(MIPI_HIGH_LOW_SWITCH_COUNT(pipe), \
-					intel_dsi->hs_to_lp_count);
-	I915_WRITE(MIPI_LP_BYTECLK(pipe), intel_dsi->lp_byte_clk);
+		I915_WRITE(MIPI_LP_RX_TIMEOUT(pipe),
+						intel_dsi->lp_rx_timeout);
+		I915_WRITE(MIPI_TURN_AROUND_TIMEOUT(pipe),
+						intel_dsi->turn_arnd_val);
+		I915_WRITE(MIPI_DEVICE_RESET_TIMER(pipe),
+						intel_dsi->rst_timer_val);
+		/* in terms of low power clock */
+		I915_WRITE(MIPI_INIT_COUNT(pipe), intel_dsi->init_count);
 
-	I915_WRITE(MIPI_CLK_LANE_SWITCH_TIME_CNT(pipe),
-		((u32)intel_dsi->clk_lp_to_hs_count
-		<< LP_HS_SSW_CNT_SHIFT) |
-		(intel_dsi->clk_hs_to_lp_count << HS_LP_PWR_SW_CNT_SHIFT));
+		I915_WRITE(MIPI_HIGH_LOW_SWITCH_COUNT(pipe),
+						intel_dsi->hs_to_lp_count);
+		I915_WRITE(MIPI_LP_BYTECLK(pipe), intel_dsi->lp_byte_clk);
 
-	if (is_vid_mode(intel_dsi)) {
-		I915_WRITE(MIPI_DPI_RESOLUTION(pipe),
-			(adjusted_mode->vdisplay << VERTICAL_ADDRESS_SHIFT) |
-			(adjusted_mode->hdisplay << HORIZONTAL_ADDRESS_SHIFT));
+		I915_WRITE(MIPI_CLK_LANE_SWITCH_TIME_CNT(pipe),
+			((u32)intel_dsi->clk_lp_to_hs_count
+			<< LP_HS_SSW_CNT_SHIFT) |
+			(intel_dsi->clk_hs_to_lp_count << HS_LP_PWR_SW_CNT_SHIFT));
 
-		set_dsi_timings(encoder, adjusted_mode);
+		if (is_vid_mode(intel_dsi)) {
 
-		if (intel_dsi->video_mode_type == DSI_VIDEO_BURST) {
+			if (intel_dsi->video_mode_type == DSI_VIDEO_BURST) {
+				I915_WRITE(MIPI_HS_TX_TIMEOUT(pipe),
+					txbyteclkhs(adjusted_mode->htotal, bpp,
+					intel_dsi->lane_count,
+					intel_dsi->burst_mode_ratio) + 1);
+			} else {
+				I915_WRITE(MIPI_HS_TX_TIMEOUT(pipe),
+				txbyteclkhs(adjusted_mode->vtotal *
+				adjusted_mode->htotal,
+				bpp, intel_dsi->lane_count,
+				intel_dsi->burst_mode_ratio) + 1);
+			}
+		} else {
+			val = intel_dsi->channel << CMD_MODE_CHANNEL_NUMBER_SHIFT |
+				intel_dsi->lane_count << DATA_LANES_PRG_REG_SHIFT |
+				intel_dsi->data_width;
+			I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
+
 			I915_WRITE(MIPI_HS_TX_TIMEOUT(pipe),
-				txbyteclkhs(adjusted_mode->htotal, bpp,
-				intel_dsi->lane_count) + 1);
+				txbyteclkhs(adjusted_mode->hdisplay *
+				adjusted_mode->vdisplay,
+				bpp, intel_dsi->lane_count,
+				intel_dsi->burst_mode_ratio) + 1);
+
+			I915_WRITE(MIPI_DBI_BW_CTRL(pipe), intel_dsi->bw_timer);
 		}
-		else {
-			I915_WRITE(MIPI_HS_TX_TIMEOUT(pipe),
-			   txbyteclkhs(adjusted_mode->vtotal *
-				   adjusted_mode->htotal,
-				   bpp, intel_dsi->lane_count) + 1);
-		}
-	} else {
-		val = intel_dsi->channel << CMD_MODE_CHANNEL_NUMBER_SHIFT |
-			intel_dsi->lane_count << DATA_LANES_PRG_REG_SHIFT |
-			intel_dsi->data_width;
+
+		I915_WRITE(MIPI_EOT_DISABLE(pipe), CLOCKSTOP);
+
+		val = I915_READ(MIPI_DSI_FUNC_PRG(pipe));
+		val &= ~VID_MODE_FORMAT_MASK;
 		I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
 
-		I915_WRITE(MIPI_HS_TX_TIMEOUT(pipe),
-			txbyteclkhs(adjusted_mode->hdisplay *
-			adjusted_mode->vdisplay,
-			bpp, intel_dsi->lane_count) + 1);
+		I915_WRITE(MIPI_DEVICE_READY(pipe), 0x1);
 
-		I915_WRITE(MIPI_DBI_BW_CTRL(pipe), intel_dsi->bw_timer);
-	}
-
-	I915_WRITE(MIPI_EOT_DISABLE(pipe), CLOCKSTOP);
-
-	val = I915_READ(MIPI_DSI_FUNC_PRG(pipe));
-	val &= ~VID_MODE_FORMAT_MASK;
-	I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
-
-	I915_WRITE(MIPI_DEVICE_READY(pipe), 0x1);
+		pipe = PIPE_B;
+	} while (--count > 0);
 
 	if (intel_dsi->dev.dev_ops->send_otp_cmds)
 		intel_dsi->dev.dev_ops->send_otp_cmds(&intel_dsi->dev);
 
-	I915_WRITE(MIPI_DEVICE_READY(pipe), 0x0);
-
 	set_dsi_timings(encoder, adjusted_mode);
 
-	/* Some panels might have resolution which is not a multiple of
-	 * 64 like 1366 x 768. Enable RANDOM resolution support for such
-	 * panels by default */
-	I915_WRITE(MIPI_VIDEO_MODE_FORMAT(pipe),
-				intel_dsi->video_frmt_cfg_bits |
-				intel_dsi->video_mode_type |
-				IP_TG_CONFIG |
-				RANDOM_DPI_DISPLAY_RESOLUTION);
+	if (intel_dsi->dual_link)
+		count = 2;
+	else
+		count = 1;
 
-	val = 0;
-	if (intel_dsi->eotp_pkt == 0)
-		val |= EOT_DISABLE;
+	pipe = intel_crtc->pipe;
 
-	if (intel_dsi->clock_stop)
-		val |= CLOCKSTOP;
+	do {
 
-	I915_WRITE(MIPI_EOT_DISABLE(pipe), val);
+		I915_WRITE(MIPI_DEVICE_READY(pipe), 0x0);
 
-	val = intel_dsi->channel << VID_MODE_CHANNEL_NUMBER_SHIFT |
-		intel_dsi->lane_count << DATA_LANES_PRG_REG_SHIFT |
-		intel_dsi->pixel_format;
-	I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
+		/* Some panels might have resolution which is not a multiple of
+		 * 64 like 1366 x 768. Enable RANDOM resolution support for such
+		 * panels by default */
+		I915_WRITE(MIPI_VIDEO_MODE_FORMAT(pipe),
+					intel_dsi->video_frmt_cfg_bits |
+					intel_dsi->video_mode_type |
+					IP_TG_CONFIG |
+					RANDOM_DPI_DISPLAY_RESOLUTION);
 
-	I915_WRITE(MIPI_DEVICE_READY(pipe), 0x1);
+		val = 0;
+		if (intel_dsi->eotp_pkt == 0)
+			val |= EOT_DISABLE;
 
-	I915_WRITE(MIPI_INTR_STAT(pipe), 0xFFFFFFFF);
-	/* Max packet return size limits the size of returning
-	* packet so that host processor can prevent buffer overflow
-	* condition when receiving data from peripheral. DCS read
-	* need this to be set.*/
-	I915_WRITE(MIPI_MAX_RETURN_PKT_SIZE(pipe), 0xff);
+		if (intel_dsi->clock_stop)
+			val |= CLOCKSTOP;
+
+		I915_WRITE(MIPI_EOT_DISABLE(pipe), val);
+
+		val = intel_dsi->channel << VID_MODE_CHANNEL_NUMBER_SHIFT |
+			intel_dsi->lane_count << DATA_LANES_PRG_REG_SHIFT |
+			intel_dsi->pixel_format;
+		I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
+
+		I915_WRITE(MIPI_DEVICE_READY(pipe), 0x1);
+
+		I915_WRITE(MIPI_INTR_STAT(pipe), 0xFFFFFFFF);
+
+		I915_WRITE(MIPI_INTR_STAT(pipe), 0xFFFFFFFF);
+		/* Max packet return size limits the size of returning
+		 * packet so that host processor can prevent buffer overflow
+		 * condition when receiving data from peripheral. DCS read
+		 * need this to be set.*/
+		I915_WRITE(MIPI_MAX_RETURN_PKT_SIZE(pipe), 0xff);
+
+		pipe = PIPE_B;
+	} while (--count > 0);
 }
 
 static enum drm_connector_status
@@ -697,7 +1127,39 @@ intel_dsi_detect(struct drm_connector *connector, bool force)
 	struct intel_dsi *intel_dsi = intel_attached_dsi(connector);
 	DRM_DEBUG_KMS("\n");
 
-	return intel_dsi->dev.dev_ops->detect(&intel_dsi->dev);
+#ifndef CONFIG_DLP
+    //intel_panel_setup_backlight moved to intel_dsi_init
+    
+		
+      return intel_dsi->dev.dev_ops->detect(&intel_dsi->dev);
+#else
+   // return  connector_status_connected;
+	if (i915_enable_dummy_dsi) {
+		return  connector_status_connected;
+	}
+
+   
+      mutex_lock(&dual_display_status.dual_display_mutex);
+
+   	//printk("dual display status :%d",dual_display_status.pipeb_status );
+    if (( dual_display_status.pipeb_status == PIPE_ON_PROCESSING )||
+			( dual_display_status.pipeb_status == PIPE_ON ))
+      {			
+	 mutex_unlock(&dual_display_status.dual_display_mutex);
+         return intel_dsi->dev.dev_ops->detect(&intel_dsi->dev);
+     }
+    if (( dual_display_status.pipeb_status == PIPE_OFF_PROCESSING )||
+			( dual_display_status.pipeb_status == PIPE_OFF ))
+   {
+   	mutex_unlock(&dual_display_status.dual_display_mutex);
+         return  connector_status_disconnected;
+   }
+    else  {
+        mutex_unlock(&dual_display_status.dual_display_mutex);
+        return  connector_status_disconnected;
+    }
+#endif
+
 }
 
 static int intel_dsi_get_modes(struct drm_connector *connector)
@@ -706,11 +1168,12 @@ static int intel_dsi_get_modes(struct drm_connector *connector)
 	struct intel_dsi *intel_dsi = intel_attached_dsi(connector);
 	struct drm_display_mode *mode;
 	struct drm_display_mode *input_mode = NULL;
+	int count = 0;
 	DRM_DEBUG_KMS("\n");
 
 	if (!intel_connector->panel.fixed_mode) {
 		DRM_DEBUG_KMS("no fixed mode\n");
-		return 0;
+		return count;
 	}
 
 	input_mode = intel_connector->panel.fixed_mode;
@@ -718,13 +1181,27 @@ static int intel_dsi_get_modes(struct drm_connector *connector)
 				  input_mode);
 	if (!mode) {
 		DRM_DEBUG_KMS("drm_mode_duplicate failed\n");
-		return 0;
+		return count;
 	}
 
 	drm_mode_probed_add(connector, mode);
+	count++;
+
+	if (intel_connector->panel.downclock_mode) {
+		mode = drm_mode_duplicate(connector->dev,
+				intel_connector->panel.downclock_mode);
+		if (!mode) {
+			DRM_DEBUG_KMS("drm_mode_duplicate failed\n");
+			return count;
+		}
+
+		drm_mode_probed_add(connector, mode);
+		count++;
+	}
+
 	/*Fill the panel info here*/
 	intel_dsi->dev.dev_ops->get_info(0, connector);
-	return 1;
+	return count;
 }
 
 static void intel_dsi_destroy(struct drm_connector *connector)
@@ -762,6 +1239,18 @@ static int intel_dsi_set_property(struct drm_connector *connector,
 		intel_connector->panel.fitting_mode = val;
 
 		if (IS_VALLEYVIEW(dev_priv->dev)) {
+
+			/* In case of BYT_CR platform with the panasonic panel of
+			 * resolution 19x10, panel fitter needs to be enabled always
+			 * becoz we simulate the 12x8 mode due to memory limitation
+			 */
+			if ((dev_priv->scaling_reqd) ||
+			(BYT_CR_CONFIG && (i915_mipi_panel_id ==
+				MIPI_DSI_PANASONIC_VXX09F006A00_PANEL_ID))) {
+				if (intel_connector->panel.fitting_mode == PFIT_OFF)
+					return 0;
+			}
+
 			intel_gmch_panel_fitting(intel_crtc, &intel_crtc->config,
 				intel_connector->panel.fitting_mode);
 			DRM_DEBUG_DRIVER("panel fitting mode = %x", intel_connector->panel.fitting_mode);
@@ -791,6 +1280,7 @@ void intel_dsi_encoder_dpms(struct drm_encoder *encoder, int mode)
 	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->crtc);
 	int pipe = intel_crtc->pipe;
 	u32 val;
+	int count = 1;
 
 	DRM_DEBUG_KMS("\n");
 
@@ -820,27 +1310,45 @@ void intel_dsi_encoder_dpms(struct drm_encoder *encoder, int mode)
 		/* Clock needs to be in LP11 mode before we can send
 		 * commands to panel */
 
-		I915_WRITE(MIPI_DEVICE_READY(pipe), 0x0);
-		I915_WRITE(MIPI_EOT_DISABLE(pipe), CLOCKSTOP);
+		if (intel_dsi->dual_link)
+			count = 2;
 
-		val = I915_READ(MIPI_DSI_FUNC_PRG(pipe));
-		val &= ~VID_MODE_FORMAT_MASK;
-		I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
+		do {
 
-		I915_WRITE(MIPI_DEVICE_READY(pipe), 0x1);
+			I915_WRITE(MIPI_DEVICE_READY(pipe), 0x0);
+			I915_WRITE(MIPI_EOT_DISABLE(pipe), CLOCKSTOP);
+
+			val = I915_READ(MIPI_DSI_FUNC_PRG(pipe));
+			val &= ~VID_MODE_FORMAT_MASK;
+			I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
+
+			I915_WRITE(MIPI_DEVICE_READY(pipe), 0x1);
+
+			pipe = PIPE_B;
+		} while (--count > 0);
 
 		if (intel_dsi->dev.dev_ops->send_otp_cmds)
 			intel_dsi->dev.dev_ops->send_otp_cmds(&intel_dsi->dev);
 
-		/* Now we need to restore MIPI_DSI_FUNC_PRG to needed value */
-		I915_WRITE(MIPI_DEVICE_READY(pipe), 0x0);
+		pipe = intel_crtc->pipe;
+		if (intel_dsi->dual_link)
+			count = 2;
+		else
+			count = 1;
 
-		val = intel_dsi->channel << VID_MODE_CHANNEL_NUMBER_SHIFT |
-		intel_dsi->lane_count << DATA_LANES_PRG_REG_SHIFT |
-		intel_dsi->pixel_format;
-		I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
+		do {
+			/* Now we need to restore MIPI_DSI_FUNC_PRG to needed value */
+			I915_WRITE(MIPI_DEVICE_READY(pipe), 0x0);
 
-		I915_WRITE(MIPI_DEVICE_READY(pipe), 0x1);
+			val = intel_dsi->channel <<
+						VID_MODE_CHANNEL_NUMBER_SHIFT |
+			intel_dsi->lane_count << DATA_LANES_PRG_REG_SHIFT |
+			intel_dsi->pixel_format;
+
+			I915_WRITE(MIPI_DSI_FUNC_PRG(pipe), val);
+			I915_WRITE(MIPI_DEVICE_READY(pipe), 0x1);
+			pipe = PIPE_B;
+		} while (--count > 0);
 	}
 }
 
@@ -874,7 +1382,192 @@ intel_dsi_add_properties(struct intel_dsi *intel_dsi,
 	intel_attach_scaling_src_size_property(connector);
 }
 
-bool intel_dsi_init(struct drm_device *dev)
+static void intel_mipi_drrs_work_fn(struct work_struct *__work)
+{
+	struct intel_mipi_drrs_work *work =
+		container_of(to_delayed_work(__work),
+			struct intel_mipi_drrs_work, work);
+	struct intel_encoder *intel_encoder = work->intel_encoder;
+	struct drm_i915_private *dev_priv =
+				intel_encoder->base.dev->dev_private;
+	struct intel_dsi_mnp *intel_dsi_mnp;
+	struct intel_dsi *intel_dsi = NULL;
+	struct intel_crtc *intel_crtc = NULL;
+	struct drm_display_mode *prev_mode = NULL;
+	bool resume_idleness_detection = false, fallback_attempt = false;
+	int ret, retry_cnt = 3;
+
+	intel_dsi = enc_to_intel_dsi(&intel_encoder->base);
+	intel_crtc = intel_encoder->new_crtc;
+
+init:
+	if (work->target_rr_type == DRRS_HIGH_RR) {
+		intel_dsi_mnp = &intel_crtc->config.dsi_mnp;
+	} else if (work->target_rr_type == DRRS_LOW_RR) {
+		intel_dsi_mnp = &intel_crtc->config.dsi_mnp2;
+	} else if (work->target_rr_type == DRRS_MEDIA_RR) {
+		if (intel_calculate_dsi_pll_mnp(intel_dsi,
+				work->target_mode,
+				&intel_crtc->config.dsi_mnp3, 0) < 0)
+			return;
+		intel_dsi_mnp = &intel_crtc->config.dsi_mnp3;
+	} else {
+		DRM_ERROR("Unknown refreshrate_type\n");
+		return;
+	}
+
+	if (dev_priv->drrs_state.refresh_rate_type == DRRS_MEDIA_RR &&
+			work->target_rr_type == DRRS_HIGH_RR)
+		resume_idleness_detection = true;
+
+retry:
+	ret = intel_drrs_configure_dsi_pll(intel_dsi, intel_dsi_mnp);
+	if (ret == 0) {
+		DRM_DEBUG_KMS("cur_rr_type: %d, cur_rr: %d, target_rr_type: %d, target_rr: %d\n",
+				dev_priv->drrs_state.refresh_rate_type,
+				intel_crtc->base.mode.vrefresh,
+				work->target_rr_type, work->target_mode->vrefresh);
+
+		mutex_lock(&dev_priv->drrs_state.mutex);
+		dev_priv->drrs_state.refresh_rate_type =
+						work->target_rr_type;
+		mutex_unlock(&dev_priv->drrs_state.mutex);
+
+		DRM_INFO("Refresh Rate set to : %dHz\n",
+						work->target_mode->vrefresh);
+
+		intel_crtc->base.mode.vrefresh = work->target_mode->vrefresh;
+		intel_crtc->base.mode.clock = work->target_mode->clock;
+
+		if (resume_idleness_detection)
+			intel_update_drrs(intel_encoder->base.dev);
+	} else if (ret == -ETIMEDOUT && retry_cnt) {
+		retry_cnt--;
+		DRM_DEBUG_KMS("Retry left ... <%d>\n", retry_cnt);
+		goto retry;
+	} else if (ret == -EACCES && !fallback_attempt) {
+		DRM_ERROR("Falling back to the previous DRRS state. %d->%d\n",
+				work->target_rr_type,
+				dev_priv->drrs_state.refresh_rate_type);
+
+		mutex_lock(&dev_priv->drrs_state.mutex);
+		dev_priv->drrs_state.target_rr_type =
+					dev_priv->drrs_state.refresh_rate_type;
+		mutex_unlock(&dev_priv->drrs_state.mutex);
+
+		work->target_rr_type = dev_priv->drrs_state.target_rr_type;
+		drm_mode_destroy(intel_encoder->base.dev, work->target_mode);
+
+		if (work->target_rr_type == DRRS_HIGH_RR) {
+			prev_mode =
+				dev_priv->drrs.connector->panel.fixed_mode;
+			resume_idleness_detection = true;
+		} else if (work->target_rr_type == DRRS_LOW_RR) {
+			prev_mode =
+				dev_priv->drrs.connector->panel.downclock_mode;
+		} else if (work->target_rr_type == DRRS_MEDIA_RR) {
+			prev_mode =
+				dev_priv->drrs.connector->panel.target_mode;
+		}
+
+		work->target_mode = drm_mode_duplicate(intel_encoder->base.dev,
+								prev_mode);
+		if (!work->target_mode) {
+			DRM_ERROR("target mode creation failed\n");
+			return;
+		}
+		fallback_attempt = true;
+		goto init;
+	} else {
+		if (fallback_attempt)
+			DRM_ERROR("DRRS State Fallback attempt failed\n");
+		if (ret == -ETIMEDOUT)
+			DRM_ERROR("TIMEDOUT in all retry attempt\n");
+	}
+
+	drm_mode_destroy(intel_encoder->base.dev, work->target_mode);
+}
+
+void
+intel_dsi_set_drrs_state(struct intel_encoder *intel_encoder)
+{
+	struct drm_i915_private *dev_priv =
+				intel_encoder->base.dev->dev_private;
+	struct drm_display_mode *target_mode =
+				dev_priv->drrs.connector->panel.target_mode;
+	struct intel_mipi_drrs_work *work = dev_priv->drrs.mipi_drrs_work;
+	unsigned int ret;
+
+	ret = work_busy(&work->work.work);
+	if (ret) {
+		if (work->target_mode)
+			if (work->target_mode->vrefresh ==
+						target_mode->vrefresh) {
+				DRM_DEBUG_KMS("Repeated request for %dHz\n",
+							target_mode->vrefresh);
+				return;
+			}
+		DRM_DEBUG_KMS("Cancelling an queued/executing work\n");
+		atomic_set(&work->abort_wait_loop, 1);
+		cancel_delayed_work_sync(&work->work);
+		atomic_set(&work->abort_wait_loop, 0);
+		if (ret & WORK_BUSY_PENDING)
+			drm_mode_destroy(intel_encoder->base.dev,
+							work->target_mode);
+
+	}
+	work->intel_encoder = intel_encoder;
+	work->target_rr_type = dev_priv->drrs_state.target_rr_type;
+	work->target_mode = drm_mode_duplicate(intel_encoder->base.dev,
+								target_mode);
+
+	schedule_delayed_work(&dev_priv->drrs.mipi_drrs_work->work, 0);
+}
+
+int intel_dsi_drrs_deferred_work_init(struct drm_device *dev)
+{
+	struct intel_mipi_drrs_work *work;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	work = kzalloc(sizeof(struct intel_mipi_drrs_work), GFP_KERNEL);
+	if (!work) {
+		DRM_ERROR("Failed to allocate mipi DRRS work structure\n");
+		return -ENOMEM;
+	}
+
+	atomic_set(&work->abort_wait_loop, 0);
+	INIT_DELAYED_WORK(&work->work, intel_mipi_drrs_work_fn);
+	work->target_mode = NULL;
+
+	dev_priv->drrs.mipi_drrs_work = work;
+	return 0;
+}
+
+void intel_dsi_drrs_init(struct intel_connector *intel_connector,
+				struct drm_display_mode *downclock_mode)
+{
+	struct drm_connector *connector = &intel_connector->base;
+	struct drm_device *dev = connector->dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	if (intel_dsi_drrs_deferred_work_init(dev) < 0)
+		return;
+
+	if (intel_drrs_init(dev, intel_connector, downclock_mode) < 0)
+		kfree(dev_priv->drrs.mipi_drrs_work);
+	else if (dev_priv->drrs_state.type == SEAMLESS_DRRS_SUPPORT) {
+		/* In DSI SEAMLESS DRRS is a SW driven feature */
+		dev_priv->drrs_state.type = SEAMLESS_DRRS_SUPPORT_SW;
+		intel_attach_drrs_capability_property(connector,
+						dev_priv->drrs_state.type);
+	}
+}
+
+#ifndef CONFIG_DLP
+ bool intel_dsi_init(struct drm_device *dev)
+#else
+bool intel_dsi_init(struct drm_device *dev, int pipe)
+#endif
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_dsi *intel_dsi;
@@ -883,6 +1576,7 @@ bool intel_dsi_init(struct drm_device *dev)
 	struct intel_connector *intel_connector;
 	struct drm_connector *connector;
 	struct drm_display_mode *fixed_mode = NULL;
+	struct drm_display_mode *downclock_mode = NULL;
 	const struct intel_dsi_device *dsi;
 	unsigned int i;
 	unsigned int panel_id;
@@ -918,6 +1612,7 @@ bool intel_dsi_init(struct drm_device *dev)
 	intel_encoder->post_disable = intel_dsi_post_disable;
 	intel_encoder->get_hw_state = intel_dsi_get_hw_state;
 	intel_encoder->get_config = intel_dsi_get_config;
+	intel_encoder->set_drrs_state = intel_dsi_set_drrs_state;
 
 	intel_connector->get_hw_state = intel_connector_get_hw_state;
 
@@ -925,9 +1620,29 @@ bool intel_dsi_init(struct drm_device *dev)
 	 * If no kernel param use panel id from VBT
 	 * If no  param and no VBT initialize with
 	 * default ASUS panel ID for now */
+#ifndef CONFIG_DLP
 	intel_adc_read_panelid(&panel_id);
 	i915_mipi_panel_id = panel_id;
 	printk("intel debug panel_id is:%d\n",panel_id);
+#else
+
+
+       dual_display_status.pipea_status = PIPE_INIT;
+       dual_display_status.pipeb_status = PIPE_OFF;
+       dual_display_status.call_back = NULL;
+       mutex_init(&(dual_display_status.dual_display_mutex));
+
+	if(pipe == 1) {
+		i915_mipi_panel_id = MIPI_DSI_TI_DPP3430_PANEL_ID;
+
+	} else if (i915_enable_dummy_dsi) {
+		i915_mipi_panel_id = MIPI_DSI_DUMMY_PANEL_ID;
+	} else {
+		intel_adc_read_panelid(&panel_id);
+		i915_mipi_panel_id = panel_id;
+	}
+#endif
+	printk("[drm] intel debug panel_id is:%d\n",i915_mipi_panel_id);
 	if (i915_mipi_panel_id <= 0) {
 		/* check if panel id available from VBT */
 		if (!dev_priv->vbt.dsi.panel_id) {
@@ -937,13 +1652,9 @@ bool intel_dsi_init(struct drm_device *dev)
 			dev_priv->mipi_panel_id = dev_priv->vbt.dsi.panel_id;
 	} else
 		dev_priv->mipi_panel_id = i915_mipi_panel_id;
-
-	/*enable for blade2 panel*/
-	//dev_priv->mipi_panel_id = MIPI_DSI_AUO_B101UAN01E_PANEL_ID;
-	//dev_priv->mipi_panel_id = MIPI_DSI_CMI_NT51021_PANEL_ID;
+       printk("intel debug i915_mipi_panel_id is:%d\n",i915_mipi_panel_id);
 	for (i = 0; i < ARRAY_SIZE(intel_dsi_devices); i++) {
 		dsi = &intel_dsi_devices[i];
-
 		if (dsi->panel_id == dev_priv->mipi_panel_id) {
 			intel_dsi->dev = *dsi;
 			intel_dsi_dev = &intel_dsi->dev;
@@ -957,8 +1668,19 @@ bool intel_dsi_init(struct drm_device *dev)
 		goto err;
 	}
 
-	intel_encoder->type = INTEL_OUTPUT_DSI;
-	intel_encoder->crtc_mask = (1 << 0); /* XXX */
+    //specify pipe to the dsi
+#ifndef CONFIG_DLP
+    intel_encoder->type = INTEL_OUTPUT_DSI;
+    intel_encoder->crtc_mask = (1 << 0);
+#else
+    if(pipe ==0){
+        intel_encoder->type = INTEL_OUTPUT_DSI;
+        intel_encoder->crtc_mask = (1 << 0);         
+    } else{
+        intel_encoder->type = INTEL_OUTPUT_DSI;
+        intel_encoder->crtc_mask = (1 << 1);
+    }
+#endif
 
 	intel_encoder->cloneable = false;
 	drm_connector_init(dev, connector, &intel_dsi_connector_funcs,
@@ -982,25 +1704,29 @@ bool intel_dsi_init(struct drm_device *dev)
 		goto err;
 	}
 
+//in dual display , mipi 's backlight is useless. it use a bulb to control
+#ifndef CONFIG_DLP
 	dev_priv->is_mipi = true;
+#else
+	dev_priv->is_mipi = false;
+#endif
 	fixed_mode->type |= DRM_MODE_TYPE_PREFERRED;
-	intel_panel_init(&intel_connector->panel, fixed_mode, NULL);
-	intel_panel_setup_backlight(connector);
-	intel_connector->panel.fitting_mode = 0;
-
-	/* Panel native resolution and desired mode can be different in
-	these two cases:
-	1. Generic driver specifies scaling reqd flag.
-	2. Static driver for Panasonic panel with BYT_CR
-
-	Fixme: Remove static driver's panel ID check as we are planning to
-	enable generic driver by default */
-	if ((dev_priv->scaling_reqd) ||
-		(BYT_CR_CONFIG && (i915_mipi_panel_id ==
-		MIPI_DSI_PANASONIC_VXX09F006A00_PANEL_ID)))  {
-		intel_connector->panel.fitting_mode = AUTOSCALE;
-		DRM_DEBUG_DRIVER("Enabling panel fitter as scaling required flag set\n");
+	if (INTEL_INFO(dev)->gen > 6) {
+		downclock_mode = intel_dsi_calc_panel_downclock(dev,
+							fixed_mode, connector);
+		if (downclock_mode)
+			intel_dsi_drrs_init(intel_connector, downclock_mode);
+		else
+			DRM_DEBUG_KMS("Downclock_mode is not found\n");
 	}
+
+	intel_panel_init(&intel_connector->panel, fixed_mode, downclock_mode);
+
+#ifndef CONFIG_DLP
+        //for blade2_13 ,it would show dumptrace
+	intel_panel_setup_backlight(connector);
+#endif
+	intel_connector->panel.fitting_mode = 0;
 
 	return true;
 err:

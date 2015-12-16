@@ -23,8 +23,8 @@
 
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id hsu_acpi_ids[] = {
-	{ "80860F0A", 0 },
-	{ "8086228A", 0 },
+	{ "80860F0A", hsu_vlv2 },
+	{ "8086228A", hsu_chv },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, hsu_acpi_ids);
@@ -110,10 +110,10 @@ static int serial_hsu_plat_port_probe(struct platform_device *pdev)
 	struct uart_hsu_port *up;
 	int port = pdev->id, irq;
 	struct resource *mem, *ioarea;
-	const struct acpi_device_id *id;
 	resource_size_t start, len;
 
 #ifdef CONFIG_ACPI
+	const struct acpi_device_id *id;
 	for (id = hsu_acpi_ids; id->id[0]; id++)
 		if (!strncmp(id->id, dev_name(&pdev->dev), strlen(id->id))) {
 			acpi_status status;
@@ -124,6 +124,9 @@ static int serial_hsu_plat_port_probe(struct platform_device *pdev)
 			if (ACPI_FAILURE(status))
 				return -ENODEV;
 			port = tmp - 1;
+			if (intel_mid_hsu_plat_init(port,
+				id->driver_data, &pdev->dev))
+				return -ENODEV;
 		}
 #endif
 

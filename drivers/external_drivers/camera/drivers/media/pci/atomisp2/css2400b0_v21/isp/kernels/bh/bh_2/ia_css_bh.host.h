@@ -19,26 +19,27 @@
  *
  */
 
-#ifndef __IA_CSS_HB_HOST_H
-#define __IA_CSS_HB_HOST_H
-
-#include "sh_css_params.h"
+#ifndef __IA_CSS_BH_HOST_H
+#define __IA_CSS_BH_HOST_H
 
 #include "ia_css_bh_param.h"
+#include "s3a/s3a_1.0/ia_css_s3a_types.h"
 
 void
 ia_css_bh_hmem_decode(
 	struct ia_css_3a_rgby_output *out_ptr,
-	hrt_vaddress ddr_ptr);
+	const struct ia_css_bh_table *hmem_buf);
 
 void
 ia_css_bh_encode(
 	struct sh_css_isp_bh_params *to,
-	const struct ia_css_3a_config *from);
+	const struct ia_css_3a_config *from,
+	unsigned size);
 
 void
 ia_css_bh_hmem_encode(
 	struct sh_css_isp_bh_hmem_params *to,
-	const struct ia_css_3a_config *from);
+	const struct ia_css_3a_config *from,
+	unsigned size);
 
-#endif /* __IA_CSS_HB_HOST_H */
+#endif /* __IA_CSS_BH_HOST_H */

@@ -68,8 +68,6 @@
 #define CTLO_INPUT_DEF	(CTLO_DRV_CMOS | CTLO_DRV_REN | CTLO_RVAL_2KUP)
 #define CTLO_OUTPUT_DEF	(CTLO_DIR_OUT | CTLO_INPUT_DEF)
 
-#define PMIC_GPIO1_OFFSET (8)
-
 struct crystalcove_gpio {
 	struct mutex		buslock;
 	struct gpio_chip	chip;
@@ -80,57 +78,6 @@ struct crystalcove_gpio {
 	int			irq_mask;
 };
 static struct crystalcove_gpio gpio_info;
-
-static int crystalcove_gpio_get(struct gpio_chip *chip, unsigned gpio)
-{
-	u8 ctli = gpio < 8 ? GPIO0P0CTLI + gpio : GPIO1P0CTLI + (gpio - 8);
-
-	return intel_mid_pmic_readb(ctli) & 0x1;
-}
-
-int platform_get_hwid(void)
-{
-    int gpio0 = PMIC_GPIO1_OFFSET + 2;
-    int gpio1 = PMIC_GPIO1_OFFSET + 7;
-    struct crystalcove_gpio *cg = &gpio_info;
-    int sku = 0;
-    int id0, id1;
-
-    id0 = crystalcove_gpio_get(&cg->chip, gpio0); 
-    id1 = crystalcove_gpio_get(&cg->chip, gpio1);
-
-    if(id1==0)
-    {
-        if(id0 == 0)
-            sku = 8;
-        else 
-            sku = 10;
-    }
-    else
-    {
-       sku = 13;
-    }
-
-    printk("%s, id0=%d, id1=%d, sku=%d\n", __func__, id0, id1, sku);
-
-    return sku;
-}
-EXPORT_SYMBOL_GPL(platform_get_hwid);
-
-
-static ssize_t platform_hwid_show(struct kobject *kobj,
-                                    struct kobj_attribute *attr, char *buf)
-{
-    int hwid;
-    
-    hwid  = platform_get_hwid();
-
-    return sprintf(buf, "SKU: %d\"\n", hwid);
-}
-
-static struct kobj_attribute platform_hwid_attr = 
-    __ATTR(hwid, 0644, platform_hwid_show, NULL );
-
 
 static void __crystalcove_irq_mask(int gpio, int mask)
 {
@@ -145,7 +92,6 @@ static void __crystalcove_irq_mask(int gpio, int mask)
 
 static void __crystalcove_irq_type(int gpio, int type)
 {
-	int offset = gpio < 8 ? gpio : gpio - 8;
 	u8 ctli = gpio < 8 ? GPIO0P0CTLI + gpio : GPIO1P0CTLI + (gpio - 8);
 
 	type &= IRQ_TYPE_EDGE_BOTH;
@@ -176,7 +122,12 @@ static int crystalcove_gpio_direction_output(struct gpio_chip *chip,
 	return 0;
 }
 
+static int crystalcove_gpio_get(struct gpio_chip *chip, unsigned gpio)
+{
+	u8 ctli = gpio < 8 ? GPIO0P0CTLI + gpio : GPIO1P0CTLI + (gpio - 8);
 
+	return intel_mid_pmic_readb(ctli) & 0x1;
+}
 
 static void crystalcove_gpio_set(struct gpio_chip *chip,
 		unsigned gpio, int value)
@@ -313,18 +264,16 @@ static int crystalcove_gpio_probe(struct platform_device *pdev)
 	struct crystalcove_gpio *cg = &gpio_info;
 	int retval;
 	int i;
-	int gpio_base, irq_base;
 	struct device *dev = intel_mid_pmic_dev();
 
 	mutex_init(&cg->buslock);
-	cg->irq_base = VV_PMIC_GPIO_IRQBASE;
 	cg->chip.label = "intel_crystalcove";
 	cg->chip.direction_input = crystalcove_gpio_direction_input;
 	cg->chip.direction_output = crystalcove_gpio_direction_output;
 	cg->chip.get = crystalcove_gpio_get;
 	cg->chip.set = crystalcove_gpio_set;
 	cg->chip.to_irq = crystalcove_gpio_to_irq;
-	cg->chip.base = VV_PMIC_GPIO_BASE;
+	cg->chip.base = -1;
 	cg->chip.ngpio = NUM_GPIO;
 	cg->chip.can_sleep = 1;
 	cg->chip.dev = dev;
@@ -335,12 +284,11 @@ static int crystalcove_gpio_probe(struct platform_device *pdev)
 		return retval;
 	}
 
-	irq_base = irq_alloc_descs(cg->irq_base, 0, NUM_GPIO, 0);
-	if (cg->irq_base != irq_base)
-		panic("gpio base irq fail, needs %d, return %d\n",
-				cg->irq_base, irq_base);
+	cg->irq_base = irq_alloc_descs(-1, VV_PMIC_IRQBASE, NUM_GPIO, 0);
+
 	for (i = 0; i < NUM_GPIO; i++) {
-		pr_err("gpio %x: set handler: %d\n", cg, i + cg->irq_base);
+		pr_err("gpio %d: set handler: %d\n", i + cg->chip.base,
+							i + cg->irq_base);
 		irq_set_chip_data(i + cg->irq_base, cg);
 		irq_set_chip_and_handler_name(i + cg->irq_base,
 					      &crystalcove_irqchip,
@@ -355,11 +303,6 @@ static int crystalcove_gpio_probe(struct platform_device *pdev)
                 pr_warn("Interrupt request failed\n");
                 return retval;
         }
-        
-        retval  = sysfs_create_file(&dev->kobj, &platform_hwid_attr.attr);
-
-        if(retval)
-            pr_warn("%s, sysfs_create_file failed, %d\n", __func__, retval);
 
 	return 0;
 }

@@ -194,6 +194,15 @@ config SENSORS_THERMAL_MRFLD
 	  To load this driver as a module, select M here. The module
 	  will be called "mrfl_thermal"
 
+config INTEL_BYT_CR_THERMAL
+	tristate "Thermal driver for Intel Baytrail CR platform"
+	depends on THERMAL && IIO
+	help
+	  Say Y here to enable thermal driver on Intel Baytrail CR platform.
+
+	  To load this driver as a module, select M here. The module
+	  will be called "byt_cr_thermal"
+
 config INTEL_BYT_EC_THERMAL
 	tristate "Thermal driver for Intel Baytrail platform"
 	depends on THERMAL && INTEL_BYT_EC
@@ -212,6 +221,29 @@ config SOC_THERMAL
 
 	  Say Y here to enable thermal driver on Intel Merrifield
 	  platform. To load this driver as a module, select M here.
+
+config TP_ENABLE
+	tristate "TP algo to avoid prochot"
+	depends on SOC_THERMAL
+	help
+	  If you say yes here, TP alogrithm will get enabled for
+	  avoiding prochot hits, which monitors the CPU DTS temperature
+	  and based on which it throttles the SoC power-
+	  capping, i.e. PL1 value which inturn throttles the
+	  CPU and GPU frequency based on the power budget.
+
+	  This is tested only for specific platforms(e.g Atom). If you
+	  are not sure, say N here.
+
+config SENSORS_SOCDTS_INTERRUPT
+	tristate "Intel SOC DTS sensor Interrupts"
+	depends on SOC_THERMAL
+	help
+	  If you say yes here you get support for interrupts when the
+	  SoC DTS temperature crosses the programmed thresholds.
+
+	  This is tested only for specific platforms(e.g Atom). If you
+	  are not sure, say N here.
 
 config DEBUG_THERMAL
 	bool "Thermal debug information support"

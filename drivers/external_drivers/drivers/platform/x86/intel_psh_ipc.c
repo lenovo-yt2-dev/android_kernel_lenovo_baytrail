@@ -454,8 +454,8 @@ static ssize_t psh_send_cmd_store(struct device *dev,
 	return size;
 }
 
-static DEVICE_ATTR(psh_msg, S_IRUGO | S_IWUSR, psh_msg_show, psh_msg_store);
-static DEVICE_ATTR(psh_ch, S_IRUGO | S_IWUSR, psh_ch_show, psh_ch_store);
+static DEVICE_ATTR(psh_msg, S_IRUSR | S_IWUSR, psh_msg_show, psh_msg_store);
+static DEVICE_ATTR(psh_ch, S_IRUSR | S_IWUSR, psh_ch_show, psh_ch_store);
 static DEVICE_ATTR(ia2psh_cmd, S_IWUSR, NULL, psh_send_cmd_store);
 
 static struct attribute *psh_attrs[] = {

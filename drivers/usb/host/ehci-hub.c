@@ -228,7 +228,9 @@ static int ehci_bus_suspend (struct usb_hcd *hcd)
 	int			mask;
 	int			changed;
 	int			rc = 0;
-
+#ifdef CONFIG_USB_HCD_HSIC
+	struct pci_dev   *pdev;
+#endif
 	ehci_dbg(ehci, "suspend root hub\n");
 
 	if (time_before (jiffies, ehci->next_statechange))
@@ -240,6 +242,13 @@ static int ehci_bus_suspend (struct usb_hcd *hcd)
 	spin_lock_irq (&ehci->lock);
 	if (ehci->rh_state < EHCI_RH_RUNNING)
 		goto done;
+
+#ifdef CONFIG_USB_HCD_HSIC
+	pdev = to_pci_dev(hcd->self.controller);
+	if (pdev->device == 0x119D)
+		if (device_can_wakeup(&hcd->self.root_hub->dev))
+			hcd->self.root_hub->do_remote_wakeup = 1;
+#endif
 
 	/* Once the controller is stopped, port resumes that are already
 	 * in progress won't complete.  Hence if remote wakeup is enabled
@@ -310,15 +319,12 @@ static int ehci_bus_suspend (struct usb_hcd *hcd)
 			struct pci_dev  *pdev =
 				to_pci_dev(hcd->self.controller);
 
-			/* Temp bypass the phy low power mode for HSIC */
-			if (pdev->device != 0x119D) {
-				t3 = ehci_readl(ehci, hostpc_reg);
-				ehci_writel(ehci, t3 | HOSTPC_PHCD, hostpc_reg);
-				t3 = ehci_readl(ehci, hostpc_reg);
-				ehci_dbg(ehci, "Port %d phy low-power mode %s\n",
-						port, (t3 & HOSTPC_PHCD) ?
-						"succeeded" : "failed");
-			}
+			t3 = ehci_readl(ehci, hostpc_reg);
+			ehci_writel(ehci, t3 | HOSTPC_PHCD, hostpc_reg);
+			t3 = ehci_readl(ehci, hostpc_reg);
+			ehci_dbg(ehci, "Port %d phy low-power mode %s\n",
+					port, (t3 & HOSTPC_PHCD) ?
+					"succeeded" : "failed");
 		}
 	}
 	spin_unlock_irq(&ehci->lock);

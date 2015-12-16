@@ -36,6 +36,7 @@
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id pwm_byt_acpi_ids[] = {
 	{ "80860F09", 0 },
+	{ "80862288", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, pwm_byt_acpi_ids);

@@ -2686,6 +2686,7 @@ u32 calculate_sscr1_psp(const struct intel_mid_i2s_settings *ps_settings)
 
 void override_timing(struct intel_mid_i2s_hdl *drv_data)
 {
+#ifdef CONFIG_ACPI
 	struct intel_mid_i2s_ssp_config *conf;
 
 	switch (drv_data->current_settings.master_mode_standard_freq) {
@@ -2716,6 +2717,7 @@ void override_timing(struct intel_mid_i2s_hdl *drv_data)
 	} else {
 		pr_info("SSP I2S driver: OVERRIDE settings not valid\n");
 	}
+#endif
 }
 
 /**
@@ -3084,10 +3086,12 @@ static int intel_mid_i2s_probe(struct pci_dev *pdev,
 
 	drv_data->ssp_dev = &(pdev->dev);
 
+#ifdef CONFIG_ACPI
 	/* no override of timing for PCI, only from ACPI */
 	drv_data->config_c08k.valid = false;
 	drv_data->config_c16k.valid = false;
 	drv_data->config_c48k.valid = false;
+#endif
 
 	/*
 	 * Get basic io resource and map it for SSP1 [BAR=0]
@@ -3483,6 +3487,7 @@ static const u8 intel_ssp_uuid_timings[] = {
 	0x5b, 0xd3, 0x66, 0x7a, 0x6c, 0x9a
 };
 
+#ifdef CONFIG_ACPI
 int
 i2s_get_ssp_param(acpi_handle handle, const u8 *intel_ssp_uuid,
 			acpi_object_type acpi_type,
@@ -3537,6 +3542,7 @@ i2s_get_ssp_param(acpi_handle handle, const u8 *intel_ssp_uuid,
 		return -ENODEV;
 	return 0;
 }
+#endif
 
 int i2s_acpi_probe(struct platform_device *platdev)
 {

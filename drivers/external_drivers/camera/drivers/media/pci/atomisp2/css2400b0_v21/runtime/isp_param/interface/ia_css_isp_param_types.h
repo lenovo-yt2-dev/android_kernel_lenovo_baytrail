@@ -23,32 +23,47 @@
 #define _IA_CSS_ISP_PARAM_TYPES_H_
 
 #include "ia_css_types.h"
+#include <platform_support.h>
+#include <system_global.h>
+
+/* Short hands */
+#define IA_CSS_ISP_DMEM IA_CSS_ISP_DMEM0
+#define IA_CSS_ISP_VMEM IA_CSS_ISP_VMEM0
+
+/* The driver depends on this, to be removed later. */
+#define IA_CSS_NUM_ISP_MEMORIES IA_CSS_NUM_MEMORIES
 
 /* Explicit member numbering to avoid fish type checker bug */
 enum ia_css_param_class {
 	IA_CSS_PARAM_CLASS_PARAM  = 0,	/* Late binding parameters, like 3A */
 	IA_CSS_PARAM_CLASS_CONFIG = 1,	/* Pipe config time parameters, like resolution */
-	IA_CSS_PARAM_CLASS_STATE  = 2,    // State parameters, like tnr buffer index
-	/* Not yet implemented
-	IA_CSS_PARAM_CLASS_FRAME	  = 3,    // Frame time parameters, like output buffer
-	*/
+	IA_CSS_PARAM_CLASS_STATE  = 2,  /* State parameters, like tnr buffer index */
+#if 0 /* Not yet implemented */
+	IA_CSS_PARAM_CLASS_FRAME  = 3,  /* Frame time parameters, like output buffer */
+#endif
 };
 #define IA_CSS_NUM_PARAM_CLASSES (IA_CSS_PARAM_CLASS_STATE + 1)
+
+/** ISP parameter descriptor */
+struct ia_css_isp_parameter {
+	uint16_t offset; /* Offset in isp_<mem>)parameters, etc. */
+	uint16_t size;   /* Disabled if 0 */
+};
 
 
 /* Address/size of each parameter class in each isp memory, host memory pointers */
 struct ia_css_isp_param_host_segments {
-	struct ia_css_host_data params[IA_CSS_NUM_PARAM_CLASSES][IA_CSS_NUM_ISP_MEMORIES];
+	struct ia_css_host_data params[IA_CSS_NUM_PARAM_CLASSES][IA_CSS_NUM_MEMORIES];
 };
 
 /* Address/size of each parameter class in each isp memory, css memory pointers */
 struct ia_css_isp_param_css_segments {
-	struct ia_css_data      params[IA_CSS_NUM_PARAM_CLASSES][IA_CSS_NUM_ISP_MEMORIES];
+	struct ia_css_data      params[IA_CSS_NUM_PARAM_CLASSES][IA_CSS_NUM_MEMORIES];
 };
 
 /* Address/size of each parameter class in each isp memory, isp memory pointers */
 struct ia_css_isp_param_isp_segments {
-	struct ia_css_isp_data  params[IA_CSS_NUM_PARAM_CLASSES][IA_CSS_NUM_ISP_MEMORIES];
+	struct ia_css_isp_data  params[IA_CSS_NUM_PARAM_CLASSES][IA_CSS_NUM_MEMORIES];
 };
 
 /* Memory offsets in binary info */

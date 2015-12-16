@@ -46,8 +46,8 @@ void  b101uan01e_vid_get_panel_info(int pipe, struct drm_connector *connector)
 		return;
 
 	if (pipe == 0) {
-		connector->display_info.width_mm = 135;
-		connector->display_info.height_mm = 216;
+		connector->display_info.width_mm = 216;
+		connector->display_info.height_mm = 135;
 	}
 
 	return;
@@ -198,7 +198,7 @@ static int auo_b101uan01e_get_effect_levels(struct hal_panel_ctrl_data *hal_pane
 	return 0;
 }
 static struct lcd_panel_dev auo_b101uan01e_panel_device = {
-	.name = "auo_b101uan01e_1920x1200_panel",
+	.name = "OTC3180B_B101UAN01E_AUO_1200x1920_10",
 	.status = OFF,
 	.set_effect = b101uan01e_set_effect,
 	.get_current_level = b101uan01e_get_current_level,
@@ -211,8 +211,6 @@ static struct lcd_panel_dev auo_b101uan01e_panel_device = {
 bool b101uan01e_init(struct intel_dsi_device *dsi)
 {
 	struct intel_dsi *intel_dsi = container_of(dsi, struct intel_dsi, dev);
-	struct drm_device *dev = intel_dsi->base.base.dev;
-	struct drm_i915_private *dev_priv = dev->dev_private;
 
 	/* create private data, slam to dsi->dev_priv. could support many panels
 	 * based on dsi->name. This panal supports both command and video mode,
@@ -227,7 +225,7 @@ bool b101uan01e_init(struct intel_dsi_device *dsi)
 	 *
 	 */
 	DRM_DEBUG_KMS("\n");
-
+        printk("fuzr  ---%s\n",__func__);
 	intel_dsi->hs = true;
 	intel_dsi->channel = 0;
 	intel_dsi->lane_count = 4;
@@ -245,11 +243,11 @@ bool b101uan01e_init(struct intel_dsi_device *dsi)
 	intel_dsi->clk_hs_to_lp_count = 0x14;
 	intel_dsi->video_frmt_cfg_bits = 0;
 	intel_dsi->dphy_reg = 0x3c1fc51f;
-
+	intel_dsi->port = 0; /* PORT_A by default */
+	intel_dsi->burst_mode_ratio = 100;
 	intel_dsi->backlight_off_delay = 20;
 	intel_dsi->send_shutdown = true;
 	intel_dsi->shutdown_pkt_delay = 20;
-	dev_priv->mipi.panel_bpp = PIPE_24BPP;
 
 	auo_b101uan01e_panel_device.dsi = intel_dsi;
 	lenovo_lcd_panel_register(&auo_b101uan01e_panel_device);
@@ -262,7 +260,7 @@ void b101uan01e_dpms(struct intel_dsi_device *dsi, bool enable)
 {
 	struct intel_dsi *intel_dsi = container_of(dsi, struct intel_dsi, dev);
 
-	printk("[LCD]:%s\n",__func__);
+	DRM_DEBUG_KMS("\n");
 
 	if (enable) {
 
@@ -289,6 +287,10 @@ bool b101uan01e_mode_fixup(struct intel_dsi_device *dsi,
 		    const struct drm_display_mode *mode,
 		    struct drm_display_mode *adjusted_mode)
 {
+    struct intel_dsi *intel_dsi = container_of(dsi, struct intel_dsi, dev);
+    intel_dsi->pclk = adjusted_mode->clock;
+     DRM_DEBUG_KMS("pclk : %d\n", intel_dsi->pclk);
+
 	return true;
 }
 

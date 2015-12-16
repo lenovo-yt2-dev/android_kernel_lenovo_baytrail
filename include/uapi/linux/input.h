@@ -469,17 +469,16 @@ struct input_keymap_entry {
 
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
 
-//digital hall keys//
-#define KEY_ANGLE_0		600
-#define KEY_ANGLE_90		602
-#define KEY_ANGLE_180		604
-#define KEY_ANGLE_CAMERA	601
-#define KEY_ANGLE_OPEN		605
+/* digital hall keys */
+#define KEY_ANGLE_0         600
+#define KEY_ANGLE_90        602
+#define KEY_ANGLE_180       604
+#define KEY_ANGLE_CAMERA    601
+#define KEY_ANGLE_OPEN      605
 
-//hall switch keys//
-#define KEY_HALL_NEAR		606
-#define KEY_HALL_FAR		607
-
+/* hall switch keys */
+#define KEY_HALL_NEAR       606
+#define KEY_HALL_FAR        607
 
 /* Code 255 is reserved for special needs of AT keyboard driver */
 
@@ -763,7 +762,8 @@ struct input_keymap_entry {
 #define BTN_TRIGGER_HAPPY38		0x2e5
 #define BTN_TRIGGER_HAPPY39		0x2e6
 #define BTN_TRIGGER_HAPPY40		0x2e7
-
+//set the dlp key for 0x2f0 ==752
+#define KEY_DLP                         0x2f0
 /* We avoid low common keys in module aliases so they don't get huge. */
 #define KEY_MIN_INTERESTING	KEY_MUTE
 #define KEY_MAX			0x2ff

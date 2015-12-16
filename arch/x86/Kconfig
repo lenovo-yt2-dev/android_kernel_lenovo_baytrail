@@ -153,6 +153,27 @@ config MMU
 config SBUS
 	bool
 
+config MRD7
+	bool "Baytrail CR MRD7"
+	---help---
+	This option is needed for MRD7 system.
+
+	If unsure, say N.
+
+config MRD8
+	bool "Baytrail CR MRD8"
+	---help---
+	This option is needed for MRD8 system.
+
+	If unsure, say N.
+
+config MRD7P05
+	bool "Baytrail CR MRD7 P0.5"
+	---help---
+	This option is needed for MRD7 P0.5 and P1 system.
+
+	If unsure, say N.
+
 config NEED_DMA_MAP_STATE
 	def_bool y
 	depends on X86_64 || INTEL_IOMMU || DMA_API_DEBUG
@@ -411,7 +432,7 @@ config X86_UV
 
 config X86_GOLDFISH
        bool "Goldfish (Virtual Platform)"
-       depends on X86_32 || X86_64
+       depends on X86_32
        ---help---
 	 Enable support for the Goldfish virtual platform used primarily
 	 for Android development. Unless you are building for the Android
@@ -521,6 +542,13 @@ config X86_INTEL_LPSS
 	  found on Intel Lynxpoint PCH. Selecting this option enables
 	  things like clock tree (common clock framework) which are needed
 	  by the LPSS peripheral drivers.
+
+config X86_INTEL_OSC_CLK
+	bool "Intel OSC CLK Support"
+	select COMMON_CLK
+	---help---
+	  Select to build support for Intel OSC0~OSC4 clock. Selecting
+	  this option enables Linux common clock framework.
 
 config X86_RDC321X
 	bool "RDC R-321x SoC"
@@ -861,6 +889,15 @@ config NR_CPUS
 
 	  This is purely to save memory - each supported CPU adds
 	  approximately eight kilobytes to the kernel image.
+
+config NR_CPUS_PER_MODULE
+        int "number of cpu cores per module"
+	default "2" if SMP
+	---help---
+	  This allows you to specify the number of cpu cores per module in the system
+	  on which this kernel will be run.
+
+	  This is used for module level frequency scaling on systems that support it.
 
 config SCHED_SMT
 	bool "SMT (Hyperthreading) scheduler support"
@@ -2389,11 +2426,15 @@ config HAVE_TEXT_POKE_SMP
 
 config X86_DEV_DMA_OPS
 	bool
-	depends on X86_64 || STA2X11
+	depends on X86_64 || STA2X11 || VIDEO_CSS2600
 
 config X86_DMA_REMAP
 	bool
 	depends on STA2X11
+
+config PF450CL
+       bool "ASUS PF450CL Product"
+       depends on X86_MDFLD
 
 source "net/Kconfig"
 

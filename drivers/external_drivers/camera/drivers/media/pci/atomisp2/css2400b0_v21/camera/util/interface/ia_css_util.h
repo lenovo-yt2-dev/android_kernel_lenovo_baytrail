@@ -32,7 +32,7 @@
 /** @brief convert "errno" error code to "ia_css_err" error code
  *
  * @param[in]	"errno" error code
- * @return   	"ia_css_err" error code
+ * @return	"ia_css_err" error code
  *
  */
 enum ia_css_err ia_css_convert_errno(
@@ -56,7 +56,8 @@ extern enum ia_css_err ia_css_util_check_vf_info(
  */
 extern enum ia_css_err ia_css_util_check_input(
 	const struct ia_css_stream_config * const stream_config,
-	bool must_be_raw);
+	bool must_be_raw,
+	bool must_be_yuv);
 
 /** @brief check vf and out frame info.
  *

@@ -77,7 +77,9 @@ enum crypto_alg_class {
 	/* When is_encrypted==true the props are not initialized and */\
 	/* the contained sep_ctx is encrypted (when created in SeP)  */\
 	/* Algorithm properties are encrypted */		\
-		bool is_encrypted
+		bool is_encrypted; \
+		u32 sess_id; \
+		struct sep_client_ctx *sctx
 
 /* SeP context segment of a context */
 #ifdef CONFIG_NOT_COHERENT_CACHE
@@ -163,6 +165,9 @@ struct client_crypto_ctx_info {
 	dma_addr_t sep_ctx_dma_addr;
 	dma_addr_t hash_tail_dma_addr;
 	int sep_cache_idx;
+
+	int sess_id;
+	struct sep_client_ctx *sctx;
 };
 /* Macro to initialize the context info structure */
 #define USER_CTX_INFO_INIT(ctx_info_p)	\

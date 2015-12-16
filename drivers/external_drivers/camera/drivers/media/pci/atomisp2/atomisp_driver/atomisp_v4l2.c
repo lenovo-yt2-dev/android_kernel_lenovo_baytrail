@@ -20,6 +20,7 @@
  * 02110-1301, USA.
  *
  */
+#include <linux/hid-holtekff.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/pm_runtime.h>
@@ -27,8 +28,14 @@
 #include <linux/timer.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-
+#ifdef CONFIG_GMIN_INTEL_MID
+#include <linux/intel_mid_pm.h>
+#endif
 #include <asm/intel-mid.h>
+
+#ifdef CONFIG_GMIN_INTEL_MID
+#include <linux/atomisp_gmin_platform.h>
+#endif
 
 #include "atomisp_cmd.h"
 #include "atomisp_common.h"
@@ -39,6 +46,7 @@
 #include "atomisp_acc.h"
 #include "atomisp-regs.h"
 #include "atomisp_dfs_tables.h"
+#include "atomisp_drvfs.h"
 #include "hmm/hmm.h"
 
 #include "hrt/hive_isp_css_mm_hrt.h"
@@ -47,29 +55,301 @@
 #include <linux/intel_mid_pm.h>
 #include <asm/intel-mid.h>
 
-#define ATOMISP_INTERNAL_PM	(IS_MOFD)
+#ifdef CONFIG_GMIN_INTEL_MID
+/* G-Min addition: pull this in from intel_mid_pm.h */
+#define CSTATE_EXIT_LATENCY_C1  1
+#endif
 
+#ifdef CONFIG_GMIN_INTEL_MID
+/* Moorefield lacks PCI PM, BYT advertises it but it's broken, use PUNIT */
+#define ATOMISP_INTERNAL_PM	(IS_MOFD || IS_BYT || IS_CHT)
+#endif
+static u8* buff_read_back;
+static u8 read_cmd[] =  {0,0,0,0,0,0,0,0};
+static struct class* Xe_flash_userCtrl_class;
+static struct device* Xe_flash_register_ctrl_dev;
+struct holtekff_device {
+    struct hid_field *field;
+};
+int xe_debug_flag =0;
+static u16 debug_delay;
+static u16 debug_pulse;
+//extern void Xe_flash_send_cmd(u8[8]);
+//extern void Xe_flash_rcv_cmd(u8[8], u8**);
+
+static ssize_t Xe_flash_send_cmd_show(struct device *dev,
+        struct device_attribute *attr, char *buf){
+
+    int ret;
+    //    ret = sprintf(buf, "ASUS --- send_buff[0] is 0x%x, send_buff[1] is 0x%x\n", send_buff[0], send_buff[1]);
+    ret = sprintf(buf, "ASUS ---@Xe_flash_send_cmd_show \n");
+    return ret;
+}
+
+static ssize_t Xe_flash_send_cmd_store(struct device *dev,
+        struct device_attribute *attr,
+        const char *buf, size_t count){
+
+    u8 send_buff[] = {0,0,0,0,0,0,0,0};
+    int cmd_store;
+    cmd_store = -1;
+
+    sscanf(buf, "%x", &cmd_store);
+    send_buff[0] = (cmd_store &0xFF00)>>8;
+    send_buff[1] = cmd_store&0xFF;
+
+    printk(KERN_INFO "ASUS --- send_buff[0] is 0x%d, send_buff[1] is 0x%d\n", send_buff[0], send_buff[1]);
+#if 0
+    if(send_buff[0] == 0x01)
+        gpio_set_value(173, 0);
+
+    if(send_buff[0] == 0x04)
+        gpio_set_value(173, 1);
+#endif
+    Xe_flash_send_cmd(send_buff);
+
+    return count;
+}
+
+DEVICE_ATTR(send_cmd, 0660, Xe_flash_send_cmd_show, Xe_flash_send_cmd_store);
+//=================Start for amax interface=====================//
+
+static ssize_t app_interface_Xe_flash_send_cmd_show(struct device *dev,
+        struct device_attribute *attr, char *buf){
+
+    int ret;
+    //    ret = sprintf(buf, "ASUS --- send_buff[0] is 0x%x, send_buff[1] is 0x%x\n", send_buff[0], send_buff[1]);
+    ret = sprintf(buf, "ASUS ---@Xe_flash_send_cmd_show \n");
+    return ret;
+}
+
+static ssize_t app_interface_Xe_flash_send_cmd_store(struct device *dev,
+        struct device_attribute *attr,
+        const char *buf, size_t count){
+
+    u32 send_buff[] = {0,0,0,0,0,0,0,0};
+    //    int cmd_store;
+    //    cmd_store = -1;
+
+    sscanf(buf, "%x%x%x%x%x%x%x%x", &(send_buff[0]), &(send_buff[1]),
+            &(send_buff[2]), &(send_buff[3]),
+            &(send_buff[5]), &(send_buff[4]),
+            &(send_buff[6]), &(send_buff[7]));
+    //    send_buff[0] = (cmd_store &0xFF00)>>8;
+    //    send_buff[1] = cmd_store&0xFF;
+
+    Xe_flash_send_cmd((u8*)send_buff);
+
+    return count;
+}
+
+DEVICE_ATTR(app_interface_send_cmd, 0660, app_interface_Xe_flash_send_cmd_show, app_interface_Xe_flash_send_cmd_store);
+static ssize_t app_interface_Xe_flash_rcv_cmd_show(struct device *dev,
+        struct device_attribute *attr, char *buf){
+
+    int ret;
+    if(!buff_read_back) return 0;
+
+    ret = sprintf(buf, "0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x \n",
+            buff_read_back[0], buff_read_back[1],
+            buff_read_back[2], buff_read_back[3],
+            buff_read_back[4], buff_read_back[5],
+            buff_read_back[6], buff_read_back[7]);
+    return ret;
+}
+
+static ssize_t app_interface_Xe_flash_rcv_cmd_store(struct device *dev,
+        struct device_attribute *attr,
+        const char *buf, size_t count){
+
+    int cmd_store;
+    int i;
+    cmd_store = -1;
+    sscanf(buf, "%x", &cmd_store);
+
+    read_cmd[0] = (cmd_store &0xFF00)>>8;
+    read_cmd[1] = cmd_store&0xFF;
+    printk(KERN_INFO "ASUS --- @Xe_flash_rcv_cmd_store  \n");
+    Xe_flash_rcv_cmd(read_cmd, &buff_read_back);
+
+    if(!buff_read_back)
+        return count;
+
+    for (i = 0; i < 8; i++) {
+        printk(KERN_INFO "ASUS, @Xe_flash_rcv_cmd_store GET: %x \n", buff_read_back[i]);
+    }
+
+
+    return count;
+}
+
+DEVICE_ATTR(app_interface_rcv_cmd, 0660, app_interface_Xe_flash_rcv_cmd_show, app_interface_Xe_flash_rcv_cmd_store);
+//=================End for amax interface=====================//
+static ssize_t Xe_flash_rcv_cmd_show(struct device *dev,
+        struct device_attribute *attr, char *buf){
+
+    int ret;
+    if(!buff_read_back) return 0;
+
+    ret = sprintf(buf, "0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x \n",
+            buff_read_back[0], buff_read_back[1],
+            buff_read_back[2], buff_read_back[3],
+            buff_read_back[4], buff_read_back[5],
+            buff_read_back[6], buff_read_back[7]);
+    return ret;
+}
+
+static ssize_t Xe_flash_rcv_cmd_store(struct device *dev,
+        struct device_attribute *attr,
+        const char *buf, size_t count){
+
+    int cmd_store;
+    int i;
+    cmd_store = -1;
+    sscanf(buf, "%x", &cmd_store);
+
+    read_cmd[0] = (cmd_store &0xFF00)>>8;
+    read_cmd[1] = cmd_store&0xFF;
+    printk(KERN_INFO "ASUS --- @Xe_flash_rcv_cmd_store  \n");
+    Xe_flash_rcv_cmd(read_cmd, &buff_read_back);
+
+    if(!buff_read_back)
+        return count;
+
+    for (i = 0; i < 8; i++) {
+        printk(KERN_INFO "ASUS, @Xe_flash_rcv_cmd_store GET: %x \n", buff_read_back[i]);
+    }
+
+
+    return count;
+}
+
+DEVICE_ATTR(rcv_cmd, 0660, Xe_flash_rcv_cmd_show, Xe_flash_rcv_cmd_store);
+
+static ssize_t Xe_flash_debug_flag_show(struct device *dev,
+        struct device_attribute *attr, char *buf){
+
+    int ret;
+    ret = sprintf(buf, "ASUS --- Xe_flash: xe_debug_flag is %d  \n", xe_debug_flag);
+    return ret;
+}
+
+static ssize_t Xe_flash_debug_flag_store(struct device *dev,
+        struct device_attribute *attr,
+        const char *buf, size_t count){
+
+    int flag_store;
+    flag_store = -1;
+    sscanf(buf, "%d", &flag_store);
+
+    xe_debug_flag = flag_store;
+    printk(KERN_INFO "ASUS --- Xe_flash: xe_debug_flag is %d  \n", xe_debug_flag);
+
+    return count;
+}
+
+DEVICE_ATTR(debug_flag, 0660, Xe_flash_debug_flag_show, Xe_flash_debug_flag_store);
+
+static ssize_t Xe_flash_debug_pulse_show(struct device *dev,
+        struct device_attribute *attr, char *buf){
+
+    int ret;
+    ret = sprintf(buf, "ASUS --- Xe_flash: debug_pulse is %d  \n", debug_pulse);
+    return ret;
+}
+
+static ssize_t Xe_flash_debug_pulse_store(struct device *dev,
+        struct device_attribute *attr,
+        const char *buf, size_t count){
+
+    int pulse_store;
+    pulse_store = -1;
+    sscanf(buf, "%d", &pulse_store);
+
+    debug_pulse = pulse_store;
+    printk(KERN_INFO "ASUS --- Xe_flash: debug_pulse is %d  \n", debug_pulse);
+
+    return count;
+}
+
+DEVICE_ATTR(debug_pulse, 0660, Xe_flash_debug_pulse_show, Xe_flash_debug_pulse_store);
+
+static ssize_t Xe_flash_debug_delay_show(struct device *dev,
+        struct device_attribute *attr, char *buf){
+
+    int ret;
+    ret = sprintf(buf, "ASUS --- Xe_flash: debug_delay is %d  \n", debug_delay);
+    return ret;
+}
+
+static ssize_t Xe_flash_debug_delay_store(struct device *dev,
+        struct device_attribute *attr,
+        const char *buf, size_t count){
+
+    int pulse_store;
+    pulse_store = -1;
+    sscanf(buf, "%d", &pulse_store);
+
+    debug_delay = pulse_store;
+    printk(KERN_INFO "ASUS --- Xe_flash: debug_delay is %d  \n", debug_delay);
+
+    return count;
+}
+
+DEVICE_ATTR(debug_delay, 0660, Xe_flash_debug_delay_show, Xe_flash_debug_delay_store);
+
+
+int Xe_flash_on(struct v4l2_subdev *sd, u16 delay, u16 pulse)
+{
+    u8 send_buff[] = {0,0,0,0,0,0,0,0};
+    send_buff[0] = 0x04;
+    send_buff[2] = pulse&0xFF;
+    send_buff[3] = ( pulse&0xFF00 )>>8;
+    send_buff[4] = delay&0xFF;
+    send_buff[5] = ( delay&0xFF00 )>>8;
+    if(xe_debug_flag){
+        send_buff[2] = debug_pulse&0xFF;
+        send_buff[3] = ( debug_pulse&0xFF00 )>>8;
+        send_buff[4] = debug_delay&0xFF;
+        send_buff[5] = ( debug_delay&0xFF00 )>>8;
+    }
+    //    printk(KERN_INFO "ASUSBSP --- @Xe_flash_on 1\n");
+    Xe_flash_send_cmd(send_buff);
+    return 0;
+}
 /* set reserved memory pool size in page */
-unsigned int repool_pgnr;
+unsigned int repool_pgnr=39936;
 module_param(repool_pgnr, uint, 0644);
 MODULE_PARM_DESC(repool_pgnr,
 		"Set the reserved memory pool size in page (default:0)");
 
 /* set dynamic memory pool size in page */
-unsigned int dypool_pgnr = UINT_MAX;
+unsigned int dypool_pgnr = 39936;
 module_param(dypool_pgnr, uint, 0644);
 MODULE_PARM_DESC(dypool_pgnr,
 		"Set the dynamic memory pool size in page (default:0)");
 
-bool dypool_enable;
+bool dypool_enable=1;
 module_param(dypool_enable, bool, 0644);
 MODULE_PARM_DESC(dypool_enable,
 		"dynamic memory pool enable/disable (default:disable)");
+
+/* memory optimization: deferred firmware loading */
+bool defer_fw_load=1;
+module_param(defer_fw_load, bool, 0644);
+MODULE_PARM_DESC(defer_fw_load,
+		"Defer FW loading until device is opened (default:disable)");
 
 /* cross componnet debug message flag */
 int dbg_level = 0;
 module_param(dbg_level, int, 0644);
 MODULE_PARM_DESC(dbg_level, "debug message on/off (default:off)");
+
+/* log function switch */
+int dbg_func = 2;
+module_param(dbg_func, int, 0644);
+MODULE_PARM_DESC(dbg_func,
+		"log function switch non/trace_printk/printk (default:printk)");
 
 int mipicsi_flag;
 module_param(mipicsi_flag, int, 0644);
@@ -167,75 +447,49 @@ static int atomisp_save_iunit_reg(struct atomisp_device *isp)
 	pci_read_config_dword(dev, PCI_INTERRUPT_CTRL,
 			      &isp->saved_regs.interrupt_control);
 
-	if (IS_ISP24XX(isp)) {
-		pci_read_config_dword(dev, MRFLD_PCI_PMCS,
-				      &isp->saved_regs.pmcs);
-		/* Ensure read/write combining is enabled. */
-		pci_read_config_dword(dev, PCI_I_CONTROL,
-				&isp->saved_regs.i_control);
-		isp->saved_regs.i_control |=
-				MRFLD_PCI_I_CONTROL_ENABLE_READ_COMBINING |
-				MRFLD_PCI_I_CONTROL_ENABLE_WRITE_COMBINING;
-		pci_read_config_dword(dev, MRFLD_PCI_CSI_ACCESS_CTRL_VIOL,
-				      &isp->saved_regs.csi_access_viol);
-		pci_read_config_dword(dev, MRFLD_PCI_CSI_RCOMP_CONTROL,
-				      &isp->saved_regs.csi_rcomp_config);
-		/*
-		 * Hardware bugs require setting CSI_HS_OVR_CLK_GATE_ON_UPDATE.
-		 * ANN/CHV: RCOMP updates do not happen when using CSI2+ path
-		 * and sensor sending "continuous clock".
-		 * TNG/ANN/CHV: MIPI packets are lost if the HS entry sequence
-		 * is missed, and IUNIT can hang.
-		 * For both issues, setting this bit is a workaround.
-		 */
-		isp->saved_regs.csi_rcomp_config |=
-			MRFLD_PCI_CSI_HS_OVR_CLK_GATE_ON_UPDATE;
-		pci_read_config_dword(dev, MRFLD_PCI_CSI_AFE_TRIM_CONTROL,
-				      &isp->saved_regs.csi_afe_dly);
-		pci_read_config_dword(dev, MRFLD_PCI_CSI_CONTROL,
-				      &isp->saved_regs.csi_control);
-		if (isp->media_dev.hw_revision >=
-		    ATOMISP_HW_REVISION_ISP2401 << ATOMISP_HW_REVISION_SHIFT)
-			isp->saved_regs.csi_control |=
-				MRFLD_PCI_CSI_CONTROL_PARPATHEN;
-		pci_read_config_dword(dev, MRFLD_PCI_CSI_AFE_RCOMP_CONTROL,
-				      &isp->saved_regs.csi_afe_rcomp_config);
-		pci_read_config_dword(dev, MRFLD_PCI_CSI_AFE_HS_CONTROL,
-				      &isp->saved_regs.csi_afe_hs_control);
-		pci_read_config_dword(dev, MRFLD_PCI_CSI_DEADLINE_CONTROL,
-				      &isp->saved_regs.csi_deadline_control);
-	} else {
-		pci_read_config_dword(dev, MFLD_PCI_PMCS,
-				      &isp->saved_regs.pmcs);
-
-		/* Ensure clock gating for ISPCLK, PERF and NOA monitoring. */
-		pci_read_config_dword(dev, MFLD_PCI_CG_DIS,
-				      &isp->saved_regs.cg_dis);
-		isp->saved_regs.cg_dis &= ~(MFLD_PCI_CG_DIS_DISABLED_ISPCLK |
-				MFLD_PCI_CG_DIS_DISABLED_PERF_MON |
-				MFLD_PCI_CG_DIS_DISABLED_NOA_MON);
-
-		/* Ensure read/write combining is enabled. */
-		pci_read_config_dword(dev, PCI_I_CONTROL,
-				&isp->saved_regs.i_control);
-		isp->saved_regs.i_control |=
-				MFLD_PCI_I_CONTROL_ENABLE_READ_COMBINING |
-				MFLD_PCI_I_CONTROL_ENABLE_WRITE_COMBINING;
-
-		isp->saved_regs.csi_rcomp_config = intel_mid_msgbus_read32(
-				MFLD_IUNITPHY_PORT, MFLD_CSI_RCOMP);
-		isp->saved_regs.csi_afe_dly = intel_mid_msgbus_read32(
-				MFLD_IUNITPHY_PORT, MFLD_CSI_AFE);
-
-		/* Ensure mipi1 and mipi4 configurations are enabled */
-		isp->saved_regs.csi_control = intel_mid_msgbus_read32(
-				MFLD_IUNITPHY_PORT, MFLD_CSI_CONTROL);
-		isp->saved_regs.csi_control &= ~(MFLD_CSI_CONTROL_DIS_MIPI4_IF |
-				MFLD_CSI_CONTROL_DIS_MIPI1_IF);
-		isp->saved_regs.csi_control |= MFLD_CSI_CONTROL_EN_MIPI4_LANE |
-				MFLD_CSI_CONTROL_EN_MIPI1_LANE;
-	}
-
+	pci_read_config_dword(dev, MRFLD_PCI_PMCS,
+			      &isp->saved_regs.pmcs);
+	/* Ensure read/write combining is enabled. */
+	pci_read_config_dword(dev, PCI_I_CONTROL,
+			&isp->saved_regs.i_control);
+	isp->saved_regs.i_control |=
+			MRFLD_PCI_I_CONTROL_ENABLE_READ_COMBINING |
+			MRFLD_PCI_I_CONTROL_ENABLE_WRITE_COMBINING;
+	pci_read_config_dword(dev, MRFLD_PCI_CSI_ACCESS_CTRL_VIOL,
+			      &isp->saved_regs.csi_access_viol);
+	pci_read_config_dword(dev, MRFLD_PCI_CSI_RCOMP_CONTROL,
+			      &isp->saved_regs.csi_rcomp_config);
+	/*
+	 * Hardware bugs require setting CSI_HS_OVR_CLK_GATE_ON_UPDATE.
+	 * ANN/CHV: RCOMP updates do not happen when using CSI2+ path
+	 * and sensor sending "continuous clock".
+	 * TNG/ANN/CHV: MIPI packets are lost if the HS entry sequence
+	 * is missed, and IUNIT can hang.
+	 * For both issues, setting this bit is a workaround.
+	 */
+	isp->saved_regs.csi_rcomp_config |=
+		MRFLD_PCI_CSI_HS_OVR_CLK_GATE_ON_UPDATE;
+	pci_read_config_dword(dev, MRFLD_PCI_CSI_AFE_TRIM_CONTROL,
+			      &isp->saved_regs.csi_afe_dly);
+	pci_read_config_dword(dev, MRFLD_PCI_CSI_CONTROL,
+			      &isp->saved_regs.csi_control);
+	if (isp->media_dev.hw_revision >=
+	    (ATOMISP_HW_REVISION_ISP2401 << ATOMISP_HW_REVISION_SHIFT))
+		isp->saved_regs.csi_control |=
+			MRFLD_PCI_CSI_CONTROL_PARPATHEN;
+	/*
+	 * On CHT CSI_READY bit should be enabled before stream on
+	 */
+	if (IS_CHT && (isp->media_dev.hw_revision >= ((ATOMISP_HW_REVISION_ISP2401 <<
+	    ATOMISP_HW_REVISION_SHIFT) | ATOMISP_HW_STEPPING_B0)))
+		isp->saved_regs.csi_control |=
+			MRFLD_PCI_CSI_CONTROL_CSI_READY;
+	pci_read_config_dword(dev, MRFLD_PCI_CSI_AFE_RCOMP_CONTROL,
+			      &isp->saved_regs.csi_afe_rcomp_config);
+	pci_read_config_dword(dev, MRFLD_PCI_CSI_AFE_HS_CONTROL,
+			      &isp->saved_regs.csi_afe_hs_control);
+	pci_read_config_dword(dev, MRFLD_PCI_CSI_DEADLINE_CONTROL,
+			      &isp->saved_regs.csi_deadline_control);
 	return 0;
 }
 
@@ -257,46 +511,31 @@ static int atomisp_restore_iunit_reg(struct atomisp_device *isp)
 	pci_write_config_dword(dev, PCI_I_CONTROL,
 					isp->saved_regs.i_control);
 
-	if (IS_ISP24XX(isp)) {
-		pci_write_config_dword(dev, MRFLD_PCI_PMCS,
-						isp->saved_regs.pmcs);
-		pci_write_config_dword(dev, MRFLD_PCI_CSI_ACCESS_CTRL_VIOL,
-				      isp->saved_regs.csi_access_viol);
-		pci_write_config_dword(dev, MRFLD_PCI_CSI_RCOMP_CONTROL,
-				      isp->saved_regs.csi_rcomp_config);
-		pci_write_config_dword(dev, MRFLD_PCI_CSI_AFE_TRIM_CONTROL,
-				      isp->saved_regs.csi_afe_dly);
-		pci_write_config_dword(dev, MRFLD_PCI_CSI_CONTROL,
-				      isp->saved_regs.csi_control);
-		pci_write_config_dword(dev, MRFLD_PCI_CSI_AFE_RCOMP_CONTROL,
-				      isp->saved_regs.csi_afe_rcomp_config);
-		pci_write_config_dword(dev, MRFLD_PCI_CSI_AFE_HS_CONTROL,
-				      isp->saved_regs.csi_afe_hs_control);
-		pci_write_config_dword(dev, MRFLD_PCI_CSI_DEADLINE_CONTROL,
-				      isp->saved_regs.csi_deadline_control);
+	pci_write_config_dword(dev, MRFLD_PCI_PMCS,
+					isp->saved_regs.pmcs);
+	pci_write_config_dword(dev, MRFLD_PCI_CSI_ACCESS_CTRL_VIOL,
+			      isp->saved_regs.csi_access_viol);
+	pci_write_config_dword(dev, MRFLD_PCI_CSI_RCOMP_CONTROL,
+			      isp->saved_regs.csi_rcomp_config);
+	pci_write_config_dword(dev, MRFLD_PCI_CSI_AFE_TRIM_CONTROL,
+			      isp->saved_regs.csi_afe_dly);
+	pci_write_config_dword(dev, MRFLD_PCI_CSI_CONTROL,
+			      isp->saved_regs.csi_control);
+	pci_write_config_dword(dev, MRFLD_PCI_CSI_AFE_RCOMP_CONTROL,
+			      isp->saved_regs.csi_afe_rcomp_config);
+	pci_write_config_dword(dev, MRFLD_PCI_CSI_AFE_HS_CONTROL,
+			      isp->saved_regs.csi_afe_hs_control);
+	pci_write_config_dword(dev, MRFLD_PCI_CSI_DEADLINE_CONTROL,
+			      isp->saved_regs.csi_deadline_control);
 
-		/*
-		 * for MRFLD, Software/firmware needs to write a 1 to bit0
-		 * of the register at CSI_RECEIVER_SELECTION_REG to enable
-		 * SH CSI backend write 0 will enable Arasan CSI backend,
-		 * which has bugs(like sighting:4567697 and 4567699) and
-		 * will be removed in B0
-		 */
-		atomisp_store_uint32(MRFLD_CSI_RECEIVER_SELECTION_REG, 1);
-
-	} else {
-		pci_write_config_dword(dev, MFLD_PCI_PMCS,
-				       isp->saved_regs.pmcs);
-		pci_write_config_dword(dev, MFLD_PCI_CG_DIS,
-						isp->saved_regs.cg_dis);
-		intel_mid_msgbus_write32(MFLD_IUNITPHY_PORT, MFLD_CSI_RCOMP,
-				    isp->saved_regs.csi_rcomp_config);
-		intel_mid_msgbus_write32(MFLD_IUNITPHY_PORT, MFLD_CSI_AFE,
-				    isp->saved_regs.csi_afe_dly);
-		intel_mid_msgbus_write32(MFLD_IUNITPHY_PORT, MFLD_CSI_CONTROL,
-				    isp->saved_regs.csi_control);
-	}
-
+	/*
+	 * for MRFLD, Software/firmware needs to write a 1 to bit0
+	 * of the register at CSI_RECEIVER_SELECTION_REG to enable
+	 * SH CSI backend write 0 will enable Arasan CSI backend,
+	 * which has bugs(like sighting:4567697 and 4567699) and
+	 * will be removed in B0
+	 */
+	atomisp_store_uint32(MRFLD_CSI_RECEIVER_SELECTION_REG, 1);
 	return 0;
 }
 
@@ -364,12 +603,13 @@ done:
 	pci_write_config_dword(dev, PCI_INTERRUPT_CTRL, irq);
 
 	atomisp_msi_irq_uninit(isp, dev);
-	atomisp_freq_scaling(isp, ATOMISP_DFS_MODE_LOW);
+	atomisp_freq_scaling(isp, ATOMISP_DFS_MODE_LOW, true);
 	spin_unlock_irqrestore(&isp->lock, flags);
 
 	return 0;
 }
 
+#ifdef CONFIG_GMIN_INTEL_MID
 /* Workaround for pmu_nc_set_power_state not ready in MRFLD */
 static int atomisp_mrfld_power_down(struct atomisp_device *isp)
 {
@@ -438,6 +678,7 @@ static int atomisp_mrfld_power_up(struct atomisp_device *isp)
 		usleep_range(100, 150);
 	};
 }
+#endif
 
 static int atomisp_runtime_suspend(struct device *dev)
 {
@@ -445,19 +686,19 @@ static int atomisp_runtime_suspend(struct device *dev)
 		dev_get_drvdata(dev);
 	int ret;
 
-	if (IS_ISP24XX(isp)) {
-		ret = atomisp_mrfld_pre_power_down(isp);
-		if (ret)
-			return ret;
-	}
+	ret = atomisp_mrfld_pre_power_down(isp);
+	if (ret)
+		return ret;
 
 	/*Turn off the ISP d-phy*/
 	ret = atomisp_ospm_dphy_down(isp);
 	if (ret)
 		return ret;
 	pm_qos_update_request(&isp->pm_qos, PM_QOS_DEFAULT_VALUE);
+#ifdef CONFIG_GMIN_INTEL_MID
 	if (ATOMISP_INTERNAL_PM)
 		ret = atomisp_mrfld_power_down(isp);
+#endif
 
 	return ret;
 }
@@ -468,11 +709,13 @@ static int atomisp_runtime_resume(struct device *dev)
 		dev_get_drvdata(dev);
 	int ret;
 
+#ifdef CONFIG_GMIN_INTEL_MID
 	if (ATOMISP_INTERNAL_PM) {
 		ret = atomisp_mrfld_power_up(isp);
 		if (ret)
 			return ret;
 	}
+#endif
 
 	pm_qos_update_request(&isp->pm_qos, isp->max_isr_latency);
 	if (isp->sw_contex.power_state == ATOM_ISP_POWER_DOWN) {
@@ -488,9 +731,7 @@ static int atomisp_runtime_resume(struct device *dev)
 	if (isp->saved_regs.pcicmdsts)
 		atomisp_restore_iunit_reg(isp);
 
-	if (IS_ISP24XX(isp))
-		atomisp_freq_scaling(isp, ATOMISP_DFS_MODE_LOW);
-
+	atomisp_freq_scaling(isp, ATOMISP_DFS_MODE_LOW, true);
 	return 0;
 }
 
@@ -518,12 +759,9 @@ static int atomisp_suspend(struct device *dev)
 	}
 	spin_unlock_irqrestore(&isp->lock, flags);
 
-	/* Prepare for MRFLD IUNIT power down */
-	if (IS_ISP24XX(isp)) {
-		ret = atomisp_mrfld_pre_power_down(isp);
-		if (ret)
-			return ret;
-	}
+	ret = atomisp_mrfld_pre_power_down(isp);
+	if (ret)
+		return ret;
 
 	/*Turn off the ISP d-phy */
 	ret = atomisp_ospm_dphy_down(isp);
@@ -532,8 +770,10 @@ static int atomisp_suspend(struct device *dev)
 		return ret;
 	}
 	pm_qos_update_request(&isp->pm_qos, PM_QOS_DEFAULT_VALUE);
+#ifdef CONFIG_GMIN_INTEL_MID
 	if (ATOMISP_INTERNAL_PM)
 		ret = atomisp_mrfld_power_down(isp);
+#endif
 
 	return ret;
 }
@@ -544,11 +784,13 @@ static int atomisp_resume(struct device *dev)
 		dev_get_drvdata(dev);
 	int ret;
 
+#ifdef CONFIG_GMIN_INTEL_MID
 	if (ATOMISP_INTERNAL_PM) {
 		ret = atomisp_mrfld_power_up(isp);
 		if (ret)
 			return ret;
 	}
+#endif
 
 	pm_qos_update_request(&isp->pm_qos, isp->max_isr_latency);
 
@@ -563,9 +805,7 @@ static int atomisp_resume(struct device *dev)
 	if (isp->saved_regs.pcicmdsts)
 		atomisp_restore_iunit_reg(isp);
 
-	if (IS_ISP24XX(isp))
-		atomisp_freq_scaling(isp, ATOMISP_DFS_MODE_LOW);
-
+	atomisp_freq_scaling(isp, ATOMISP_DFS_MODE_LOW, true);
 	return 0;
 }
 #endif
@@ -695,7 +935,11 @@ static int atomisp_subdev_probe(struct atomisp_device *isp)
 {
 	const struct atomisp_platform_data *pdata;
 	struct intel_v4l2_subdev_table *subdevs;
+#ifdef CONFIG_GMIN_INTEL_MID
+	int ret, raw_index = -1;
+#else
 	int raw_index = -1;
+#endif
 
 	pdata = atomisp_get_platform_data();
 	if (pdata == NULL) {
@@ -710,6 +954,7 @@ static int atomisp_subdev_probe(struct atomisp_device *isp)
 		struct i2c_adapter *adapter =
 			i2c_get_adapter(subdevs->v4l2_subdev.i2c_adapter_id);
 		struct camera_sensor_platform_data *sensor_pdata;
+		int sensor_num, i;
 
 		if (adapter == NULL) {
 			dev_err(isp->dev,
@@ -718,8 +963,21 @@ static int atomisp_subdev_probe(struct atomisp_device *isp)
 			break;
 		}
 
+#ifdef CONFIG_GMIN_INTEL_MID
+		/* In G-Min, the sensor devices will already be probed
+		 * (via ACPI) and registered, do not create new
+		 * ones */
+		subdev = atomisp_gmin_find_subdev(adapter, board_info);
+		ret = v4l2_device_register_subdev(&isp->v4l2_dev, subdev);
+		if (ret) {
+			dev_warn(isp->dev, "Subdev %s detection fail\n",
+				 board_info->type);
+			continue;
+		}
+#else
 		subdev = v4l2_i2c_new_subdev_board(&isp->v4l2_dev, adapter,
 				board_info, NULL);
+#endif
 
 		if (subdev == NULL) {
 			dev_warn(isp->dev, "Subdev %s detection fail\n",
@@ -745,8 +1003,7 @@ static int atomisp_subdev_probe(struct atomisp_device *isp)
 			isp->inputs[isp->input_cnt].type = subdevs->type;
 			isp->inputs[isp->input_cnt].port = subdevs->port;
 			isp->inputs[isp->input_cnt].camera = subdev;
-			isp->inputs[isp->input_cnt].shading_table = NULL;
-			isp->inputs[isp->input_cnt].morph_table = NULL;
+			isp->inputs[isp->input_cnt].sensor_index = 0;
 			/*
 			 * initialize the subdev frame size, then next we can
 			 * judge whether frame_size store effective value via
@@ -761,7 +1018,20 @@ static int atomisp_subdev_probe(struct atomisp_device *isp)
 			else
 				isp->inputs[isp->input_cnt].camera_caps =
 					atomisp_get_default_camera_caps();
+			sensor_num = isp->inputs[isp->input_cnt]
+				.camera_caps->sensor_num;
 			isp->input_cnt++;
+			for (i = 1; i < sensor_num; i++) {
+				if (isp->input_cnt >= ATOM_ISP_MAX_INPUTS) {
+					dev_warn(isp->dev,
+						"atomisp inputs out of range\n");
+					break;
+				}
+				isp->inputs[isp->input_cnt] =
+					isp->inputs[isp->input_cnt - 1];
+				isp->inputs[isp->input_cnt].sensor_index = i;
+				isp->input_cnt++;
+			}
 			break;
 		case CAMERA_MOTOR:
 			isp->motor = subdev;
@@ -789,10 +1059,7 @@ static int atomisp_subdev_probe(struct atomisp_device *isp)
 	if (!isp->inputs[0].camera)
 		dev_warn(isp->dev, "no camera attached or fail to detect\n");
 
-	if (IS_ISP24XX(isp))
-		return atomisp_csi_lane_config(isp);
-
-	return 0;
+	return atomisp_csi_lane_config(isp);
 }
 
 static void atomisp_unregister_entities(struct atomisp_device *isp)
@@ -928,8 +1195,6 @@ static int atomisp_register_entities(struct atomisp_device *isp)
 		"FILE_INPUT enable, camera_cnt: %d\n", isp->input_cnt);
 	isp->inputs[isp->input_cnt].type = FILE_INPUT;
 	isp->inputs[isp->input_cnt].port = -1;
-	isp->inputs[isp->input_cnt].shading_table = NULL;
-	isp->inputs[isp->input_cnt].morph_table = NULL;
 	isp->inputs[isp->input_cnt].camera_caps =
 		    atomisp_get_default_camera_caps();
 	isp->inputs[isp->input_cnt++].camera = &isp->file_dev.sd;
@@ -939,8 +1204,6 @@ static int atomisp_register_entities(struct atomisp_device *isp)
 			"TPG detected, camera_cnt: %d\n", isp->input_cnt);
 		isp->inputs[isp->input_cnt].type = TEST_PATTERN;
 		isp->inputs[isp->input_cnt].port = -1;
-		isp->inputs[isp->input_cnt].shading_table = NULL;
-		isp->inputs[isp->input_cnt].morph_table = NULL;
 		isp->inputs[isp->input_cnt].camera_caps =
 		    atomisp_get_default_camera_caps();
 		isp->inputs[isp->input_cnt++].camera = &isp->tpg.sd;
@@ -1032,8 +1295,15 @@ error_mipi_csi2:
 	return ret;
 }
 
-static const struct firmware *
-load_firmware(struct atomisp_device *isp)
+static void atomisp_uninitialize_modules(struct atomisp_device *isp)
+{
+	atomisp_tpg_cleanup(isp);
+	atomisp_file_input_cleanup(isp);
+	atomisp_mipi_csi2_cleanup(isp);
+}
+
+const struct firmware *
+atomisp_load_firmware(struct atomisp_device *isp)
 {
 	const struct firmware *fw;
 	int rc;
@@ -1090,8 +1360,6 @@ static bool is_valid_device(struct pci_dev *dev,
 
 	switch (id->device & ATOMISP_PCI_DEVICE_SOC_MASK) {
 	case ATOMISP_PCI_DEVICE_SOC_MRFLD:
-	case ATOMISP_PCI_DEVICE_SOC_MRFLD_1179:
-	case ATOMISP_PCI_DEVICE_SOC_MRFLD_117A:
 		a0_max_id = ATOMISP_PCI_REV_MRFLD_A0_MAX;
 		break;
 	case ATOMISP_PCI_DEVICE_SOC_BYT:
@@ -1108,11 +1376,13 @@ static bool is_valid_device(struct pci_dev *dev,
 #endif /* ISP2400 */
 }
 
-/* Declared in hmm.c. */
-extern bool atomisp_hmm_is_2400;
+static struct pci_driver atomisp_pci_driver;
 
 #define ATOM_ISP_PCI_BAR	0
 
+#ifdef CONFIG_GMIN_INTEL_MID
+extern int atomisp_punit_hpll_freq; /* atomisp_cmd.c */
+#endif
 static int atomisp_pci_probe(struct pci_dev *dev,
 				       const struct pci_device_id *id)
 {
@@ -1129,7 +1399,15 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 
 	if (!is_valid_device(dev, id))
 		return -ENODEV;
-
+#ifdef CONFIG_GMIN_INTEL_MID
+	/* HPLL frequency is known to be device-specific, but we don't
+	 * have specs yet for exactly how it varies.  Default to
+	 * BYT-CR but let provisioning set it via EFI variable */
+	atomisp_punit_hpll_freq = gmin_get_var_int(&dev->dev, "HpllFreq",
+			HPLL_FREQ_CR);
+	dev_info(&dev->dev, "ISP HPLL frequency base = %d MHz\n",
+			atomisp_punit_hpll_freq);
+#endif
 	/* Pointer to struct device. */
 	atomisp_dev = &dev->dev;
 
@@ -1176,52 +1454,58 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 		return -ENODEV;
 	}
 	isp->saved_regs.ispmmadr = start;
+    isp->xe_flash_pulse = 0;
+    isp->xe_flash_delay = 0;
+	rt_mutex_init(&isp->mutex);
+    mutex_init(&isp->streamoff_mutex);
+    spin_lock_init(&isp->lock);
 
-	mutex_init(&isp->mutex);
-	mutex_init(&isp->streamoff_mutex);
-	spin_lock_init(&isp->lock);
+    Xe_flash_userCtrl_class = class_create(THIS_MODULE, "Xe_flash_dev");
+    Xe_flash_register_ctrl_dev = device_create(Xe_flash_userCtrl_class, NULL, 0, "%s", "command");
+    device_create_file(Xe_flash_register_ctrl_dev, &dev_attr_app_interface_send_cmd);
+    device_create_file(Xe_flash_register_ctrl_dev, &dev_attr_app_interface_rcv_cmd);
+    device_create_file(Xe_flash_register_ctrl_dev, &dev_attr_send_cmd);
+    device_create_file(Xe_flash_register_ctrl_dev, &dev_attr_rcv_cmd);
+    device_create_file(Xe_flash_register_ctrl_dev, &dev_attr_debug_flag);
+    device_create_file(Xe_flash_register_ctrl_dev, &dev_attr_debug_delay);
+    device_create_file(Xe_flash_register_ctrl_dev, &dev_attr_debug_pulse);
 
-#ifndef CSS20
-	isp->media_dev.driver_version = ATOMISP_CSS_VERSION_15;
-#elif !defined(CSS21)
-	isp->media_dev.driver_version = ATOMISP_CSS_VERSION_20;
-#else
-	isp->media_dev.driver_version = ATOMISP_CSS_VERSION_21;
-#endif
+    isp->media_dev.driver_version = ATOMISP_CSS_VERSION_21;
 	switch (id->device & ATOMISP_PCI_DEVICE_SOC_MASK) {
 	case ATOMISP_PCI_DEVICE_SOC_MRFLD:
-	case ATOMISP_PCI_DEVICE_SOC_MRFLD_1179:
-	case ATOMISP_PCI_DEVICE_SOC_MRFLD_117A:
-	case ATOMISP_PCI_DEVICE_SOC_BYT:
 		isp->media_dev.hw_revision =
 			(ATOMISP_HW_REVISION_ISP2400
 			 << ATOMISP_HW_REVISION_SHIFT) |
-#ifdef ISP2400
-			ATOMISP_HW_STEPPING_A0;
-#else
 			ATOMISP_HW_STEPPING_B0;
-#endif
-		atomisp_hmm_is_2400 = true;
-		/*
-		 * for BYT/CHT we are put isp into D3cold to avoid pci registers access
-		 * in power off. Set d3cold_delay to 0 since default 100ms is not
-		 * necessary.
-		 */
-		isp->pdev->d3cold_delay = 0;
-		switch (id->device & ATOMISP_PCI_DEVICE_SOC_MASK) {
-			case ATOMISP_PCI_DEVICE_SOC_MRFLD:
-				isp->dfs = &dfs_config_merr;
-				break;
+
+		switch (id->device) {
 			case ATOMISP_PCI_DEVICE_SOC_MRFLD_1179:
 				isp->dfs = &dfs_config_merr_1179;
 				break;
 			case ATOMISP_PCI_DEVICE_SOC_MRFLD_117A:
 				isp->dfs = &dfs_config_merr_117a;
 				break;
-			case ATOMISP_PCI_DEVICE_SOC_BYT:
-				isp->dfs = &dfs_config_byt;
+			default:
+				isp->dfs = &dfs_config_merr;
 				break;
 		}
+		break;
+	case ATOMISP_PCI_DEVICE_SOC_BYT:
+		isp->media_dev.hw_revision =
+			(ATOMISP_HW_REVISION_ISP2400
+			 << ATOMISP_HW_REVISION_SHIFT) |
+			ATOMISP_HW_STEPPING_B0;
+		if (INTEL_MID_BOARD(3, TABLET, BYT, BLK, PRO, CRV2) ||
+				INTEL_MID_BOARD(3, TABLET, BYT, BLK, ENG, CRV2))
+			isp->dfs = &dfs_config_byt_cr;
+		else
+			isp->dfs = &dfs_config_byt;
+		/*
+		 * for BYT/CHT we are put isp into D3cold to avoid pci registers access
+		 * in power off. Set d3cold_delay to 0 since default 100ms is not
+		 * necessary.
+		 */
+		isp->pdev->d3cold_delay = 0;
 		break;
 	case ATOMISP_PCI_DEVICE_SOC_ANN:
 		isp->media_dev.hw_revision = (
@@ -1230,9 +1514,9 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 #else
 			 ATOMISP_HW_REVISION_ISP2401_LEGACY
 #endif
-			 << ATOMISP_HW_REVISION_SHIFT) |
-			ATOMISP_HW_STEPPING_A0;
-		atomisp_hmm_is_2400 = true;
+			 << ATOMISP_HW_REVISION_SHIFT);
+		isp->media_dev.hw_revision |= isp->pdev->revision < 2 ?
+			ATOMISP_HW_STEPPING_A0 : ATOMISP_HW_STEPPING_B0;
 		isp->dfs = &dfs_config_merr;
 		break;
 	case ATOMISP_PCI_DEVICE_SOC_CHT:
@@ -1242,22 +1526,20 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 #else
 			 ATOMISP_HW_REVISION_ISP2401_LEGACY
 #endif
-			 << ATOMISP_HW_REVISION_SHIFT) |
-			ATOMISP_HW_STEPPING_A0;
-		atomisp_hmm_is_2400 = true;
+			<< ATOMISP_HW_REVISION_SHIFT);
+		isp->media_dev.hw_revision |= isp->pdev->revision < 2 ?
+			 ATOMISP_HW_STEPPING_A0 : ATOMISP_HW_STEPPING_B0;
+
 		isp->dfs = &dfs_config_cht;
 		isp->pdev->d3cold_delay = 0;
 		break;
 	default:
-		/* Medfield and Clovertrail. */
-		isp->media_dev.hw_revision =
-			(ATOMISP_HW_REVISION_ISP2300
-			 << ATOMISP_HW_REVISION_SHIFT) |
-			(dev->revision < 0x09 ?
-			 ATOMISP_HW_STEPPING_A0 : ATOMISP_HW_STEPPING_B0);
+		dev_err(&dev->dev, "un-supported IUNIT device\n");
+		return -ENODEV;
 	}
 
 	isp->max_isr_latency = ATOMISP_MAX_ISR_LATENCY;
+#ifndef CONFIG_GMIN_INTEL_MID /* No spid in gmin, nor CLVT support */
 	if (pdata &&
 	    (pdata->spid->platform_family_id == INTEL_CLVTP_PHONE ||
 	     pdata->spid->platform_family_id == INTEL_CLVT_TABLET) &&
@@ -1265,12 +1547,21 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 		/* Workaround for Cloverview(+) older than stepping B0 */
 		isp->max_isr_latency = CSTATE_EXIT_LATENCY_C1;
 	}
+#endif
 
 	/* Load isp firmware from user space */
-	isp->firmware = load_firmware(isp);
-	if (!isp->firmware) {
-		err = -ENOENT;
-		goto load_fw_fail;
+	if (!defer_fw_load) {
+		isp->firmware = atomisp_load_firmware(isp);
+		if (!isp->firmware) {
+			err = -ENOENT;
+			goto load_fw_fail;
+		}
+
+		err = atomisp_css_check_firmware_version(isp);
+		if (err) {
+			dev_dbg(&dev->dev, "Firmware version check failed\n");
+			goto fw_validation_fail;
+		}
 	}
 
 	isp->wdt_work_queue = alloc_workqueue(isp->v4l2_dev.name, 0, 1);
@@ -1290,14 +1581,6 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 		goto enable_msi_fail;
 	}
 
-	err = devm_request_threaded_irq(&dev->dev, dev->irq,
-					atomisp_isr, atomisp_isr_thread,
-					IRQF_SHARED, "isp_irq", isp);
-	if (err) {
-		dev_err(&dev->dev, "Failed to request irq (%d)\n", err);
-		goto enable_msi_fail;
-	}
-
 	setup_timer(&isp->wdt, atomisp_wdt, (unsigned long)isp);
 
 	atomisp_msi_irq_init(isp, dev);
@@ -1305,16 +1588,14 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 	pm_qos_add_request(&isp->pm_qos, PM_QOS_CPU_DMA_LATENCY,
 			   PM_QOS_DEFAULT_VALUE);
 
-	if (IS_ISP24XX(isp)) {
-		/*
-		 * for MRFLD, Software/firmware needs to write a 1 to bit 0 of
-		 * the register at CSI_RECEIVER_SELECTION_REG to enable SH CSI
-		 * backend write 0 will enable Arasan CSI backend, which has
-		 * bugs(like sighting:4567697 and 4567699) and will be removed
-		 * in B0
-		 */
-		atomisp_store_uint32(MRFLD_CSI_RECEIVER_SELECTION_REG, 1);
-	}
+	/*
+	 * for MRFLD, Software/firmware needs to write a 1 to bit 0 of
+	 * the register at CSI_RECEIVER_SELECTION_REG to enable SH CSI
+	 * backend write 0 will enable Arasan CSI backend, which has
+	 * bugs(like sighting:4567697 and 4567699) and will be removed
+	 * in B0
+	 */
+	atomisp_store_uint32(MRFLD_CSI_RECEIVER_SELECTION_REG, 1);
 
 	if ((id->device & ATOMISP_PCI_DEVICE_SOC_MASK) ==
 			ATOMISP_PCI_DEVICE_SOC_MRFLD) {
@@ -1345,14 +1626,14 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 	err = atomisp_initialize_modules(isp);
 	if (err < 0) {
 		dev_err(&dev->dev, "atomisp_initialize_modules (%d)\n", err);
-		goto enable_msi_fail;
+		goto initialize_modules_fail;
 	}
 
 	err = atomisp_register_entities(isp);
 	if (err < 0) {
 		dev_err(&dev->dev, "atomisp_register_entities failed (%d)\n",
 			err);
-		goto enable_msi_fail;
+		goto register_entities_fail;
 	}
 	atomisp_acc_init(isp);
 
@@ -1362,39 +1643,65 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 	pm_runtime_put_noidle(&dev->dev);
 	pm_runtime_allow(&dev->dev);
 
+	hmm_init_mem_stat(repool_pgnr, dypool_enable, dypool_pgnr);
 	err = hmm_pool_register(repool_pgnr, HMM_POOL_TYPE_RESERVED);
-	if (err)
+	if (err) {
 		dev_err(&dev->dev, "Failed to register reserved memory pool.\n");
+		goto hmm_pool_fail;
+	}
 
-/*
- * In css1.5, we still do hmm_init and load_firmware when open camera, this
- * is beacuse ISP timeout will happen if put it here.
- */
-#ifdef CSS20
 	/* Init ISP memory management */
 	hrt_isp_css_mm_init();
 
-	/* Load firmware into ISP memory */
-	err = atomisp_css_load_firmware(isp);
+	err = devm_request_threaded_irq(&dev->dev, dev->irq,
+					atomisp_isr, atomisp_isr_thread,
+					IRQF_SHARED, "isp_irq", isp);
 	if (err) {
-		dev_err(&dev->dev, "Failed to init css.\n");
-		goto css_init_fail;
+		dev_err(&dev->dev, "Failed to request irq (%d)\n", err);
+		goto request_irq_fail;
 	}
-#endif /* CSS20 */
+
+	/* Load firmware into ISP memory */
+	if (!defer_fw_load) {
+		err = atomisp_css_load_firmware(isp);
+		if (err) {
+			dev_err(&dev->dev, "Failed to init css.\n");
+			goto css_init_fail;
+		}
+	} else {
+		dev_dbg(&dev->dev, "Skip css init.\n");
+	}
+	/* Clear FW image from memory */
+	release_firmware(isp->firmware);
+	isp->firmware = NULL;
+	isp->css_env.isp_css_fw.data = NULL;
+
+	atomisp_drvfs_init(&atomisp_pci_driver, isp);
 
 	return 0;
 
-#ifdef CSS20
 css_init_fail:
+	devm_free_irq(&dev->dev, dev->irq, isp);
+request_irq_fail:
 	hrt_isp_css_mm_clear();
 	hmm_pool_unregister(HMM_POOL_TYPE_RESERVED);
+hmm_pool_fail:
 	atomisp_acc_cleanup(isp);
-#endif /* CSS20 */
+	atomisp_unregister_entities(isp);
+register_entities_fail:
+	atomisp_uninitialize_modules(isp);
+initialize_modules_fail:
+	pm_qos_remove_request(&isp->pm_qos);
+	atomisp_msi_irq_uninit(isp, dev);
 enable_msi_fail:
 	destroy_workqueue(isp->wdt_work_queue);
 wdt_work_queue_fail:
+fw_validation_fail:
 	release_firmware(isp->firmware);
 load_fw_fail:
+#ifdef CONFIG_GMIN_INTEL_MID
+	pm_qos_remove_request(&isp->pm_qos);
+#endif
 	pci_dev_put(isp->pci_root);
 	return err;
 }
@@ -1404,11 +1711,12 @@ static void atomisp_pci_remove(struct pci_dev *dev)
 	struct atomisp_device *isp = (struct atomisp_device *)
 		pci_get_drvdata(dev);
 
+	atomisp_drvfs_exit();
+
 	atomisp_acc_cleanup(isp);
-#ifdef CSS20
+
 	atomisp_css_unload_firmware(isp);
 	hrt_isp_css_mm_clear();
-#endif /* CSS20 */
 
 	pm_runtime_forbid(&dev->dev);
 	pm_runtime_get_noresume(&dev->dev);
@@ -1428,19 +1736,7 @@ static void atomisp_pci_remove(struct pci_dev *dev)
 }
 
 static DEFINE_PCI_DEVICE_TABLE(atomisp_pci_tbl) = {
-#if defined(ISP2300)
-	/* Medfield */
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0148)},
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0149)},
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x014A)},
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x014B)},
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x014C)},
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x014D)},
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x014E)},
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x014F)},
-	/* Clovertrail */
-	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x08D0)},
-#elif defined(ISP2400) || defined(ISP2400B0)
+#if defined(ISP2400) || defined(ISP2400B0)
 	/* Merrifield */
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x1178)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x1179)},
@@ -1491,7 +1787,7 @@ static void __exit atomisp_exit(void)
 	pci_unregister_driver(&atomisp_pci_driver);
 }
 
-module_init(atomisp_init);
+late_initcall(atomisp_init);
 module_exit(atomisp_exit);
 
 MODULE_AUTHOR("Wen Wang <wen.w.wang@intel.com>");

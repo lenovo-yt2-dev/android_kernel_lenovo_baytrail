@@ -78,8 +78,9 @@ struct lss_definition {
 extern unsigned int enable_s3;
 extern unsigned int enable_s0ix;
 
-extern u32 __iomem *residency[];
-extern u32 __iomem *s0ix_counter[];
+extern u8 __iomem *s0ix_counters;
+extern int s0ix_counter_reg_map[];
+extern int s0ix_residency_reg_map[];
 
 #endif
 

@@ -40,6 +40,10 @@ static void i915_gem_object_flush_gtt_write_domain(struct drm_i915_gem_object *o
 static void i915_gem_object_flush_cpu_write_domain(struct drm_i915_gem_object *obj,
 						   bool force);
 static __must_check int
+i915_gem_object_wait_rendering(struct drm_i915_gem_object *obj,
+				bool readonly);
+
+static __must_check int
 i915_gem_object_bind_to_vm(struct drm_i915_gem_object *obj,
 			   struct i915_address_space *vm,
 			   unsigned alignment,
@@ -168,7 +172,7 @@ i915_gem_object_vmap(struct drm_i915_gem_object *obj)
 		i++;
 	}
 
-	addr = vmap(pages, i, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
+	addr = vmap(pages, i, VM_MAP, PAGE_KERNEL);
 	if (addr == NULL) {
 		DRM_ERROR("Failed to vmap pages\n");
 		goto finish;
@@ -360,6 +364,42 @@ __copy_from_user_swizzled(char *gpu_vaddr, int gpu_offset,
 	return 0;
 }
 
+/*
+ * Pins the specified object's pages and synchronizes the object with
+ * GPU accesses. Sets needs_clflush to non-zero if the caller should
+ * flush the object from the CPU cache.
+ */
+int i915_gem_obj_prepare_shmem_read(struct drm_i915_gem_object *obj,
+				    int *needs_clflush)
+{
+	int ret;
+
+	*needs_clflush = 0;
+
+	if (!obj || !obj->base.filp)
+		return -EINVAL;
+
+	if (!(obj->base.read_domains & I915_GEM_DOMAIN_CPU)) {
+		/* If we're not in the cpu read domain, set ourself into the gtt
+		 * read domain and manually flush cachelines (if required). This
+		 * optimizes for the case when the gpu will dirty the data
+		 * anyway again before the next pread happens. */
+		*needs_clflush = !cpu_cache_is_coherent(obj->base.dev,
+							obj->cache_level);
+		ret = i915_gem_object_wait_rendering(obj, true);
+		if (ret)
+			return ret;
+	}
+
+	ret = i915_gem_object_get_pages(obj);
+	if (ret)
+		return ret;
+
+	i915_gem_object_pin_pages(obj);
+
+	return ret;
+}
+
 /* Per-page copy function for the shmem pread fastpath.
  * Flushes invalid cachelines before reading the target if
  * needs_clflush is set. */
@@ -457,24 +497,9 @@ i915_gem_shmem_pread(struct drm_device *dev,
 
 	obj_do_bit17_swizzling = i915_gem_object_needs_bit17_swizzle(obj);
 
-	if (!(obj->base.read_domains & I915_GEM_DOMAIN_CPU)) {
-		/* If we're not in the cpu read domain, set ourself into the gtt
-		 * read domain and manually flush cachelines (if required). This
-		 * optimizes for the case when the gpu will dirty the data
-		 * anyway again before the next pread happens. */
-		needs_clflush = !cpu_cache_is_coherent(dev, obj->cache_level);
-		if (i915_gem_obj_bound_any(obj)) {
-			ret = i915_gem_object_set_to_gtt_domain(obj, false);
-			if (ret)
-				return ret;
-		}
-	}
-
-	ret = i915_gem_object_get_pages(obj);
+	ret = i915_gem_obj_prepare_shmem_read(obj, &needs_clflush);
 	if (ret)
 		return ret;
-
-	i915_gem_object_pin_pages(obj);
 
 	offset = args->offset;
 
@@ -1958,7 +1983,7 @@ i915_gem_object_shmem_preallocate(struct drm_i915_gem_object *obj)
 		}
 	} else {
 		DRM_DEBUG_DRIVER("Attempt to preallocate a non-shmem backed obj %p, size=%x, user_fb=%d, stolen=%p, vmap=%d\n",
-				obj, (u32)obj->base.size, obj->user_fb, obj->stolen,
+				obj, (unsigned int)obj->base.size, obj->user_fb, obj->stolen,
 				i915_gem_is_userptr_object(obj));
 		return;
 	}
@@ -1987,12 +2012,11 @@ i915_gem_object_shmem_preallocate(struct drm_i915_gem_object *obj)
 		page = shmem_read_mapping_page_gfp(mapping, i, gfp);
 		if (IS_ERR(page)) {
 			DRM_DEBUG_DRIVER("Failure for obj(%p) size(%x) at page(%d)\n",
-					obj, (u32)obj->base.size, i);
+					obj, (unsigned int)obj->base.size, i);
 			return;
 		}
 		/* Flush the cpu cache for the page now itself */
 		drm_clflush_pages(&page, 1);
-
 		/* Decrement the extra ref count on the returned page,
 		   otherwise when 'get_pages_gtt' will be called later on
 		   in the regular path, it will also increment the ref count,
@@ -2005,15 +2029,6 @@ i915_gem_object_shmem_preallocate(struct drm_i915_gem_object *obj)
 	 * flush later (under 'struct_mutex' lock), as the all pages
 	 * have been cache flushed.
 	 * Hope this is safe enough to be done here.
-	 * But can't think of a scenario where this could cause a problem.
-	 * When an object has been passed to execbuffer Ioctl, would there be
-	 * any other concurrent operation likely to be done on that object,
-	 * considering this object was having no backing physical store
-	 * allocated for it (hence will not have a mapping in GTT also or
-	 * will be a part of bound/unbound list, hence not visible to Gem
-	 * shrinker also). The same doubt is there for the other case
-	 * also when an object is being accessed through the mmap_gtt
-	 * interface, which resulted in a Page fault.
 	 */
 	obj->base.write_domain = 0;
 
@@ -2815,7 +2830,7 @@ i915_gem_wait_ioctl(struct drm_device *dev, void *data, struct drm_file *file)
 		goto out;
 
 	if (obj->active) {
-		seqno = obj->last_read_seqno;
+		seqno = (args->flags & I915_WAIT_WRITES) ? obj->last_write_seqno : obj->last_read_seqno;
 		ring = obj->ring;
 	}
 
@@ -2851,7 +2866,8 @@ out:
  * @obj: object which may be in use on another ring.
  * @to: ring we wish to use the object on. May be NULL.
  * @add_request: do we need to add a request to track operations
- *    submitted on ring with sync_to function
+ *    submitted on ring with sync_to function.
+ * @readonly: do we wait prior to performing a read-only operation.
  *
  * This code is meant to abstract object synchronization with the GPU.
  * Calling with NULL implies synchronizing the object with the CPU
@@ -2861,7 +2877,7 @@ out:
  */
 int
 i915_gem_object_sync(struct drm_i915_gem_object *obj,
-		     struct intel_ring_buffer *to, bool add_request)
+		     struct intel_ring_buffer *to, bool add_request, bool readonly)
 {
 	struct intel_ring_buffer *from = obj->ring;
 	u32 seqno;
@@ -2871,7 +2887,7 @@ i915_gem_object_sync(struct drm_i915_gem_object *obj,
 		return 0;
 
 	if (to == NULL || !i915_semaphore_is_enabled(obj->base.dev))
-		return i915_gem_object_wait_rendering(obj, false);
+		return i915_gem_object_wait_rendering(obj, readonly);
 
 	idx = intel_ring_sync_index(from, to);
 
@@ -3884,7 +3900,7 @@ i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 	int ret;
 
 	if (pipelined != obj->ring) {
-		ret = i915_gem_object_sync(obj, pipelined, true);
+		ret = i915_gem_object_sync(obj, pipelined, true, true);
 		if (ret)
 			return ret;
 	}
@@ -4351,7 +4367,7 @@ struct drm_i915_gem_object *i915_gem_alloc_object(struct drm_device *dev,
 	}
 
 	mask = GFP_HIGHUSER | __GFP_RECLAIMABLE;
-	if (IS_CRESTLINE(dev) || IS_BROADWATER(dev)) {
+	if (IS_CRESTLINE(dev) || IS_BROADWATER(dev) || IS_VALLEYVIEW(dev)) {
 		/* 965gm cannot relocate objects above 4GiB. */
 		mask &= ~__GFP_HIGHMEM;
 		mask |= __GFP_DMA32;

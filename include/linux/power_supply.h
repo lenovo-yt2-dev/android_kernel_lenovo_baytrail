@@ -183,6 +183,7 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_USB_CDP,	/* Charging Downstream Port */
 	POWER_SUPPLY_TYPE_USB_ACA,	/* Accessory Charger Adapters */
 	POWER_SUPPLY_TYPE_USB_HOST,	/* To support OTG devices */
+	POWER_SUPPLY_TYPE_OTG_DISABLE,	/* To OTG disable status for Blade2*/
 };
 
 enum power_supply_charger_event {
@@ -213,6 +214,7 @@ enum power_supply_charger_cable_type {
 	POWER_SUPPLY_CHARGER_TYPE_SE1 = 1 << 9,
 	POWER_SUPPLY_CHARGER_TYPE_MHL = 1 << 10,
 	POWER_SUPPLY_CHARGER_TYPE_B_DEVICE = 1 << 11,
+	POWER_SUPPLY_CHARGER_TYPE_USB_HCP = 1 << 12,
 };
 
 struct power_supply_cable_props {

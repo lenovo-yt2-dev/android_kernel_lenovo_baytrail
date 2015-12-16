@@ -21,12 +21,7 @@
 
 #include "fifo_monitor.h"
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stdbool.h>
-#endif
-
+#include <type_support.h>
 #include "device_access.h"
 
 #include <hrt/bits.h>

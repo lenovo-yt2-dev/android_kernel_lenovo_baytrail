@@ -66,7 +66,7 @@ struct sep_app_session;
  *
  * Returns Allocated queue object handle (DESC_Q_INVALID_HANDLE for failure)
  */
-void *desc_q_create(int qid, struct queue_drvdata *drvdata);
+void *desc_q_create(int qid, struct queue_drvdata *drvdata, int state);
 
 /**
  * desc_q_destroy() - Destroy descriptors queue object (free resources)
@@ -80,6 +80,12 @@ void desc_q_destroy(void *q_h);
  * @state:	The requested state
  */
 int desc_q_set_state(void *q_h, enum desc_q_state state);
+
+/**
+ * desc_q_cntr_set() - Set counters for  queue
+ * @q_h:	The queue object handle
+ */
+int desc_q_cntr_set(void *q_h);
 
 /**
  * desc_q_get_state() - Get queue state
@@ -249,5 +255,28 @@ void desc_q_pack_app_req_desc(struct sep_sw_desc *desc_p,
  * \return A string description of the processing mode
  */
 const char *crypto_proc_mode_to_str(enum sep_proc_mode proc_mode);
+
+inline u32 add_cookie(uintptr_t op_ctx);
+
+inline void delete_cookie(u32 index);
+
+inline void delete_context(uintptr_t op_ctx);
+
+inline uintptr_t get_cookie(u32 index);
+
+#define SEP_SW_DESC_GET_COOKIE(desc_p)\
+	((struct sep_op_ctx *)get_cookie(((u32 *)desc_p)[SEP_SW_DESC_COOKIE_WORD_OFFSET]))
+
+#define SEP_SW_DESC_SET_COOKIE(desc_p, op_ctx) \
+do {\
+	u32 __ctx_ptr__ = 0;\
+	if (op_ctx == NULL) {\
+		delete_cookie(((u32 *)desc_p)[SEP_SW_DESC_COOKIE_WORD_OFFSET]);\
+	} else {\
+		__ctx_ptr__ = add_cookie((uintptr_t)op_ctx);\
+	} \
+	memcpy(((u32 *)desc_p) + SEP_SW_DESC_COOKIE_WORD_OFFSET,\
+	&__ctx_ptr__, sizeof(u32));\
+} while (0)
 
 #endif /*_DESC_MGR_H_*/

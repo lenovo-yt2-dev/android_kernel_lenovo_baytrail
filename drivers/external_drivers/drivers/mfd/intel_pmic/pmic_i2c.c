@@ -22,17 +22,48 @@
 #include <linux/mfd/intel_mid_pmic.h>
 #include <linux/version.h>
 #include "./pmic.h"
+#include <linux/acpi_gpio.h>
 
 static struct i2c_client *pmic_i2c_client;
 static struct intel_mid_pmic *pmic_i2c;
 
+#define I2C_ADDR_MASK		0xFF00
+#define I2C_ADDR_SHIFT		8
+#define I2C_REG_MASK		0xFF
+
+static int pmic_i2c_read_multi_byte(int reg, u8 len, u8 *buf)
+{
+	return i2c_smbus_read_i2c_block_data(pmic_i2c_client, reg, len, buf);
+}
+
+static int pmic_i2c_write_multi_byte(int reg, u8 len, u8 *buf)
+{
+	return i2c_smbus_write_i2c_block_data(pmic_i2c_client, reg, len, buf);
+}
+
 static int pmic_i2c_readb(int reg)
 {
+
+	if (reg & I2C_ADDR_MASK)
+		pmic_i2c_client->addr = (reg & I2C_ADDR_MASK)
+						>> I2C_ADDR_SHIFT;
+	else
+		pmic_i2c_client->addr = pmic_i2c->default_client;
+
+	reg &= I2C_REG_MASK;
 	return i2c_smbus_read_byte_data(pmic_i2c_client, reg);
 }
 
 static int pmic_i2c_writeb(int reg, u8 val)
 {
+
+	if (reg & I2C_ADDR_MASK)
+		pmic_i2c_client->addr = (reg & I2C_ADDR_MASK)
+						>> I2C_ADDR_SHIFT;
+	else
+		pmic_i2c_client->addr = pmic_i2c->default_client;
+
+	reg &= I2C_REG_MASK;
 	return i2c_smbus_write_byte_data(pmic_i2c_client, reg, val);
 }
 
@@ -68,8 +99,12 @@ static int pmic_i2c_probe(struct i2c_client *i2c,
 	pmic_i2c_client	= i2c;
 	pmic_i2c->dev	= &i2c->dev;
 	pmic_i2c->irq	= i2c->irq;
+	pmic_i2c->default_client = i2c->addr;
+	pmic_i2c->pmic_int_gpio = acpi_get_gpio_by_index(pmic_i2c->dev, 0, NULL);
 	pmic_i2c->readb	= pmic_i2c_readb;
 	pmic_i2c->writeb= pmic_i2c_writeb;
+	pmic_i2c->readmul = pmic_i2c_read_multi_byte;
+	pmic_i2c->writemul = pmic_i2c_write_multi_byte;
 	return intel_pmic_add(pmic_i2c);
 }
 
@@ -91,6 +126,11 @@ static const struct i2c_device_id pmic_i2c_id[] = {
 	{ "INT33F4", (kernel_ulong_t)&dollar_cove_pmic},
 	{ "INT33F4:00", (kernel_ulong_t)&dollar_cove_pmic},
 	{ "dollar_cove", (kernel_ulong_t)&dollar_cove_pmic},
+	{ "INT33F5", (kernel_ulong_t)&dollar_cove_ti_pmic},
+	{ "INT33F5:00", (kernel_ulong_t)&dollar_cove_ti_pmic},
+	{ "whiskey_cove", (kernel_ulong_t)&whiskey_cove_pmic},
+	{ "INT33FE", (kernel_ulong_t)&whiskey_cove_pmic},
+	{ "INT33FE:00", (kernel_ulong_t)&whiskey_cove_pmic},
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, pmic_i2c_id);
@@ -99,6 +139,8 @@ static struct acpi_device_id pmic_acpi_match[] = {
 	{ "TEST0001", (kernel_ulong_t)&crystal_cove_pmic},
 	{ "INT33FD", (kernel_ulong_t)&crystal_cove_pmic},
 	{ "INT33F4", (kernel_ulong_t)&dollar_cove_pmic},
+	{ "INT33F5", (kernel_ulong_t)&dollar_cove_ti_pmic},
+	{ "INT33FE", (kernel_ulong_t)&whiskey_cove_pmic},
 	{ },
 };
 MODULE_DEVICE_TABLE(acpi, pmic_acpi_match);

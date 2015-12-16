@@ -33,11 +33,13 @@ static inline int fsa_dummy_sdp_post_setup(void)
 {
 	return 0;
 }
-
+//liulc1 modify
+#if 0
 static struct i2c_board_info __initdata fsa9285_i2c_device = {
-	I2C_BOARD_INFO("fsa9285", 0x25),
+	I2C_BOARD_INFO("lc824206", 0x48),
 };
-
+#endif
+//liulc1 end
 void *fsa9285_platform_data(void)
 {
 	int ret = 0;
@@ -51,8 +53,8 @@ void *fsa9285_platform_data(void)
 		INTEL_MID_BOARD(3, TABLET, BYT, BLK, ENG, 8PR1)) {
 
 		/* Get SMB347 platform data for BYT-FFRD8 PR0/PR1 targets */
-		fsa_pdata.sdp_pre_setup = smb347_disable_charger;
-		fsa_pdata.sdp_post_setup = smb347_enable_charger;
+		//fsa_pdata.sdp_pre_setup = smb347_disable_charger;  //liulc1  modify
+		//fsa_pdata.sdp_post_setup = smb347_enable_charger;  //liulc1  modify
 	} else {
 		/* Else consider dummy data */
 		fsa_pdata.sdp_pre_setup = fsa_dummy_sdp_pre_setup;

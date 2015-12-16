@@ -350,6 +350,9 @@ int sensor_hub_input_get_attribute_info(struct hid_sensor_hub_device *hsdev,
 		}
 	}
 
+	if (info->units == 0)
+		info->units = HID_USAGE_SENSOR_UNITS_MILLISECOND;
+
 err_ret:
 	return ret;
 }
@@ -467,8 +470,22 @@ static int sensor_hub_raw_event(struct hid_device *hdev,
 	return 1;
 }
 
-static int sensor_hub_probe(struct hid_device *hdev,
-				const struct hid_device_id *id)
+static bool is_supported(int physical)
+{
+	if (physical == 0x200073)
+		return true;
+	if (physical == 0x200041)
+		return true;
+	if (physical == 0x200076)
+		return true;
+	if (physical == 0x200083)
+		return true;
+
+	return false;
+}
+
+
+static int sensor_hub_probe(struct hid_device *hdev,  const struct hid_device_id *id)
 {
 	int ret;
 	struct sensor_hub_data *sd;
@@ -525,6 +542,16 @@ static int sensor_hub_probe(struct hid_device *hdev,
 		ret = -EINVAL;
 		goto err_close;
 	}
+
+	/* filter the unknown sensors */
+	list_for_each_entry(report, &report_enum->report_list, list) {
+		field = report->field[0];
+		if (report->maxfield && field && field->physical) {
+			if (!is_supported(field->physical))
+				dev_cnt--;
+		}
+	}
+
 	sd->hid_sensor_hub_client_devs = kzalloc(dev_cnt *
 						sizeof(struct mfd_cell),
 						GFP_KERNEL);
@@ -536,8 +563,7 @@ static int sensor_hub_probe(struct hid_device *hdev,
 	list_for_each_entry(report, &report_enum->report_list, list) {
 		hid_dbg(hdev, "Report id:%x\n", report->id);
 		field = report->field[0];
-		if (report->maxfield && field &&
-					field->physical) {
+		if (report->maxfield && field && field->physical && is_supported(field->physical)) {
 			name = kasprintf(GFP_KERNEL, "HID-SENSOR-%x",
 						field->physical);
 			if (name  == NULL) {

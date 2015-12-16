@@ -32,16 +32,6 @@
 #define DEVICE_NAME "modem_control"
 #define DRVNAME "mdm_ctrl"
 
-/* Supported Modem IDs*/
-enum {
-	MODEM_UNSUP,
-	MODEM_6260,
-	MODEM_6268,
-	MODEM_6360,
-	MODEM_7160,
-	MODEM_7260
-};
-
 /* Supported PMIC IDs*/
 enum {
 	PMIC_UNSUP,
@@ -64,20 +54,13 @@ enum {
 	CPU_CHERRYVIEW
 };
 
-/* Configuration types */
-enum {
-	CONF_UNSUP,
-	XMM_CONF_GENERIC,
-	XMM_CONF_M2
-};
-
 struct mdm_ops {
 	int	(*init) (void *data);
 	int	(*cleanup) (void *data);
 	int	(*get_cflash_delay) (void *data);
 	int	(*get_wflash_delay) (void *data);
-	int	(*power_on) (void *data, int gpio_rst, int gpio_pwr);
-	int	(*power_off) (void *data, int gpio_rst);
+	int	(*power_on) (void *data);
+	int	(*power_off) (void *data);
 	int	(*warm_reset) (void *data, int gpio_rst);
 };
 
@@ -89,6 +72,7 @@ struct cpu_ops {
 	int	(*get_irq_rst) (void *data);
 	int	(*get_gpio_rst) (void *data);
 	int	(*get_gpio_pwr) (void *data);
+	int	(*get_gpio_on) (void *data);
 };
 
 struct pmic_ops {
@@ -116,8 +100,13 @@ struct mcd_base_info {
 	struct	pmic_ops pmic;
 	void	*pmic_data;
 
-	/* conf info */
-	int		conf_type;
+	/* board type */
+	int		board_type;
+
+	/* power on type */
+	int		pwr_on_ctrl;
+	/* usb hub cotrol */
+	int		usb_hub_ctrl;
 };
 
 struct sfi_to_mdm {
@@ -128,15 +117,21 @@ struct sfi_to_mdm {
 /* GPIO names */
 #define GPIO_RST_OUT	"ifx_mdm_rst_out"
 #define GPIO_PWR_ON	"ifx_mdm_pwr_on"
+#define GPIO_PWR_ON_2	"xenon_trigger"
 #define GPIO_RST_BBN	"ifx_mdm_rst_pmu"
 #define GPIO_CDUMP	"modem-gpio2"
 #define GPIO_CDUMP_MRFL	"MODEM_CORE_DUMP"
+#define GPIO_ON_KEY	"camera_1_power"	/* @TODO: rename to adapt to the GPIO function */
 
 /* Retrieve modem parameters on ACPI framework */
 int retrieve_modem_platform_data(struct platform_device *pdev);
+int get_nb_mdms(void);
 
 int mcd_register_mdm_info(struct mcd_base_info *info,
 			  struct platform_device *pdev);
+
+void mcd_set_mdm(struct mcd_base_info *info, int mdm_ver);
+int mcd_finalize_cpu_data(struct mcd_base_info *mcd_reg_info);
 
 /* struct mcd_cpu_data
  * @gpio_rst_out: Reset out gpio (self reset indicator)
@@ -147,6 +142,8 @@ int mcd_register_mdm_info(struct mcd_base_info *info,
  * @irq_reset: RST_BB_N irq
  */
 struct mdm_ctrl_cpu_data {
+	int		entries[4];
+
 	/* GPIOs */
 	char	*gpio_rst_out_name;
 	int		gpio_rst_out;
@@ -156,9 +153,13 @@ struct mdm_ctrl_cpu_data {
 	int		gpio_rst_bbn;
 	char	*gpio_cdump_name;
 	int		 gpio_cdump;
+	char	*gpio_on_key_name;
+	int		gpio_on_key;
 	char	*gpio_wwan_disable_name;
-	int		gpio_wwan_disable;
 	char	*gpio_wake_on_wwan_name;
+
+	/* NGFF specific */
+	int		gpio_wwan_disable;
 	int		gpio_wake_on_wwan;
 
 	/* IRQs */

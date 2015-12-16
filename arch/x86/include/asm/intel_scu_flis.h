@@ -7,7 +7,7 @@ enum flis_param_t {
 	OPEN_DRAIN,
 };
 
-#ifndef CONFIG_X86_MRFLD
+#ifdef CONFIG_X86_CTP
 /* For CTP */
 /*
  * Config value for PULL
@@ -44,7 +44,7 @@ enum flis_param_t {
 #define OPEN_DRAIN_MASK		0x1
 
 #else
-/* For MERR */
+/* For MERR & MOFD */
 
 #define PULL_MASK	((7 << 4) | (3 << 8))
 #define MUX_MASK	(0xF << 12)
@@ -57,6 +57,7 @@ enum flis_param_t {
 #define R50Kohms	(2 << 4)
 #define R910ohms	(3 << 4)
 
+#define NONE		(0 << 8)
 #define UP_2K		(PULL_UP | R2Kohms)
 #define UP_20K		(PULL_UP | R20Kohms)
 #define UP_50K		(PULL_UP | R50Kohms)
@@ -534,6 +535,278 @@ enum tng_pinname_t {
 	TNG_PIN_NUM,
 };
 
+/* If the same pin exists on TNG, use the same value as TNG,
+ * if the pin is new on ANN, allocate one value, starts from TNG_PIN_NUM.
+ */
+enum ann_pinname_t {
+	/* gpioclk */
+	ann_gp_clkph_0 = tng_gp_clkph_0,
+	ann_gp_clkph_1 = tng_gp_clkph_1,
+	ann_gp_clkph_2 = tng_gp_clkph_2,
+	ann_gp_clkph_3 = tng_gp_clkph_3,
+	ann_gp_clkph_4 = tng_gp_clkph_4,
+	ann_gp_clkph_5 = tng_gp_clkph_5,
+	ann_gp_clkph_6 = 232,
+	ann_osc_clk_ctrl_0 = tng_osc_clk_ctrl_0,
+	ann_osc_clk_ctrl_1 = tng_osc_clk_ctrl_1,
+	ann_osc_clk_out_0 = tng_osc_clk_out_0,
+	ann_osc_clk_out_1 = tng_osc_clk_out_1,
+	ann_osc_clk_out_2 = tng_osc_clk_out_2,
+	ann_osc_clk_out_3 = tng_osc_clk_out_3,
+	ann_osc_clk_out_4 = tng_osc_clk_out_4,
+
+	/* gpiocsb */
+	ann_gp_camerasb_0 = tng_gp_camerasb_0,
+	ann_gp_camerasb_1 = tng_gp_camerasb_1,
+	ann_gp_camerasb_2 = tng_gp_camerasb_2,
+	ann_gp_camerasb_3 = tng_gp_camerasb_3,
+	ann_gp_camerasb_4 = tng_gp_camerasb_4,
+	ann_gp_camerasb_5 = tng_gp_camerasb_5,
+	ann_gp_camerasb_6 = tng_gp_camerasb_6,
+	ann_gp_camerasb_7 = tng_gp_camerasb_7,
+	ann_gp_camerasb_8 = tng_gp_camerasb_8,
+	ann_gp_camerasb_9 = tng_gp_camerasb_9,
+	ann_gp_camerasb_10 = tng_gp_camerasb_10,
+	ann_gp_camerasb_11 = tng_gp_camerasb_11,
+	ann_gp_hdmi_hpd = tng_gp_hdmi_hpd,
+	ann_gp_intd_dsi_te1 = tng_gp_intd_dsi_te1,
+	ann_gp_intd_dsi_te2 = tng_gp_intd_dsi_te2,
+
+	/* gpioemmc */
+	ann_emmc_0_clk = tng_emmc_0_clk,
+	ann_emmc_0_cmd = tng_emmc_0_cmd,
+	ann_emmc_0_d_0 = tng_emmc_0_d_0,
+	ann_emmc_0_d_1 = tng_emmc_0_d_1,
+	ann_emmc_0_d_2 = tng_emmc_0_d_2,
+	ann_emmc_0_d_3 = tng_emmc_0_d_3,
+	ann_emmc_0_d_4 = tng_emmc_0_d_4,
+	ann_emmc_0_d_5 = tng_emmc_0_d_5,
+	ann_emmc_0_d_6 = tng_emmc_0_d_6,
+	ann_emmc_0_d_7 = tng_emmc_0_d_7,
+	ann_emmc_0_rst_b = tng_emmc_0_rst_b,
+	ann_emmc_0_rclk = 233,
+
+	/* gpiogpio */
+	ann_gp_12 = tng_gp_12,
+	ann_gp_13 = tng_gp_13,
+	ann_gp_14 = tng_gp_14,
+	ann_gp_15 = tng_gp_15,
+	ann_gp_16 = tng_gp_16,
+	ann_gp_17 = tng_gp_17,
+	ann_gp_18 = tng_gp_18,
+	ann_gp_19 = tng_gp_19,
+	ann_gp_20 = tng_gp_20,
+	ann_gp_21 = tng_gp_21,
+	ann_gp_22 = tng_gp_22,
+	ann_gp_23 = tng_gp_23,
+	ann_gp_24 = tng_gp_24,
+	ann_gp_25 = tng_gp_25,
+	ann_gp_26 = tng_gp_26,
+	ann_gp_27 = tng_gp_27,
+	ann_gp_28 = tng_gp_28,
+	ann_gp_29 = tng_gp_29,
+	ann_gp_30 = 234,
+	ann_gp_31 = 235,
+
+	/* gpiohsi */
+	ann_mhsi_acdata = tng_mhsi_acdata,
+	ann_mhsi_acflag = tng_mhsi_acflag,
+	ann_mhsi_acready = tng_mhsi_acready,
+	ann_mhsi_acwake = tng_mhsi_acwake,
+	ann_mhsi_cadata = tng_mhsi_cadata,
+	ann_mhsi_caflag = tng_mhsi_caflag,
+	ann_mhsi_caready = tng_mhsi_caready,
+	ann_mhsi_cawake = tng_mhsi_cawake,
+
+	/* gpioi2c */
+	ann_i2c_0_scl = tng_i2c_0_scl,
+	ann_i2c_0_sda = tng_i2c_0_sda,
+	ann_gp_i2c_1_scl = tng_gp_i2c_1_scl,
+	ann_gp_i2c_1_sda = tng_gp_i2c_1_sda,
+	ann_gp_i2c_2_scl = tng_gp_i2c_2_scl,
+	ann_gp_i2c_2_sda = tng_gp_i2c_2_sda,
+	ann_gp_i2c_3_scl = tng_gp_i2c_3_scl,
+	ann_gp_i2c_3_sda = tng_gp_i2c_3_sda,
+	ann_gp_i2c_4_scl = tng_gp_i2c_4_scl,
+	ann_gp_i2c_4_sda = tng_gp_i2c_4_sda,
+	ann_gp_i2c_5_scl = tng_gp_i2c_5_scl,
+	ann_gp_i2c_5_sda = tng_gp_i2c_5_sda,
+	ann_gp_i2c_6_scl = tng_gp_i2c_6_scl,
+	ann_gp_i2c_6_sda = tng_gp_i2c_6_sda,
+	ann_gp_i2c_7_scl = tng_gp_i2c_7_scl,
+	ann_gp_i2c_7_sda = tng_gp_i2c_7_sda,
+	ann_i2c_8_scl = 236,
+	ann_i2c_8_sda = 237,
+	ann_i2c_9_scl = 238,
+	ann_i2c_9_sda = 239,
+
+	/* gpiokbd */
+	ann_gp_kbd_dkin_0 = tng_gp_kbd_dkin_0,
+	ann_gp_kbd_dkin_1 = tng_gp_kbd_dkin_1,
+	ann_gp_kbd_dkin_2 = tng_gp_kbd_dkin_2,
+	ann_gp_kbd_dkin_3 = tng_gp_kbd_dkin_3,
+	ann_gp_kbd_mkin_0 = tng_gp_kbd_mkin_0,
+	ann_gp_kbd_mkin_1 = tng_gp_kbd_mkin_1,
+	ann_gp_kbd_mkin_2 = tng_gp_kbd_mkin_2,
+	ann_gp_kbd_mkin_3 = tng_gp_kbd_mkin_3,
+	ann_gp_kbd_mkin_4 = tng_gp_kbd_mkin_4,
+	ann_gp_kbd_mkin_5 = tng_gp_kbd_mkin_5,
+	ann_gp_kbd_mkin_6 = tng_gp_kbd_mkin_6,
+	ann_gp_kbd_mkin_7 = tng_gp_kbd_mkin_7,
+	ann_gp_kbd_mkout_0 = tng_gp_kbd_mkout_0,
+	ann_gp_kbd_mkout_1 = tng_gp_kbd_mkout_1,
+	ann_gp_kbd_mkout_2 = tng_gp_kbd_mkout_2,
+	ann_gp_kbd_mkout_3 = tng_gp_kbd_mkout_3,
+	ann_gp_kbd_mkout_4 = tng_gp_kbd_mkout_4,
+	ann_gp_kbd_mkout_5 = tng_gp_kbd_mkout_5,
+	ann_gp_kbd_mkout_6 = tng_gp_kbd_mkout_6,
+	ann_gp_kbd_mkout_7 = tng_gp_kbd_mkout_7,
+
+	/* gpiopmic */
+	ann_prochot_b = tng_prochot_b,
+	ann_resetout_b = tng_resetout_b,
+	ann_rtc_clk = tng_rtc_clk,
+	ann_standby = tng_standby,
+	ann_svid_alert_b = 240,
+	ann_svid_vclk = tng_svid_vclk,
+	ann_svid_vdio = tng_svid_vdio,
+	ann_thermtrip_b = tng_thermtrip_b,
+	ann_xxpmode = tng_xxpmode,
+	ann_xxprdy = tng_xxprdy,
+	ann_xxpreq_b = tng_xxpreq_b,
+	ann_gp_fast_int_0 = tng_gp_fast_int_0,
+	ann_gp_fast_int_1 = tng_gp_fast_int_1,
+	ann_gp_fast_int_2 = tng_gp_fast_int_2,
+	ann_gp_fast_int_3 = tng_gp_fast_int_3,
+
+	/* gpiopti */
+	ann_gp_mpti_clk = tng_gp_mpti_clk,
+	ann_gp_mpti_data_0 = tng_gp_mpti_data_0,
+	ann_gp_mpti_data_1 = tng_gp_mpti_data_1,
+	ann_gp_mpti_data_2 = tng_gp_mpti_data_2,
+	ann_gp_mpti_data_3 = tng_gp_mpti_data_3,
+	ann_gp_0 = tng_gp_0,
+	ann_gp_1 = tng_gp_1,
+	ann_gp_2 = tng_gp_2,
+	ann_gp_3 = tng_gp_3,
+	ann_gp_4 = tng_gp_4,
+	ann_gp_5 = tng_gp_5,
+	ann_gp_6 = tng_gp_6,
+	ann_gp_7 = tng_gp_7,
+	ann_gp_8 = tng_gp_8,
+	ann_gp_9 = tng_gp_9,
+	ann_gp_10 = tng_gp_10,
+	ann_gp_11 = tng_gp_11,
+	ann_jtag_tckc = tng_jtag_tckc,
+	ann_jtag_tdic = tng_jtag_tdic,
+	ann_jtag_tdoc = tng_jtag_tdoc,
+	ann_jtag_tmsc = tng_jtag_tmsc,
+	ann_jtag_trst_b = tng_jtag_trst_b,
+
+	/* gpiosdio */
+	ann_gp_sdio_0_cd_b = tng_gp_sdio_0_cd_b,
+	ann_gp_sdio_0_clk = tng_gp_sdio_0_clk,
+	ann_gp_sdio_0_cmd = tng_gp_sdio_0_cmd,
+	ann_gp_sdio_0_dat_0 = tng_gp_sdio_0_dat_0,
+	ann_gp_sdio_0_dat_1 = tng_gp_sdio_0_dat_1,
+	ann_gp_sdio_0_dat_2 = tng_gp_sdio_0_dat_2,
+	ann_gp_sdio_0_dat_3 = tng_gp_sdio_0_dat_3,
+	ann_gp_sdio_0_lvl_clk_fb = tng_gp_sdio_0_lvl_clk_fb,
+	ann_gp_sdio_0_lvl_cmd_dir = tng_gp_sdio_0_lvl_cmd_dir,
+	ann_gp_sdio_0_lvl_dat_dir = tng_gp_sdio_0_lvl_dat_dir,
+	ann_gp_sdio_0_lvl_sel = tng_gp_sdio_0_lvl_sel,
+	ann_gp_sdio_0_powerdown_b = tng_gp_sdio_0_powerdown_b,
+	ann_gp_sdio_0_wp = tng_gp_sdio_0_wp,
+	ann_gp_sdio_1_clk = tng_gp_sdio_1_clk,
+	ann_gp_sdio_1_cmd = tng_gp_sdio_1_cmd,
+	ann_gp_sdio_1_dat_0 = tng_gp_sdio_1_dat_0,
+	ann_gp_sdio_1_dat_1 = tng_gp_sdio_1_dat_1,
+	ann_gp_sdio_1_dat_2 = tng_gp_sdio_1_dat_2,
+	ann_gp_sdio_1_dat_3 = tng_gp_sdio_1_dat_3,
+	ann_gp_sdio_1_powerdown_b = tng_gp_sdio_1_powerdown_b,
+
+	/* gpiossp */
+	ann_gp_ssp_3_clk = tng_gp_ssp_3_clk,
+	ann_gp_ssp_3_fs = tng_gp_ssp_3_fs,
+	ann_gp_ssp_3_rxd = tng_gp_ssp_3_rxd,
+	ann_gp_ssp_3_txd = tng_gp_ssp_3_txd,
+	ann_gp_ssp_4_clk = tng_gp_ssp_4_clk,
+	ann_gp_ssp_4_fs_0 = tng_gp_ssp_4_fs_0,
+	ann_gp_ssp_4_fs_1 = tng_gp_ssp_4_fs_1,
+	ann_gp_ssp_4_fs_2 = tng_gp_ssp_4_fs_2,
+	ann_gp_ssp_4_fs_3 = tng_gp_ssp_4_fs_3,
+	ann_gp_ssp_4_rxd = tng_gp_ssp_4_rxd,
+	ann_gp_ssp_4_txd = tng_gp_ssp_4_txd,
+	ann_gp_ssp_5_clk = tng_gp_ssp_5_clk,
+	ann_gp_ssp_5_fs_0 = tng_gp_ssp_5_fs_0,
+	ann_gp_ssp_5_fs_1 = tng_gp_ssp_5_fs_1,
+	ann_gp_ssp_5_fs_2 = tng_gp_ssp_5_fs_2,
+	ann_gp_ssp_5_fs_3 = tng_gp_ssp_5_fs_3,
+	ann_gp_ssp_5_rxd = tng_gp_ssp_5_rxd,
+	ann_gp_ssp_5_txd = tng_gp_ssp_5_txd,
+	ann_gp_ssp_6_clk = tng_gp_ssp_6_clk,
+	ann_gp_ssp_6_fs = tng_gp_ssp_6_fs,
+	ann_gp_ssp_6_rxd = tng_gp_ssp_6_rxd,
+	ann_gp_ssp_6_txd = tng_gp_ssp_6_txd,
+
+	/* gpiosspa */
+	ann_gp_mslim_0_bclk = tng_gp_mslim_0_bclk,
+	ann_gp_mslim_0_bdat = tng_gp_mslim_0_bdat,
+	ann_gp_ssp_0_clk = tng_gp_ssp_0_clk,
+	ann_gp_ssp_0_fs = tng_gp_ssp_0_fs,
+	ann_gp_ssp_0_rxd = tng_gp_ssp_0_rxd,
+	ann_gp_ssp_0_txd = tng_gp_ssp_0_txd,
+	ann_gp_ssp_1_clk = tng_gp_ssp_1_clk,
+	ann_gp_ssp_1_fs = tng_gp_ssp_1_fs,
+	ann_gp_ssp_1_rxd = tng_gp_ssp_1_rxd,
+	ann_gp_ssp_1_txd = tng_gp_ssp_1_txd,
+	ann_gp_ssp_2_clk = tng_gp_ssp_2_clk,
+	ann_gp_ssp_2_fs = tng_gp_ssp_2_fs,
+	ann_gp_ssp_2_rxd = tng_gp_ssp_2_rxd,
+	ann_gp_ssp_2_txd = tng_gp_ssp_2_txd,
+
+	/* gpiouart */
+	ann_gp_uart_0_cts = tng_gp_uart_0_cts,
+	ann_gp_uart_0_rts = tng_gp_uart_0_rts,
+	ann_gp_uart_0_rx = tng_gp_uart_0_rx,
+	ann_gp_uart_0_tx = tng_gp_uart_0_tx,
+	ann_gp_uart_1_cts = tng_gp_uart_1_cts,
+	ann_gp_uart_1_rts = tng_gp_uart_1_rts,
+	ann_gp_uart_1_rx = tng_gp_uart_1_rx,
+	ann_gp_uart_1_tx = tng_gp_uart_1_tx,
+	ann_gp_uart_2_cts = tng_gp_uart_2_cts,
+	ann_gp_uart_2_rts = tng_gp_uart_2_rts,
+	ann_gp_uart_2_rx = tng_gp_uart_2_rx,
+	ann_gp_uart_2_tx = tng_gp_uart_2_tx,
+	ann_gp_32 = 241,
+	ann_gp_33 = 242,
+	ann_gp_34 = 243,
+	ann_gp_35 = 244,
+	ann_gp_36 = 245,
+	ann_gp_37 = 246,
+	ann_gp_38 = 247,
+	ann_gp_39 = 248,
+	ann_gp_40 = 249,
+	ann_gp_pwm_0 = tng_gp_pwm_0,
+	ann_gp_pwm_1 = tng_gp_pwm_1,
+
+	/* gpioulpi */
+	ann_gp_ulpi_0_clk = tng_usb_ulpi_0_clk,
+	ann_gp_ulpi_0_data_0 = tng_usb_ulpi_0_data_0,
+	ann_gp_ulpi_0_data_1 = tng_usb_ulpi_0_data_1,
+	ann_gp_ulpi_0_data_2 = tng_usb_ulpi_0_data_2,
+	ann_gp_ulpi_0_data_3 = tng_usb_ulpi_0_data_3,
+	ann_gp_ulpi_0_data_4 = tng_usb_ulpi_0_data_4,
+	ann_gp_ulpi_0_data_5 = tng_usb_ulpi_0_data_5,
+	ann_gp_ulpi_0_data_6 = tng_usb_ulpi_0_data_6,
+	ann_gp_ulpi_0_data_7 = tng_usb_ulpi_0_data_7,
+	ann_gp_ulpi_0_dir = tng_usb_ulpi_0_dir,
+	ann_gp_ulpi_0_nxt = tng_usb_ulpi_0_nxt,
+	ann_gp_ulpi_0_refclk = tng_usb_ulpi_0_refclk,
+	ann_gp_ulpi_0_stp = tng_usb_ulpi_0_stp,
+	ANN_PIN_TABLE_SIZE = 250,
+};
+
 struct pinstruct_t {
 	bool valid;	/* the pin is allowed to be configured or not */
 	u8 bus_address;
@@ -563,6 +836,9 @@ struct intel_scu_flis_platform_data {
 	struct pin_mmio_flis_t *mmio_flis_t;
 	bool shim_access;
 };
+
+#define I2C_FLIS_START	0x1D00
+#define I2C_FLIS_END	0x1D3C
 
 #define OPS_STR_LEN 10
 

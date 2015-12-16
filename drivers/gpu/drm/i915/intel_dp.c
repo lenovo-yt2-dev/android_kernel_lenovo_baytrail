@@ -35,9 +35,18 @@
 #include "intel_drv.h"
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
-
+#ifdef CONFIG_CRYSTAL_COVE
+#include "linux/mfd/intel_mid_pmic.h"
+#endif
+#include <linux/gpio.h>
+#include <linux/tablet_config.h>
 #define DP_LINK_CHECK_TIMEOUT	(10 * 1000)
 #define EDP_PSR_MODE 0 /* 0 = HW TIMER, 1 = SW TIMER */
+
+#ifdef BLADE2_13
+struct intel_dp *g_intel_dp = NULL;
+#endif
+
 /**
  * is_edp - is the given port attached to an eDP panel (either CPU or PCH)
  * @intel_dp: DP struct
@@ -51,7 +60,35 @@ static bool is_edp(struct intel_dp *intel_dp)
 
 	return intel_dig_port->base.type == INTEL_OUTPUT_EDP;
 }
+#ifdef BLADE2_13
+ //merge from blade2_13 kk
+static void
+intel_dp_init_edp_port(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	u32 vdden_pad;
 
+	vdden_pad = vlv_gpio_nc_read(dev_priv, 0x4100);
+	vdden_pad &= ~(0x7);
+	vdden_pad |= 0x2;
+	vlv_gpio_nc_write(dev_priv, 0x4100, vdden_pad);
+	usleep_range(10000, 12000);
+
+	/*bl pwm func2*/
+	vdden_pad = vlv_gpio_nc_read(dev_priv, 0x40f0);
+	vdden_pad &= ~(0x7);
+	vdden_pad |= 0x2;
+	vlv_gpio_nc_write(dev_priv, 0x40f0, vdden_pad);
+	usleep_range(10000, 12000);
+
+	/*bl en func0*/
+	vdden_pad = vlv_gpio_nc_read(dev_priv, 0x40e0);
+	vdden_pad &= ~(0x7);	
+	vlv_gpio_nc_write(dev_priv, 0x40e0, vdden_pad);
+	usleep_range(10000, 12000);
+	
+}
+#endif
 /**
  * intel_dev_to_first_encoder - Return first associated drm_encoder or NULL.
  * @device - drm_device structure
@@ -509,6 +546,19 @@ intel_dp_aux_native_write(struct intel_dp *intel_dp,
 	}
 	return send_bytes;
 }
+#ifdef BLADE2_13
+int intel_dp_aux_extern_write( uint16_t address, uint8_t *send, int send_bytes)
+{
+	int ret = 0;
+	if(g_intel_dp == NULL)
+		{
+			printk("ERROR:intel_dp_aux_extern_write g_intel_dp no ready \n");
+			return -1;
+		}
+	intel_dp_aux_native_write(g_intel_dp , address,send , send_bytes);	
+	return ret ;
+}
+#endif
 
 /* Write a single byte to the aux channel in native mode */
 static int
@@ -557,6 +607,20 @@ intel_dp_aux_native_read(struct intel_dp *intel_dp,
 			return -EIO;
 	}
 }
+
+#ifdef BLADE2_13
+int intel_dp_aux_extern_read( uint16_t address, uint8_t *recv, int recv_bytes)
+{
+	int ret = 0 ;
+        if(g_intel_dp == NULL)
+                {
+                        printk("ERROR:intel_dp_aux_extern_write g_intel_dp no ready \n");
+                        return -1;
+                }
+        ret = intel_dp_aux_native_read(g_intel_dp ,address ,recv ,recv_bytes); 
+	return ret ;
+}
+#endif
 
 static int
 intel_dp_i2c_aux_ch(struct i2c_adapter *adapter, int mode,
@@ -789,12 +853,17 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 	/* Walk through all bpp values. Luckily they're all nicely spaced with 2
 	 * bpc in between. */
 	bpp = pipe_config->pipe_bpp;
+#ifdef BLADE2_13
+    //merge from blade2_13 kk
+	/* use the pipe bpp setting,discare the bios setting */
+	dev_priv->vbt.edp_bpp = 0;
+#endif
 	/*
 	 * eDP panels are really fickle, try to enfore the bpp the firmware
 	 * recomments. This means we'll up-dither 16bpp framebuffers on
 	 * high-depth panels.
 	 */
-	if (is_edp(intel_dp) && dev_priv->vbt.edp_bpp) {
+	if (is_edp(intel_dp) && dev_priv->vbt.edp_bpp &&  dev_priv->vbt.edp_bpp < bpp) {
 		DRM_DEBUG_KMS("forcing bpp for eDP panel to BIOS-provided %i\n",
 			dev_priv->vbt.edp_bpp);
 		bpp = dev_priv->vbt.edp_bpp;
@@ -810,6 +879,9 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 			dev_priv->vbt.edp_bpp);
 		bpp = min_t(int, bpp, dev_priv->vbt.edp_bpp);
 	}
+
+	if (is_edp(intel_dp))
+		pipe_config->dither = pipe_config->pipe_bpp == 18 ? 1 : 0;
 
 	for (; bpp >= 6*3; bpp -= 2*3) {
 		mode_rate = intel_dp_link_required(adjusted_mode->clock, bpp);
@@ -860,10 +932,10 @@ found:
 			       adjusted_mode->clock, pipe_config->port_clock,
 			       &pipe_config->dp_m_n);
 
-	if (intel_connector->panel.edp_downclock_avail &&
-		intel_dp->drrs_state.type == SEAMLESS_DRRS_SUPPORT) {
+	if (intel_connector->panel.downclock_avail &&
+		dev_priv->drrs_state.type == SEAMLESS_DRRS_SUPPORT) {
 			intel_link_compute_m_n(bpp, lane_count,
-				intel_connector->panel.edp_downclock,
+				intel_connector->panel.downclock,
 				pipe_config->port_clock,
 				&pipe_config->dp_m2_n2);
 	}
@@ -1023,7 +1095,7 @@ static void ironlake_wait_panel_status(struct intel_dp *intel_dp,
 			I915_READ(pp_stat_reg),
 			I915_READ(pp_ctrl_reg));
 
-	if (_wait_for((I915_READ(pp_stat_reg) & mask) == value, 5000, 10)) {
+	if (_wait_for((I915_READ(pp_stat_reg) & mask) == value, 10000, 20)) {
 		DRM_ERROR("Panel status timeout: status %08x control %08x\n",
 				I915_READ(pp_stat_reg),
 				I915_READ(pp_ctrl_reg));
@@ -1241,7 +1313,7 @@ void ironlake_edp_panel_off(struct intel_dp *intel_dp)
 	POSTING_READ(pp_ctrl_reg);
 
 	intel_dp->want_panel_vdd = false;
-
+	msleep(300);
 	ironlake_wait_panel_off(intel_dp);
 }
 
@@ -1256,7 +1328,15 @@ void ironlake_edp_backlight_on(struct intel_dp *intel_dp)
 
 	if (!is_edp(intel_dp))
 		return;
-
+#ifdef BLADE2_13
+#if 0
+  // if open it , it would cause the backlight can not work 2015-1-13 fuzr1
+   //if open it the system 
+  /*FIX ME*/ //merge from blade2 kk
+  /*add temp backlight contro here*/
+  intel_mid_pmic_writeb(0x51, 0x01);
+#endif
+#endif
 	DRM_DEBUG_KMS("\n");
 	/*
 	 * If we enable the backlight right away following a panel power
@@ -1287,7 +1367,16 @@ void ironlake_edp_backlight_off(struct intel_dp *intel_dp)
 		return;
 
 	/*intel_panel_disable_backlight(dev);*/
+#ifdef BLADE2_13
+  /*FIX ME*/ //merge from blade2_13 kk
+#if 0
+  // if open it , it would cause the backlight can not work 2015-1-13 fuzr1
+  /*add temp backlight contro here*/
+	intel_mid_pmic_writeb(0x51, 0x00);
 
+        gpio_direction_output(112,0);
+#endif
+#endif
 	DRM_DEBUG_KMS("\n");
 	pp = ironlake_get_pp_control(intel_dp);
 	pp &= ~EDP_BLC_ENABLE;
@@ -3497,7 +3586,7 @@ intel_dp_connector_destroy(struct drm_connector *connector)
 static void intel_dp_drrs_fini(struct drm_i915_private *dev_priv,
 			struct intel_dp *intel_dp)
 {
-	if (intel_dp->drrs_state.type == SEAMLESS_DRRS_SUPPORT) {
+	if (dev_priv->drrs_state.type == SEAMLESS_DRRS_SUPPORT) {
 		if (cancel_delayed_work_sync(&dev_priv->drrs.drrs_work->work)) {
 			kfree(dev_priv->drrs.drrs_work);
 			dev_priv->drrs.drrs_work = NULL;
@@ -3722,80 +3811,52 @@ intel_dp_init_panel_power_sequencer(struct drm_device *dev,
 }
 
 void
-intel_dp_set_drrs_state(struct drm_device *dev, int refresh_rate) {
+intel_dp_set_drrs_state(struct intel_encoder *intel_encoder)
+{
+	struct drm_device *dev = intel_encoder->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
-	struct intel_encoder *encoder;
-	struct intel_dp *intel_dp = NULL;
-	struct intel_crtc_config *config = NULL;
-	struct intel_crtc *intel_crtc = NULL;
 	struct intel_connector *intel_connector = dev_priv->drrs.connector;
+	struct intel_dp *intel_dp = enc_to_intel_dp(&intel_encoder->base);
+	struct intel_crtc *intel_crtc = NULL;
+	struct intel_crtc_config *config;
+	struct intel_link_m_n *dp_m_n;
 	u32 reg, val;
-	int index = 0;
 
-	if (refresh_rate <= 0) {
-		DRM_INFO("Refresh rate should be positive non-zero.\n");
-		return;
-	}
-
-	if (intel_connector == NULL) {
-		DRM_DEBUG_KMS("DRRS Supported for EDP only\n");
-		return;
-	}
-
-	encoder = intel_attached_encoder(&intel_connector->base);
-	intel_dp = enc_to_intel_dp(&encoder->base);
-	intel_crtc = encoder->new_crtc;
-
-	if (!intel_crtc) {
-		DRM_DEBUG_KMS("DRRS: intel_crtc not initialized\n");
-		return;
-	}
+	intel_encoder = intel_attached_encoder(&intel_connector->base);
+	intel_crtc = intel_encoder->new_crtc;
 
 	config = &intel_crtc->config;
+	reg = PIPECONF(config->cpu_transcoder);
+	val = I915_READ(reg);
 
-	if (intel_dp->drrs_state.type < SEAMLESS_DRRS_SUPPORT) {
-		DRM_INFO("Seamless DRRS not supported.\n");
-		return;
-	}
+	if (dev_priv->drrs_state.target_rr_type > DRRS_HIGH_RR) {
+		if (IS_VALLEYVIEW(dev))
+			val |= PIPECONF_EDP_RR_MODE_SWITCH_VLV;
+		else
+			val |= PIPECONF_EDP_RR_MODE_SWITCH;
 
-	if (intel_connector->panel.fixed_mode->vrefresh == refresh_rate)
-		index = DRRS_HIGH_RR;
-	else
-		index = DRRS_LOW_RR;
-
-	if (index == intel_dp->drrs_state.refresh_rate_type) {
-		DRM_INFO("DRRS requested for previously set RR...ignoring\n");
-		return;
-	}
-
-	if (!intel_crtc->active) {
-		DRM_INFO("eDP encoder has been disabled. CRTC not Active\n");
-		return;
-	}
-
-	if (INTEL_INFO(dev)->gen > 6 && INTEL_INFO(dev)->gen < 8) {
-		reg = PIPECONF(intel_crtc->config.cpu_transcoder);
-		val = I915_READ(reg);
-		if (index > DRRS_HIGH_RR) {
-			if (IS_VALLEYVIEW(dev))
-				val |= PIPECONF_EDP_RR_MODE_SWITCH_VLV;
-			else
-				val |= PIPECONF_EDP_RR_MODE_SWITCH;
-			intel_dp_set_m2_n2(intel_crtc, &config->dp_m2_n2);
+		if (dev_priv->drrs_state.target_rr_type == DRRS_LOW_RR) {
+			dp_m_n = &config->dp_m2_n2;
+		} else if (dev_priv->drrs_state.target_rr_type ==
+								DRRS_MEDIA_RR) {
+			intel_link_compute_m_n(config->pipe_bpp,
+				intel_dp->lane_count,
+				intel_connector->panel.target_mode->clock,
+				config->port_clock, &config->dp_m3_n3);
+			dp_m_n = &config->dp_m3_n3;
 		} else {
-			if (IS_VALLEYVIEW(dev))
-				val &= ~PIPECONF_EDP_RR_MODE_SWITCH_VLV;
-			else
-				val &= ~PIPECONF_EDP_RR_MODE_SWITCH;
+			DRM_ERROR("Unknown refreshrate type\n");
+			return;
 		}
-		I915_WRITE(reg, val);
+
+		intel_dp_set_m2_n2(intel_crtc, dp_m_n);
+	} else {
+		if (IS_VALLEYVIEW(dev))
+			val &= ~PIPECONF_EDP_RR_MODE_SWITCH_VLV;
+		else
+			val &= ~PIPECONF_EDP_RR_MODE_SWITCH;
 	}
-
-	mutex_lock(&intel_dp->drrs_state.mutex);
-	intel_dp->drrs_state.refresh_rate_type = index;
-	mutex_unlock(&intel_dp->drrs_state.mutex);
-
-	DRM_INFO("eDP Refresh Rate set to : %dHz\n", refresh_rate);
+	I915_WRITE(reg, val);
 }
 
 static void
@@ -3852,52 +3913,6 @@ intel_dp_init_panel_power_sequencer_registers(struct drm_device *dev,
 		      I915_READ(pp_div_reg));
 }
 
-static struct drm_display_mode *
-intel_dp_drrs_init(struct intel_digital_port *intel_dig_port,
-			struct intel_connector *intel_connector,
-			struct drm_display_mode *fixed_mode) {
-	struct drm_connector *connector = &intel_connector->base;
-	struct intel_dp *intel_dp = &intel_dig_port->dp;
-	struct drm_device *dev = intel_dig_port->base.base.dev;
-	struct drm_i915_private *dev_priv = dev->dev_private;
-	struct drm_display_mode *downclock_mode = NULL;
-
-	/*
-	 * Check if PSR is supported by panel and enabled
-	 * if so, DRRS is reported as not supported.
-	 */
-	if (INTEL_INFO(dev)->gen < 8 &&	intel_edp_is_psr_enabled(dev)) {
-		DRM_INFO("eDP panel has PSR enabled. Cannot support DRRS\n");
-		return downclock_mode;
-	}
-
-	/* First check if DRRS is enabled from VBT struct */
-	if (dev_priv->vbt.drrs_type == DRRS_NOT_SUPPORTED) {
-		DRM_INFO("VBT doesn't support DRRS\n");
-		return downclock_mode;
-	}
-
-	downclock_mode = intel_find_panel_downclock(dev,
-					fixed_mode, connector);
-
-	if (downclock_mode != NULL &&
-		dev_priv->vbt.drrs_type == SEAMLESS_DRRS_SUPPORT) {
-		intel_connector->panel.edp_downclock_avail = true;
-		intel_connector->panel.edp_downclock =
-						downclock_mode->clock;
-
-		intel_init_drrs_idleness_detection(dev, intel_connector);
-		mutex_init(&intel_dp->drrs_state.mutex);
-
-		intel_dp->drrs_state.type = dev_priv->vbt.drrs_type;
-		intel_dp->drrs_state.refresh_rate_type = DRRS_HIGH_RR;
-		DRM_INFO("SEAMLESS DRRS supported for eDP panel.\n");
-	} else
-		DRM_INFO("DRRS not supported.\n");
-
-	return downclock_mode;
-}
-
 static bool intel_edp_init_connector(struct intel_dp *intel_dp,
 				     struct intel_connector *intel_connector)
 {
@@ -3912,7 +3927,7 @@ static bool intel_edp_init_connector(struct intel_dp *intel_dp,
 	struct drm_display_mode *scan;
 	struct edid *edid;
 
-	intel_dp->drrs_state.type = DRRS_NOT_SUPPORTED;
+	dev_priv->drrs_state.type = DRRS_NOT_SUPPORTED;
 
 	if (!is_edp(intel_dp))
 		return true;
@@ -3959,11 +3974,29 @@ static bool intel_edp_init_connector(struct intel_dp *intel_dp,
 	list_for_each_entry(scan, &connector->probed_modes, head) {
 		if ((scan->type & DRM_MODE_TYPE_PREFERRED)) {
 			fixed_mode = drm_mode_duplicate(dev, scan);
-			if (INTEL_INFO(dev)->gen > 6)
-				downclock_mode = intel_dp_drrs_init(intel_dig_port,
-						intel_connector, fixed_mode);
+			if (INTEL_INFO(dev)->gen > 6) {
+				downclock_mode =
+					intel_find_panel_downclock(dev,
+							fixed_mode, connector);
+				if (!downclock_mode)
+					DRM_DEBUG_KMS(
+					"Downclock_mode is not found\n");
+			}
 			break;
 		}
+	}
+
+	if (downclock_mode) {
+		/*
+		 * Check if PSR is supported by panel and enabled
+		 * if so, DRRS is reported as not supported.
+		 */
+		if (INTEL_INFO(dev)->gen < 8 &&
+				intel_edp_is_psr_enabled(dev))
+			DRM_INFO(
+			"eDP panel has PSR enabled. Cannot support DRRS\n");
+		else
+			intel_drrs_init(dev, intel_connector, downclock_mode);
 	}
 
 	/* fallback to VBT if available for eDP */
@@ -3994,7 +4027,9 @@ intel_dp_init_connector(struct intel_digital_port *intel_dig_port,
 	enum port port = intel_dig_port->port;
 	const char *name = NULL;
 	int type, error;
-
+#ifdef BLADE2_13
+	g_intel_dp = &intel_dig_port->dp;
+#endif
 	/* Preserve the current hw state. */
 	intel_dp->DP = I915_READ(intel_dp->output_reg);
 	intel_dp->attached_connector = intel_connector;
@@ -4143,7 +4178,17 @@ intel_dp_init(struct drm_device *dev, int output_reg, enum port port)
 		kfree(intel_dig_port);
 		return;
 	}
+#ifdef BLADE2_13 
+    //merge from blade2_13 kk
+	intel_dp_init_edp_port(dev);
 
+#if 0
+  // if open it , it would cause the backlight can not work 2015-1-13 fuzr1
+	intel_mid_pmic_writeb(0x4B, 0xFF);
+       	intel_mid_pmic_writeb(0x51, 0x01);
+       	intel_mid_pmic_writeb(0x4E, 0xFF);
+#endif
+#endif
 	intel_encoder = &intel_dig_port->base;
 	encoder = &intel_encoder->base;
 
@@ -4156,6 +4201,7 @@ intel_dp_init(struct drm_device *dev, int output_reg, enum port port)
 	intel_encoder->post_disable = intel_post_disable_dp;
 	intel_encoder->get_hw_state = intel_dp_get_hw_state;
 	intel_encoder->get_config = intel_dp_get_config;
+	intel_encoder->set_drrs_state = intel_dp_set_drrs_state;
 	if (IS_VALLEYVIEW(dev)) {
 		intel_encoder->pre_pll_enable = intel_dp_pre_pll_enable;
 		intel_encoder->pre_enable = vlv_pre_enable_dp;
@@ -4179,6 +4225,11 @@ intel_dp_init(struct drm_device *dev, int output_reg, enum port port)
 		drm_encoder_cleanup(encoder);
 		kfree(intel_dig_port);
 		kfree(intel_connector);
+#ifdef CONFIG_DLP
+		i915_enable_dummy_dsi = 1;
+#else
+        i915_enable_dummy_dsi = 0;
+#endif
 	}
 }
 

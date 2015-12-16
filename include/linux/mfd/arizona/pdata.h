@@ -8,6 +8,8 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/kernel.h>
+
 #ifndef _ARIZONA_PDATA_H
 #define _ARIZONA_PDATA_H
 
@@ -71,6 +73,9 @@
 
 #define ARIZONA_MAX_PDM_SPK 2
 
+/* Treat INT_MAX impedance as open circuit */
+#define ARIZONA_HP_Z_OPEN INT_MAX
+
 struct regulator_init_data;
 
 struct arizona_micbias {
@@ -121,11 +126,17 @@ struct arizona_pdata {
 	 */
 	int max_channels_clocked[ARIZONA_MAX_AIF];
 
+	/** Time in milliseconds to keep wake lock during jack detection */
+	int jd_wake_time;
+
 	/** GPIO5 is used for jack detection */
 	bool jd_gpio5;
 
 	/** Internal pull on GPIO5 is disabled when used for jack detection */
 	bool jd_gpio5_nopull;
+
+	/** If non-zero don't run headphone detection, report this value */
+	int fixed_hpdet_imp;
 
 	/** Use the headphone detect circuit to identify the accessory */
 	bool hpdet_acc_id;
@@ -162,6 +173,9 @@ struct arizona_pdata {
 
 	/** Force MICBIAS on for mic detect */
 	bool micd_force_micbias;
+
+	/** Force MICBIAS on for initial mic detect only, not button detect */
+	bool micd_force_micbias_initial;
 
 	/** Declare an open circuit as a 4 pole jack */
 	bool micd_open_circuit_declare;
@@ -212,6 +226,10 @@ struct arizona_pdata {
 
 	/** wm5102t output power */
 	unsigned int wm5102t_output_pwr;
+
+	/** Base allocated by gpio core */
+	bool dynamic_gpio;
+
 };
 
 #endif

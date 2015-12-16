@@ -34,6 +34,17 @@
 /* op pix clock is for all lanes in total normally */
 #define SMIAPP_PLL_FLAG_OP_PIX_CLOCK_PER_LANE			(1 << 0)
 #define SMIAPP_PLL_FLAG_NO_OP_CLOCKS				(1 << 1)
+/* the pre-pll div may be odd */
+#define SMIAPP_PLL_FLAG_ALLOW_ODD_PRE_PLL_CLK_DIV		(1 << 2)
+/* op pix div value is half of the bits-per-pixel value */
+#define SMIAPP_PLL_FLAG_OP_PIX_DIV_HALF				(1 << 3)
+/*
+ * The effective vt and op pix clocks are twice as high as the
+ * calculated value. The limits are still against the regular limit
+ * values.
+ */
+#define SMIAPP_PLL_FLAG_PIX_CLOCK_DOUBLE			(1 << 4)
+#define SMIAPP_PLL_FLAG_VT_PIX_CLOCK_PER_LANE			(1 << 5)
 
 struct smiapp_pll {
 	/* input values */
@@ -46,7 +57,7 @@ struct smiapp_pll {
 			uint8_t bus_width;
 		} parallel;
 	};
-	uint8_t flags;
+	unsigned long flags;
 	uint8_t binning_horizontal;
 	uint8_t binning_vertical;
 	uint8_t scale_m;
@@ -63,25 +74,26 @@ struct smiapp_pll {
 	uint16_t vt_pix_clk_div;
 
 	uint32_t ext_clk_freq_hz;
-	uint32_t pll_ip_clk_freq_hz;
-	uint32_t pll_op_clk_freq_hz;
-	uint32_t op_sys_clk_freq_hz;
+	uint64_t pll_ip_clk_freq_hz;
+	uint64_t pll_op_clk_freq_hz;
+	uint64_t op_sys_clk_freq_hz;
 	uint32_t op_pix_clk_freq_hz;
-	uint32_t vt_sys_clk_freq_hz;
+	uint64_t vt_sys_clk_freq_hz;
 	uint32_t vt_pix_clk_freq_hz;
 
 	uint32_t pixel_rate_csi;
+	uint32_t pixel_rate_pixel_array;
 };
 
 struct smiapp_pll_branch_limits {
 	uint16_t min_sys_clk_div;
 	uint16_t max_sys_clk_div;
-	uint32_t min_sys_clk_freq_hz;
-	uint32_t max_sys_clk_freq_hz;
+	uint64_t min_sys_clk_freq_hz;
+	uint64_t max_sys_clk_freq_hz;
 	uint16_t min_pix_clk_div;
 	uint16_t max_pix_clk_div;
-	uint32_t min_pix_clk_freq_hz;
-	uint32_t max_pix_clk_freq_hz;
+	uint64_t min_pix_clk_freq_hz;
+	uint64_t max_pix_clk_freq_hz;
 };
 
 struct smiapp_pll_limits {
@@ -94,8 +106,8 @@ struct smiapp_pll_limits {
 	uint32_t max_pll_ip_freq_hz;
 	uint16_t min_pll_multiplier;
 	uint16_t max_pll_multiplier;
-	uint32_t min_pll_op_freq_hz;
-	uint32_t max_pll_op_freq_hz;
+	uint64_t min_pll_op_freq_hz;
+	uint64_t max_pll_op_freq_hz;
 
 	struct smiapp_pll_branch_limits vt;
 	struct smiapp_pll_branch_limits op;

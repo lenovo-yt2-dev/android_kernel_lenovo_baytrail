@@ -1223,8 +1223,6 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 		if (!(file && (file->f_path.mnt->mnt_flags & MNT_NOEXEC)))
 			prot |= PROT_EXEC;
 
-	flags |= MAP_32BIT;
-
 	if (!len)
 		return -EINVAL;
 

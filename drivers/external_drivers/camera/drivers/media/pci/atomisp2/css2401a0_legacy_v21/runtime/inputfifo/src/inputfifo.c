@@ -74,7 +74,7 @@ enum inputfifo_mipi_data_type {
 };
 #if !defined(HAS_NO_INPUT_SYSTEM)
 static unsigned int inputfifo_curr_ch_id, inputfifo_curr_fmt_type;
-#endif 
+#endif
 struct inputfifo_instance {
 	unsigned int				ch_id;
 	enum ia_css_stream_format	input_format;
@@ -107,11 +107,10 @@ static unsigned inputfifo_wrap_marker(
 STORAGE_CLASS_INLINE void
 _sh_css_fifo_snd(unsigned token)
 {
-	while (!can_event_send_token(STR2MIPI_EVENT_ID)) {
+	while (!can_event_send_token(STR2MIPI_EVENT_ID))
 		hrt_sleep();
-	}
 	event_send_token(STR2MIPI_EVENT_ID, token);
-    return;
+	return;
 }
 
 static void inputfifo_send_data_a(
@@ -466,8 +465,9 @@ static enum inputfifo_mipi_data_type inputfifo_determine_type(
 	if (input_format == IA_CSS_STREAM_FORMAT_YUV420_8_LEGACY) {
 		type =
 			inputfifo_mipi_data_type_yuv420_legacy;
-	} else if (input_format == IA_CSS_STREAM_FORMAT_YUV420_8 ||
-		   input_format == IA_CSS_STREAM_FORMAT_YUV420_10) {
+	} else if (input_format == IA_CSS_STREAM_FORMAT_YUV420_8  ||
+		   input_format == IA_CSS_STREAM_FORMAT_YUV420_10 ||
+		   input_format == IA_CSS_STREAM_FORMAT_YUV420_16) {
 		type =
 			inputfifo_mipi_data_type_yuv420;
 	} else if (input_format >= IA_CSS_STREAM_FORMAT_RGB_444 &&

@@ -10,7 +10,7 @@
  *       Revision:  none
  *       Compiler:  gcc
  *
- *         Author:  LENOVO 
+ *         Author:  LENOVO
  *        Company:  LENOVO Inc.
  *
  * =====================================================================================
@@ -32,12 +32,18 @@
 #include <linux/uaccess.h>
 #include <linux/leds.h>
 #include <linux/gpio.h>
+#include <linux/tablet_config.h>
 #include <asm/io.h>
 #include "leds-lp5560.h"
 
 //#define USE_HRTIMER
+#if defined(BLADE2_8) || defined(BLADE2_10)
+    #define LED_CTRL_GPIO	112
+#elif defined(BLADE2_13)
+    #define LED_CTRL_GPIO	51
+#endif
 
-#ifndef USE_HRTIMER 
+#ifndef USE_HRTIMER
 DEFINE_SPINLOCK(lp5560_lock);
 #endif
 
@@ -49,7 +55,7 @@ DEFINE_SPINLOCK(lp5560_lock);
 #define LED_FUN(f)               printk(KERN_INFO LED_TAG"%s\n", __FUNCTION__)
 #define LED_ERR(fmt, args...)    printk(KERN_ERR  LED_TAG"%s %d : "fmt, __FUNCTION__, __LINE__, ##args)
 #define LED_LOG(fmt, args...)    printk(KERN_ERR LED_TAG fmt, ##args)
-#define LED_DBG(fmt, args...)    printk(KERN_INFO LED_TAG fmt, ##args) 
+#define LED_DBG(fmt, args...)    printk(KERN_INFO LED_TAG fmt, ##args)
 #else
 #define LED_FUN(f)
 #define LED_ERR(fmt, args...)    printk(KERN_ERR  LED_TAG"%s %d : "fmt, __FUNCTION__, __LINE__, ##args)
@@ -198,16 +204,16 @@ static enum hrtimer_restart lp5560_callback(struct hrtimer *timer)
 {
 	if (g_array_i < g_array_max) {
 		if (g_array_i % 2 == 0)
-			gpio_set_value(112, 1);
+			gpio_set_value(LED_CTRL_GPIO, 1);
 		else
-			gpio_set_value(112, 0);
+			gpio_set_value(LED_CTRL_GPIO, 0);
 
 		hrtimer_add_expires_ns(&lp5560_hrtimer, 1000 * g_array[g_array_i++]);
 
 		return HRTIMER_RESTART;
 	}
 
-	gpio_set_value(112, 1);
+	gpio_set_value(LED_CTRL_GPIO, 1);
 
 	return HRTIMER_NORESTART;
 }
@@ -216,14 +222,16 @@ static enum hrtimer_restart lp5560_callback(struct hrtimer *timer)
 static void lp5560_mode_set(u16 mode)
 {
 	int i;
+	int ms1;
+	int off = 0;
 
 	/* standby mode */
-	gpio_set_value(112, 0);
+	gpio_set_value(LED_CTRL_GPIO, 0);
 	msleep(1);
 
 	switch(mode) {
 		case LED_TURN_ON:
-			common_train.train.reset_end[2].low = 1000*200;		/* reset done. delay 200ms */
+			common_train.train.reset_end[2].low = 5000;		/* reset done. delay 5ms */
 
 			for (i = 0; i < 3; i++) {
 				common_train.train.train_seq[i].rise = 0;
@@ -231,22 +239,23 @@ static void lp5560_mode_set(u16 mode)
 				common_train.train.train_seq[i].fall = 0;
 				common_train.train.train_seq[i].off  = 0;
 			}
-			
+
 			common_train.train.train_seq[0].rise = CALI_LENGHT * 8;
 			common_train.train.train_seq[0].on   = CALI_LENGHT * 8;
 			common_train.train.train_end[2].low = 5000;			/* command done. delay 5ms */
 			break;
 		case LED_TURN_OFF:
-			gpio_set_value(112, 0);
+			off = 1;
+			gpio_set_value(LED_CTRL_GPIO, 0);
 			break;
 		case LED_FLASH:
-			common_train.train.reset_end[2].low = 1000*200;
+			common_train.train.reset_end[2].low = 5000;
 
 			for (i = 0; i < 3; i++) {
 				common_train.train.train_seq[i].rise = CALI_LENGHT * 5;
-				common_train.train.train_seq[i].on   = (CALI_LENGHT * on_pulse + CALI_LENGHT)>>1;
+				common_train.train.train_seq[i].on   = CALI_LENGHT * on_pulse + CALI_LENGHT/2;
 				common_train.train.train_seq[i].fall = CALI_LENGHT * 5;
-				common_train.train.train_seq[i].off  = (CALI_LENGHT * off_pulse + CALI_LENGHT)>>1;
+				common_train.train.train_seq[i].off  = CALI_LENGHT * off_pulse + CALI_LENGHT/2;
 			}
 			common_train.train.train_end[2].low = 5000;			/* command down. delay 5ms */
 			break;
@@ -274,18 +283,29 @@ static void lp5560_mode_set(u16 mode)
 		spin_lock(&lp5560_lock);
 		for (i = 0; i < g_array_max; i++) {
 			if (i % 2 == 0)
-				gpio_set_value(112,1);
+				gpio_set_value(LED_CTRL_GPIO,1);
 			else
-				gpio_set_value(112, 0);
+				gpio_set_value(LED_CTRL_GPIO, 0);
 
-			udelay(g_array[i]);
+			ms1 = g_array[i];
+			while(ms1 > 2000)
+			{
+				udelay(2000);
+				ms1 -= 2000;
+			}
+			udelay(ms1);
+			if(off){
+				gpio_set_value(LED_CTRL_GPIO, 0);
+				break;
+			}
+
 		}
 		spin_unlock(&lp5560_lock);
 
 		if (mode == LED_RESET)
-			gpio_set_value(112, 0);
+			gpio_set_value(LED_CTRL_GPIO, 0);
 		else
-			gpio_set_value(112, 1);
+			gpio_set_value(LED_CTRL_GPIO, 1);
 #endif
 	}
 }
@@ -339,11 +359,11 @@ static void lp5560_led_white_set(struct led_classdev *led_cdev,
     		printk("set led brightness = %d.\n", value);
 		return;
 	}
-	
+
 	printk("set led brightness = %d.\n", value);
 
-	common_train.train.cur.high = ((64 / 32) * CALI_LENGHT + CALI_LENGHT)>>1;
-	common_train.train.cur.low  = ((64 / 32) * CALI_LENGHT + CALI_LENGHT)>>1;
+	common_train.train.cur.high = (64 / 32) * CALI_LENGHT + CALI_LENGHT/2;
+	common_train.train.cur.low  = (64 / 32) * CALI_LENGHT + CALI_LENGHT/2;
 
 	switch (value) {
 		case 0:
@@ -355,15 +375,15 @@ static void lp5560_led_white_set(struct led_classdev *led_cdev,
 		case 128:
 			onMS = 1980;
 			offMS = 4210;
-			on_pulse = 23;
-			off_pulse = 29;
+			on_pulse = 7;
+			off_pulse = 22;
 			lp5560_mode_set(LED_FLASH);
 			break;
 		case 64:
 			onMS = 1016;
 			offMS = 2032;
-			on_pulse = 15;
-			off_pulse = 15;
+			on_pulse = 7;
+			off_pulse = 13;
 			lp5560_mode_set(LED_FLASH);
 			break;
 		default:
@@ -396,7 +416,7 @@ static void lp5560_led_white_set(struct led_classdev *led_cdev,
 	}
 }
 
-static struct led_classdev lp5560_white_led = { 
+static struct led_classdev lp5560_white_led = {
     .name			    = "white",
     .default_trigger    = "ide-disk",
     .brightness_set     = lp5560_led_white_set,
@@ -418,9 +438,9 @@ static int lp5560_led_probe(struct platform_device *pdev)
     }
 
 	/* GPIO init */
-    gpio_request(112, "led-ctrl");
-    gpio_direction_output(112, 0);
-    gpio_set_value(112, 0);
+    gpio_request(LED_CTRL_GPIO, "led-ctrl");
+    gpio_direction_output(LED_CTRL_GPIO, 0);
+    gpio_set_value(LED_CTRL_GPIO, 0);
 
 #ifdef USE_HRTIMER
 	hrtimer_init(&lp5560_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -450,9 +470,9 @@ static struct platform_driver lp5560_led_driver= {
         },
 };
 
-static struct platform_device led_pdev = { 
+static struct platform_device led_pdev = {
 	        .name= "leds-lp5560",
-		        .id= -1, 
+		        .id= -1,
 };
 MODULE_ALIAS("platform:leds-blade");
 

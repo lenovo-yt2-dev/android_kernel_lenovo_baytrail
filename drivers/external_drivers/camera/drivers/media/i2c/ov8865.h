@@ -175,7 +175,7 @@ struct bu64243_device {
 
 #define OV8865_FOCAL_LENGTH_NUM	439	/*4.39mm*/
 #define OV8865_FOCAL_LENGTH_DEM	100
-#define OV8865_F_NUMBER_DEFAULT_NUM	24
+#define OV8865_F_NUMBER_DEFAULT_NUM	22
 #define OV8865_F_NUMBER_DEM	10
 
 #define OV8865_TIMING_X_INC		0x3814
@@ -2416,6 +2416,24 @@ static struct ov8865_resolution ov8865_res_preview[] = {
 			}
 		}
 	},
+      {
+		.desc = "ov8865_1936x1096_30fps",
+		.width = 1936,
+		.height = 1096,
+		.regs = ov8865_1936x1096_30fps,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.skip_frames = 0,
+		.fps_options = {
+			{
+				 .fps = 30,
+				 .pixels_per_line = 0x0f98, /* 3992 */
+				 .lines_per_frame = 0x04b2, /* 1202 */
+			},
+			{
+			}
+		},
+	},
 	{
 		 .desc = "ov8865_3280x1852_30fps",
 		 .width = 3280,
@@ -2478,6 +2496,63 @@ static struct ov8865_resolution ov8865_res_still[] = {
 		},
 	},
 #endif
+
+        {
+                 .desc = "ov8865_896x736_30fps",
+                 .width = 896,
+                 .height = 736,
+                 .used = 0,
+                 .regs = ov8865_896x736_30fps,
+                 .bin_factor_x = 1,
+                 .bin_factor_y = 1,
+                 .skip_frames = 0,
+                 .fps_options = {
+                        {
+                                 .fps = 30,
+                                 .pixels_per_line = 0x6e6, /* 1766 */
+                                 .lines_per_frame = 0x550, /* 1360 */
+                        },
+                        {
+                        }
+                },
+        },
+       {
+                 .desc = "ov8865_1632x1224_30fps",
+                 .width = 1632,
+                 .height = 1224,
+                 .used = 0,
+                 .regs = ov8865_1632x1224_30fps,
+                 .bin_factor_x = 1,
+                 .bin_factor_y = 1,
+                 .skip_frames = 1,
+                 .fps_options = {
+                        {
+                                .fps = 30,
+                                .pixels_per_line = 0x0642, /* 1602 */
+                                .lines_per_frame = 0x05da,   /* 1498 */
+                        },
+                        {
+                        }
+                }
+        },
+      {
+		.desc = "ov8865_1936x1096_30fps",
+		.width = 1936,
+		.height = 1096,
+		.regs = ov8865_1936x1096_30fps,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.skip_frames = 0,
+		.fps_options = {
+			{
+				 .fps = 30,
+				 .pixels_per_line = 0x0f98, /* 3992 */
+				 .lines_per_frame = 0x04b2, /* 1202 */
+			},
+			{
+			}
+		},
+	},
 	{
 		 .desc = "ov8865_3280x1852_10fps",
 		 .width = 3280,
@@ -2516,7 +2591,6 @@ static struct ov8865_resolution ov8865_res_still[] = {
 			}
 		},
 	},
-
 };
 
 static struct ov8865_resolution ov8865_res_video[] = {
@@ -2598,6 +2672,46 @@ static struct ov8865_resolution ov8865_res_video[] = {
 			}
 		},
 	},
+
+        {
+                 .desc = "ov8865_3280x1852_30fps",
+                 .width = 3280,
+                 .height = 1852,
+                 .used = 0,
+                 .regs = ov8865_3280x1852_30fps,
+                 .bin_factor_x = 0,
+                 .bin_factor_y = 0,
+                 .skip_frames = 0,
+                 .fps_options =  {
+                        {
+                                .fps = 30,
+                                .pixels_per_line = 0x0920, /* 2336*/
+                                .lines_per_frame = 0x0800, /* 2048 */
+                        },
+                        {
+                        }
+                }
+        },
+        {
+                 .desc = "ov8865_3280x2464_30fps",
+                 .width = 3280,
+                 .height = 2464,
+                 .used = 0,
+                 .regs = ov8865_3280x2464_30fps,
+                 .bin_factor_x = 0,
+                 .bin_factor_y = 0,
+                 .skip_frames = 0,
+                 .fps_options = {
+                        {
+                                .fps = 30,
+                                .pixels_per_line = 0x0790, /* 1936*/
+                                .lines_per_frame = 0x09b6, /* 2486 */
+                        },
+                        {
+                        }
+                },
+        },
+
 };
 
 static int

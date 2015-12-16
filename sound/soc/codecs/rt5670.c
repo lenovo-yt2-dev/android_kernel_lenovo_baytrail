@@ -2832,11 +2832,10 @@ static int get_clk_info(int sclk, int rate)
 static int rt5670_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	struct rt5670_priv *rt5670 = snd_soc_codec_get_drvdata(codec);
-	unsigned int val_len = 0, val_clk, mask_clk, dai_sel;
-	int pre_div, bclk_ms, frame_size;
+	unsigned int val_len = 0, val_clk, mask_clk;
+	int pre_div, bclk_ms, frame_size, dai_sel;
 
 	rt5670->lrck[dai->id] = params_rate(params);
 	pre_div = get_clk_info(rt5670->sysclk, rt5670->lrck[dai->id]);
@@ -2902,8 +2901,7 @@ static int rt5670_hw_params(struct snd_pcm_substream *substream,
 static int rt5670_hw_free(struct snd_pcm_substream *substream,
 			struct snd_soc_dai *dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	struct rt5670_priv *rt5670 = snd_soc_codec_get_drvdata(codec);
 
 	rt5670->aif_pu[dai->id] = false;
@@ -2919,8 +2917,7 @@ static int rt5670_hw_free(struct snd_pcm_substream *substream,
 static int rt5670_prepare(struct snd_pcm_substream *substream,
 				struct snd_soc_dai *dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	struct rt5670_priv *rt5670 = snd_soc_codec_get_drvdata(codec);
 
 	rt5670->aif_pu[dai->id] = true;
@@ -2931,7 +2928,8 @@ static int rt5670_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
 	struct snd_soc_codec *codec = dai->codec;
 	struct rt5670_priv *rt5670 = snd_soc_codec_get_drvdata(codec);
-	unsigned int reg_val = 0, dai_sel;
+	unsigned int reg_val = 0;
+	int dai_sel;
 
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
 	case SND_SOC_DAIFMT_CBM_CFM:
@@ -3040,7 +3038,7 @@ static int rt5670_pll_calc(const unsigned int freq_in,
 	const unsigned int freq_out, struct rt5670_pll_code *pll_code)
 {
 	int max_n = RT5670_PLL_N_MAX, max_m = RT5670_PLL_M_MAX;
-	int k, n = 0, m = 0, red, n_t, m_t, pll_out, in_t;
+	int k, n = 0, m = 0, red, n_t, m_t = 0, pll_out, in_t;
 	int out_t, red_t = abs(freq_out - freq_in);
 	bool bypass = false;
 
@@ -3253,8 +3251,8 @@ static ssize_t rt5670_index_store(struct device *dev, struct device_attribute *a
 	struct i2c_client *client = to_i2c_client(dev);
 	struct rt5670_priv *rt5670 = i2c_get_clientdata(client);
 	struct snd_soc_codec *codec = rt5670->codec;
-	unsigned int val = 0, addr = 0;
-	int i;
+	unsigned int addr = 0;
+	int i, val = 0;
 
 	for (i = 0; i < count; i++) {
 		if (*(buf + i) <= '9' && *(buf + i) >= '0')
@@ -3320,8 +3318,8 @@ static ssize_t rt5670_codec_store(struct device *dev, struct device_attribute *a
 	struct i2c_client *client = to_i2c_client(dev);
 	struct rt5670_priv *rt5670 = i2c_get_clientdata(client);
 	struct snd_soc_codec *codec = rt5670->codec;
-	unsigned int val = 0, addr = 0;
-	int i;
+	unsigned int addr = 0;
+	int i, val = 0;
 
 	pr_debug("register \"%s\" count=%d\n", buf, count);
 	for (i = 0; i < count; i++) {

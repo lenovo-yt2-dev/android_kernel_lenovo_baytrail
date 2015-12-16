@@ -21,6 +21,8 @@
 #define CPUIDLE_NAME_LEN	16
 #define CPUIDLE_DESC_LEN	32
 
+DECLARE_PER_CPU(u64, predicted_time);
+
 struct module;
 
 struct cpuidle_device;

@@ -23,6 +23,7 @@
 #define _IA_CSS_RMGR_H
 
 #include "storage_class.h"
+#include <ia_css_err.h>
 
 #ifndef __INLINE_RMGR__
 #define STORAGE_CLASS_RMGR_H STORAGE_CLASS_EXTERN

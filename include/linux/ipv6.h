@@ -36,6 +36,7 @@ struct ipv6_devconf {
 	__s32		accept_ra_rt_info_max_plen;
 #endif
 #endif
+	__s32		accept_ra_rt_table;
 	__s32		proxy_ndp;
 	__s32		accept_source_route;
 #ifdef CONFIG_IPV6_OPTIMISTIC_DAD
@@ -117,6 +118,7 @@ struct inet6_request_sock {
 	struct in6_addr		rmt_addr;
 	struct sk_buff		*pktopts;
 	int			iif;
+	u32                     ir_mark;
 };
 
 struct tcp6_request_sock {

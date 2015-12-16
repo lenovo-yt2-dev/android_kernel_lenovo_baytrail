@@ -18,4 +18,13 @@ enum {
 	CHT_AUD_PROBE_DEV,
 };
 
+enum {
+	CHT_DPCM_AUD_AIF1 = 0,
+	CHT_DPCM_DB,
+	CHT_DPCM_LL,
+	CHT_DPCM_COMPR,
+	CHT_DPCM_VOIP,
+	CHT_DPCM_PROBE,
+};
+
 #endif

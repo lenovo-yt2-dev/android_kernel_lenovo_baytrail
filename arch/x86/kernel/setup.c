@@ -493,6 +493,35 @@ static void __init memblock_x86_reserve_range_setup_data(void)
 	}
 }
 
+#ifdef CONFIG_CRASH_DUMP
+static unsigned noramremove = 1;
+static int __init setup_early_ramremove(char *buf)
+{
+	noramremove = 0;
+	return 0;
+}
+
+static void __init e820_crashdump_remove_ram(void)
+{
+	/* if user decides not to remove all RAM ranges */
+	if (noramremove == 1)
+		return;
+	/*
+	* We are doing a crash dump, so remove all RAM ranges
+	* as they are the ones that need to be dumped.
+	* We still need all non-RAM information in order to do I/O.
+	*/
+	/* NOTE: if you use old kexec, please remove memmap=exactmap
+	* which remove all ranges, not only RAM ranges.
+	*/
+	saved_max_pfn = e820_end_of_ram_pfn();
+	e820_remove_range(0, ULLONG_MAX, E820_RAM, 1);
+	sanitize_e820_map(e820.map, ARRAY_SIZE(e820.map), &e820.nr_map);
+	e820_print_map("crash_dump");
+}
+early_param("ramremove", setup_early_ramremove);
+#endif
+
 /*
  * --------- Crashkernel reservation ------------------------------
  */
@@ -839,9 +868,6 @@ static void __init trim_low_memory_range(void)
 
 void __init setup_arch(char **cmdline_p)
 {
-	char *tmp_p1 = NULL;
-	char *tmp_p2 = NULL;
-
 	memblock_reserve(__pa_symbol(_text),
 			 (unsigned long)__bss_stop - (unsigned long)_text);
 
@@ -930,6 +956,9 @@ void __init setup_arch(char **cmdline_p)
 	parse_setup_data();
 	/* update the e820_saved too */
 	e820_reserve_setup_data();
+#ifdef CONFIG_CRASH_DUMP
+	e820_crashdump_remove_ram();
+#endif
 
 	copy_edd();
 
@@ -959,16 +988,6 @@ void __init setup_arch(char **cmdline_p)
 	}
 #endif
 #endif
-	// /dev/ttyS0 use for communication with PC in testmode mode
-	if(strstr(boot_command_line, "testmode")){
-		printk(KERN_INFO "factory mode found\n");
-		if(strstr(boot_command_line, "ttyS0")){
-			tmp_p1 = strstr(boot_command_line, "console");
-			tmp_p2 = strstr(tmp_p1+1, "console");
-			if((tmp_p1 != NULL) && (tmp_p2 != NULL))
-				 strlcpy(tmp_p1, tmp_p2, COMMAND_LINE_SIZE);
-		}
-	}
 
 	strlcpy(command_line, boot_command_line, COMMAND_LINE_SIZE);
 	*cmdline_p = command_line;

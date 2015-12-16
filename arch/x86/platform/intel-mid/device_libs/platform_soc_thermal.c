@@ -29,13 +29,33 @@ static struct resource res = {
 		.flags = IORESOURCE_IRQ,
 };
 
-static struct soc_throttle_data tng_soc_data[] = {
+/* Annidale based MOFD platform for Phone FFD */
+static struct soc_throttle_data ann_mofd_soc_data[] = {
 	{
-		.power_limit = 0x6d, /* 3.5W */
+		.power_limit = 0xbb, /* 6W */
 		.floor_freq = 0x00,
 	},
 	{
-		.power_limit = 0x38, /* 1.8W */
+		.power_limit = 0x41, /* 2.1W */
+		.floor_freq = 0x01,
+	},
+	{
+		.power_limit = 0x1C, /* 0.9W */
+		.floor_freq = 0x01,
+	},
+	{
+		.power_limit = 0x1C, /* 0.9W */
+		.floor_freq = 0x01,
+	},
+};
+
+static struct soc_throttle_data tng_soc_data[] = {
+	{
+		.power_limit = 0xbb, /* 6W */
+		.floor_freq = 0x00,
+	},
+	{
+		.power_limit = 0x41, /* 2.1W */
 		.floor_freq = 0x01,
 	},
 	{
@@ -85,7 +105,12 @@ void soc_thrm_device_handler(struct sfi_device_table_entry *pentry,
 		pr_err("platform_soc_thermal:pdev_register failed: %d\n", ret);
 	}
 
-	pdev->dev.platform_data = &tng_soc_data;
+	if (INTEL_MID_BOARD(1, PHONE, MRFL) ||
+			INTEL_MID_BOARD(1, TABLET, MRFL))
+		pdev->dev.platform_data = &tng_soc_data;
+	else if (INTEL_MID_BOARD(1, PHONE, MOFD) ||
+			INTEL_MID_BOARD(1, TABLET, MOFD))
+		pdev->dev.platform_data = &ann_mofd_soc_data;
 }
 
 static inline int byt_program_ioapic(int irq, int trigger, int polarity)

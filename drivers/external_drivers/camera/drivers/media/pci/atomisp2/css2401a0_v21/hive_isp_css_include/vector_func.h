@@ -24,6 +24,13 @@
 
 #include "storage_class.h"
 
+/* TODO: Later filters will be moved to types directory,
+ * and we should only include matrix_MxN types */
+#include "filters/filters_1.0/filter_2x2.h"
+#include "filters/filters_1.0/filter_3x3.h"
+#include "filters/filters_1.0/filter_4x4.h"
+#include "filters/filters_1.0/filter_5x5.h"
+
 #include "vector_func_local.h"
 
 #ifndef __INLINE_VECTOR_FUNC__

@@ -349,8 +349,12 @@ static struct drm_framebuffer *psb_user_framebuffer_create(
 	struct psb_gtt *pg = dev_priv->pg;
 	uint64_t size;
 	uint32_t page_offset;
-	uint32_t user_virtual_addr = (uint32_t) r->handles[0];
+	unsigned long user_virtual_addr = (unsigned long) r->handles[0];
 	int ret;
+
+	/* Align with setting in HWC */
+	if (sizeof(unsigned long) == 8)
+		user_virtual_addr |= ((unsigned long)r->handles[1]) << 32;
 
 	size = r->height * r->pitches[0];
 	if (size < r->height * r->pitches[0])
@@ -378,7 +382,7 @@ static struct drm_framebuffer *psb_user_framebuffer_create(
 	/* map GTT */
 	ret = psb_gtt_map_vaddr(dev, user_virtual_addr, size, 0, &page_offset);
 	if (ret) {
-		DRM_ERROR("Can not map cpu address (%p) to GTT handle \n", user_virtual_addr);
+		DRM_ERROR("Can not map cpu address (0x%lx) to GTT handle \n", user_virtual_addr);
 		psbfb->offset = 0;
 	} else
 		psbfb->offset =  page_offset << PAGE_SHIFT;
@@ -437,21 +441,30 @@ static int psbfb_create(struct psb_fbdev *fbdev,
 	struct device *device = &dev->pdev->dev;
 	int size;
 	int ret;
+	struct mdfld_dsi_encoder *dsi_encoder =
+		MDFLD_DSI_ENCODER_WITH_DRM_ENABLE(dev_priv->encoder0);
+	struct mdfld_dsi_config *dsi_config =
+		mdfld_dsi_encoder_get_config(dsi_encoder);
+	struct drm_display_mode *fixed_mode;
+
+	if (!dsi_config) {
+		DRM_ERROR("Failed to get encoder config\n");
+		return -EINVAL;
+	}
+
+	fixed_mode = dsi_config->fixed_mode;
+
 	/* PR2 panel must have 200 pixel dummy clocks,
 	 * So the display timing should be 800x1024, and surface
 	 * is 608x1024(64 bits align), or the information between android
 	 * and Linux frame buffer is not consistent.
 	 */
-#if 0
+
 	if (get_panel_type(dev, 0) == TMD_6X10_VID)
-		mode_cmd.width = sizes->surface_width - 200;
+		mode_cmd.width = fixed_mode->hdisplay - 200;
 	else
-		mode_cmd.width = sizes->surface_width;
-	mode_cmd.height = sizes->surface_height;
-#else
-	mode_cmd.width = 720;
-	mode_cmd.height = 1280;
-#endif
+		mode_cmd.width = fixed_mode->hdisplay;
+	mode_cmd.height = fixed_mode->vdisplay;
 
 	mode_cmd.pitches[0] = mode_cmd.width * (sizes->surface_bpp >> 3);
 
@@ -511,10 +524,10 @@ static int psbfb_create(struct psb_fbdev *fbdev,
 
 	if (get_panel_type(dev, 0) == TMD_6X10_VID)
 		drm_fb_helper_fill_var(info, &fbdev->psb_fb_helper,
-				       sizes->fb_width - 200, sizes->fb_height);
+				       fixed_mode->hdisplay - 200, fixed_mode->vdisplay);
 	else
 		drm_fb_helper_fill_var(info, &fbdev->psb_fb_helper,
-				       sizes->fb_width, sizes->fb_height);
+				       fixed_mode->hdisplay, fixed_mode->vdisplay);
 
 	info->fix.mmio_start = pci_resource_start(dev->pdev, 0);
 	info->fix.mmio_len = pci_resource_len(dev->pdev, 0);
@@ -729,7 +742,7 @@ static int psb_create_backlight_property(struct drm_device *dev)
 		return 0;
 	}
 	backlight->values[0] = 0;
-	backlight->values[1] = 100;
+	backlight->values[1] = 255;
 
 	dev_priv->backlight_property = backlight;
 

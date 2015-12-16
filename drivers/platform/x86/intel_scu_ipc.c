@@ -298,8 +298,7 @@ EXPORT_SYMBOL_GPL(intel_scu_ipc_lock);
 void intel_scu_ipc_unlock(void)
 {
 	/* Re-enable S3 */
-	if (!suspend_in_progress())
-		wake_unlock(&ipc_wake_lock);
+	wake_unlock(&ipc_wake_lock);
 
 	mutex_unlock(&scu_suspend_lock);
 

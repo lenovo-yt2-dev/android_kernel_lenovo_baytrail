@@ -15,7 +15,9 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#ifndef CONFIG_GMIN_INTEL_MID /* FIXME! for non-gmin*/
 #include <media/v4l2-chip-ident.h>
+#endif
 #include <media/v4l2-device.h>
 #include <asm/intel-mid.h>
 
@@ -135,11 +137,25 @@ int dw9714_t_focus_abs(struct v4l2_subdev *sd, s32 value)
 {
 	int ret;
 
-	value = min(value, DW9714_MAX_FOCUS_POS);
+	value = clamp(value, 0, DW9714_MAX_FOCUS_POS);
 	ret = dw9714_t_focus_vcm(sd, value);
 	if (ret == 0) {
 		dw9714_dev.number_of_steps = value - dw9714_dev.focus;
 		dw9714_dev.focus = value;
+		getnstimeofday(&(dw9714_dev.timestamp_t_focus_abs));
+	}
+
+	return ret;
+}
+
+int dw9714_t_focus_abs_init(struct v4l2_subdev *sd)
+{
+	int ret;
+
+	ret = dw9714_t_focus_vcm(sd, DW9714_DEFAULT_FOCUS_POS);
+	if (ret == 0) {
+		dw9714_dev.number_of_steps = DW9714_DEFAULT_FOCUS_POS - dw9714_dev.focus;
+		dw9714_dev.focus = DW9714_DEFAULT_FOCUS_POS;
 		getnstimeofday(&(dw9714_dev.timestamp_t_focus_abs));
 	}
 

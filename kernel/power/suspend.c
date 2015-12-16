@@ -28,7 +28,6 @@
 #include <linux/rtc.h>
 #include <linux/workqueue.h>
 #include <trace/events/power.h>
-#include <linux/gpio.h>
 
 #include "power.h"
 
@@ -215,9 +214,6 @@ void __attribute__ ((weak)) arch_suspend_enable_irqs(void)
 	local_irq_enable();
 }
 
-extern int pm_gpio_show_enable;
-extern void gpio_print_status();
-extern void vlv2_print_all_clock_status();
 /**
  * suspend_enter - Make the system enter the given sleep state.
  * @state: System sleep state to enter.
@@ -261,11 +257,6 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 		goto Platform_wake;
 	}
 
-	if (pm_gpio_show_enable)
-		gpio_print_status();
-	
-	vlv2_print_all_clock_status();
-	
 	error = disable_nonboot_cpus();
 	if (error || suspend_test(TEST_CPUS))
 		goto Enable_cpus;

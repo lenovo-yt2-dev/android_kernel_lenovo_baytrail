@@ -1103,8 +1103,6 @@ static int legacy_suspend(struct device *dev, pm_message_t state,
 	return error;
 }
 
-extern void wakeup_source_dump(void);
-
 /**
  * device_suspend - Execute "suspend" callbacks for given device.
  * @dev: Device to handle.
@@ -1134,9 +1132,6 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 
 	if (pm_wakeup_pending()) {
 		async_error = -EBUSY;
-		printk("%s, async_error (-EBUSY), dump wakeup source:\n",__func__);
-              	wakeup_source_dump();
-              	printk("%s, dump done!\n", __func__);
 		goto Complete;
 	}
 

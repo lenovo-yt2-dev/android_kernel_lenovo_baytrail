@@ -391,8 +391,8 @@ static int arizona_runtime_resume(struct device *dev)
 	int ret;
     int retry_count = 0;
 
-retry:
-	dev_info(arizona->dev, "%s, Leaving AoD mode\n", __func__);
+ retry:
+	dev_info(arizona->dev, "%s, Leaving AoD mode, retry_count:%d\n", __func__, retry_count);
 	switch (arizona->type) {
 	case WM5110:
 	case WM8280:
@@ -492,9 +492,8 @@ err:
 	regcache_cache_only(arizona->regmap, true);
 	regulator_disable(arizona->dcvdd);
 	arizona->dcvdd_state = false;
-    if (retry_count++ < 3) {
+    if (retry_count++<10)
         goto retry;
-    }
 	return ret;
 }
 
@@ -528,18 +527,40 @@ static int arizona_runtime_suspend(struct device *dev)
 #endif
 
 #ifdef CONFIG_PM_SLEEP
+static int arizona_suspend_noirq(struct device *dev)
+{
+	struct arizona *arizona = dev_get_drvdata(dev);
+
+	dev_dbg(arizona->dev, "Late suspend, reenabling IRQ\n");
+
+	if (arizona->irq_sem) {
+	    enable_irq(arizona->irq);
+	    arizona->irq_sem = 0;
+	}
+
+    return 0;
+}
+
+static int arizona_suspend(struct device *dev)
+{
+	struct arizona *arizona = dev_get_drvdata(dev);
+
+	dev_dbg(arizona->dev, "Early suspend, disabling IRQ\n");
+
+    disable_irq(arizona->irq);
+    arizona->irq_sem = 1;
+
+    return 0;
+}
+
 static int arizona_resume_noirq(struct device *dev)
 {
 	struct arizona *arizona = dev_get_drvdata(dev);
 
-	dev_dbg(arizona->dev, "Early resume, disabling IRQ arizona->irq_state=%d\n",arizona->irq_state);
-	
-	if(arizona->irq_state)
-	{
-	    disable_irq(arizona->irq);
-	    arizona->irq_state=false;
-	}
+	dev_dbg(arizona->dev, "Early resume, disabling IRQ\n");
+    disable_irq(arizona->irq);
 
+    arizona->irq_sem = 1;
 	return 0;
 }
 
@@ -547,23 +568,24 @@ static int arizona_resume(struct device *dev)
 {
 	struct arizona *arizona = dev_get_drvdata(dev);
 
-	dev_dbg(arizona->dev, "Late resume, reenabling IRQ arizona->irq_state=%d\n",arizona->irq_state);
-	if(!arizona->irq_state)
-	{
+	dev_dbg(arizona->dev, "Late resume, renabling IRQ\n");
+	if (arizona->irq_sem) {
 	    enable_irq(arizona->irq);
-	    arizona->irq_state=true;
+	    arizona->irq_sem = 0;
 	}
 
 	return 0;
 }
+
 #endif
 
 const struct dev_pm_ops arizona_pm_ops = {
 	SET_RUNTIME_PM_OPS(arizona_runtime_suspend,
 			   arizona_runtime_resume,
 			   NULL)
-	SET_SYSTEM_SLEEP_PM_OPS(NULL, arizona_resume)
+	SET_SYSTEM_SLEEP_PM_OPS(arizona_suspend, arizona_resume)
 #ifdef CONFIG_PM_SLEEP
+    .suspend_noirq = arizona_suspend_noirq,
 	.resume_noirq = arizona_resume_noirq,
 #endif
 };
@@ -950,7 +972,7 @@ int arizona_dev_init(struct arizona *arizona)
 	if (arizona->pdata.reset) {
 		/* Start out with /RESET low to put the chip into reset */
 		ret = gpio_request_one(arizona->pdata.reset,
-				       GPIOF_DIR_OUT | GPIOF_INIT_LOW,
+				       GPIOF_DIR_OUT | GPIOF_INIT_HIGH,
 				       "arizona /RESET");
 		if (ret != 0) {
 			dev_err(dev, "Failed to request /RESET: %d\n", ret);
@@ -973,6 +995,11 @@ int arizona_dev_init(struct arizona *arizona)
 		goto err_enable;
 	}
 	arizona->dcvdd_state = true;
+
+    if (arizona->pdata.reset) {
+        gpio_set_value_cansleep(arizona->pdata.reset, 0);
+        msleep(5);
+    }
 
 	switch (arizona->type) {
 	case WM5110:
@@ -1267,7 +1294,6 @@ int arizona_dev_init(struct arizona *arizona)
 	arizona_request_irq(arizona, ARIZONA_IRQ_UNDERCLOCKED, "Underclocked",
 			    arizona_underclocked, arizona);
 
-    arizona->irq_state=true;
 	switch (arizona->type) {
 	case WM5102:
 		ret = mfd_add_devices(arizona->dev, -1, wm5102_devs,
@@ -1300,6 +1326,7 @@ err_reset:
 		gpio_free(arizona->pdata.reset);
 	}
 	regulator_disable(arizona->dcvdd);
+    arizona->dcvdd_state = false;
 err_enable:
 	regulator_bulk_disable(arizona->num_core_supplies,
 			       arizona->core_supplies);

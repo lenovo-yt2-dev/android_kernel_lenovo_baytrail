@@ -15,7 +15,9 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#ifndef CONFIG_GMIN_INTEL_MID /* FIXME! for non-gmin*/
 #include <media/v4l2-chip-ident.h>
+#endif
 #include <media/v4l2-device.h>
 
 #include "ad5816g.h"
@@ -149,7 +151,7 @@ int ad5816g_t_focus_abs(struct v4l2_subdev *sd, s32 value)
 {
 	int ret;
 
-	value = min(value, AD5816G_MAX_FOCUS_POS);
+	value = clamp(value, 0, AD5816G_MAX_FOCUS_POS);
 	ret = ad5816g_t_focus_vcm(sd, value);
 	if (ret == 0) {
 		ad5816g_dev.number_of_steps = value - ad5816g_dev.focus;

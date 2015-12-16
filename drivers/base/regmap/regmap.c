@@ -29,8 +29,7 @@
  * sort of problem defining LOG_DEVICE will add printks for basic
  * register I/O on a specific device.
  */
-//#undef LOG_DEVICE
-#define LOG_DEVICE "spi1.0"
+#undef LOG_DEVICE
 
 static int _regmap_update_bits(struct regmap *map, unsigned int reg,
 			       unsigned int mask, unsigned int val,
@@ -1179,7 +1178,7 @@ int _regmap_write(struct regmap *map, unsigned int reg,
 
 #ifdef LOG_DEVICE
 	if (strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
-		dev_dbg(map->dev, "%x <= %x\n", reg, val);
+		dev_info(map->dev, "%x <= %x\n", reg, val);
 #endif
 
 	trace_regmap_reg_write(map->dev, reg, val);
@@ -1529,7 +1528,7 @@ static int _regmap_read(struct regmap *map, unsigned int reg,
 	if (ret == 0) {
 #ifdef LOG_DEVICE
 		if (strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
-			dev_dbg(map->dev, "%x => %x\n", reg, *val);
+			dev_info(map->dev, "%x => %x\n", reg, *val);
 #endif
 
 		trace_regmap_reg_read(map->dev, reg, *val);

@@ -66,6 +66,10 @@
 #define ENABLE_RAW		0
 #endif
 
+#if !defined(ENABLE_INPUT_YUV)
+#define ENABLE_INPUT_YUV	0
+#endif
+
 #if !defined(ENABLE_DVS_6AXIS)
 #define ENABLE_DVS_6AXIS	0
 #endif
@@ -80,7 +84,18 @@
 
 #if !defined(ENABLE_OUTPUT)
 #define ENABLE_OUTPUT           0
+#endif
+
+#if !defined(NUM_OUTPUT_PINS)
 #define NUM_OUTPUT_PINS         0
+#endif
+
+#if !defined(ENABLE_FLIP)
+#define ENABLE_FLIP           0
+#endif
+
+#if !defined(ENABLE_BAYER_OUTPUT)
+#define ENABLE_BAYER_OUTPUT     0
 #endif
 
 #if !defined(ENABLE_MACC)
@@ -93,6 +108,10 @@
 
 #if !defined(ENABLE_OB)
 #define ENABLE_OB		1
+#endif
+
+#if !defined(ENABLE_LIN)
+#define ENABLE_LIN            0
 #endif
 
 #if !defined(ENABLE_DP)
@@ -248,6 +267,14 @@
 
 #ifndef ISP_VAMEM2_RESULTS_SIZE
 #define ISP_VAMEM2_RESULTS_SIZE		0
+#endif
+
+#ifndef ISP_VAMEM3_PARAMETERS_SIZE
+#define ISP_VAMEM3_PARAMETERS_SIZE	0
+#endif
+
+#ifndef ISP_HMEM0_PARAMETERS_SIZE
+#define ISP_HMEM0_PARAMETERS_SIZE	0
 #endif
 
 #if !defined(USE_BNR_LITE)

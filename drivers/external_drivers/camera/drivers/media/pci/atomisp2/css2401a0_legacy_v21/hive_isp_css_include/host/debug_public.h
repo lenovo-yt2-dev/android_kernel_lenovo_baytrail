@@ -22,12 +22,7 @@
 #ifndef __DEBUG_PUBLIC_H_INCLUDED__
 #define __DEBUG_PUBLIC_H_INCLUDED__
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stdbool.h>
-#endif
-
+#include <type_support.h>
 #include "system_types.h"
 
 /*! brief

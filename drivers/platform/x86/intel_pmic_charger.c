@@ -74,7 +74,7 @@ static irqreturn_t pmic_charger_irq_handler(int irq, void *devid)
 	return IRQ_WAKE_THREAD;
 }
 
-static int __init pmic_charger_probe(struct platform_device *pdev)
+static int pmic_charger_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	int irq = platform_get_irq(pdev, 0);
@@ -98,7 +98,7 @@ static int __init pmic_charger_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __exit pmic_charger_remove(struct platform_device *pdev)
+static int pmic_charger_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	int irq = platform_get_irq(pdev, 0);
@@ -134,7 +134,7 @@ static struct platform_driver pmic_charger_driver = {
 		.pm		= &pmic_charger_pm_ops,
 	},
 	.probe		= pmic_charger_probe,
-	.remove = __exit_p(pmic_charger_remove),
+	.remove = pmic_charger_remove,
 };
 
 static int __init pmic_charger_module_init(void)

@@ -84,6 +84,34 @@ void intel_cleanup_modes(struct drm_connector *connector)
 		drm_mode_remove(connector, mode);
 }
 
+static const struct drm_prop_enum_list drrs_capability_names[] = {
+	{ DRRS_NOT_SUPPORTED, "Off" },
+	{ STATIC_DRRS_SUPPORT, "Static" },
+	{ SEAMLESS_DRRS_SUPPORT, "Seamless-HW" },
+	{ SEAMLESS_DRRS_SUPPORT_SW, "Seamless-SW" },
+};
+
+void
+intel_attach_drrs_capability_property(struct drm_connector *connector,
+					unsigned int init_val)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_property *prop;
+
+	prop = dev_priv->drrs_capability_property;
+	if (prop == NULL) {
+		prop = drm_property_create_enum(dev, 0,
+					   "drrs_capability",
+					   drrs_capability_names,
+					   ARRAY_SIZE(drrs_capability_names));
+		if (prop == NULL)
+			return;
+
+		dev_priv->drrs_capability_property = prop;
+	}
+	drm_object_attach_property(&connector->base, prop, init_val);
+}
 
 static const struct drm_prop_enum_list force_audio_names[] = {
 	{ HDMI_AUDIO_OFF_DVI, "force-dvi" },

@@ -22,8 +22,12 @@
 #ifndef __IA_CSS_ISYS_H__
 #define __IA_CSS_ISYS_H__
 
-#include "input_system.h"
-#include "ia_css.h"
+#include <type_support.h>
+#include <input_system.h>
+#include <ia_css_input_port.h>
+#include <ia_css_stream_format.h>
+#include <ia_css_stream_public.h>
+#include <system_global.h>
 #include "ia_css_isys_comm.h"
 
 #ifdef USE_INPUT_SYSTEM_VERSION_2401
@@ -37,16 +41,47 @@ typedef input_system_cfg_t	ia_css_isys_descr_t;
 #if defined(USE_INPUT_SYSTEM_VERSION_2) || defined(USE_INPUT_SYSTEM_VERSION_2401)
 input_system_error_t ia_css_isys_init(void);
 void ia_css_isys_uninit(void);
+mipi_port_ID_t ia_css_isys_port_to_mipi_port(
+	enum ia_css_csi2_port api_port);
 #endif
 
 #if defined(USE_INPUT_SYSTEM_VERSION_2401)
+
+/**
+ * @brief Register one (virtual) stream. This is used to track when all
+ * virtual streams are configured inside the input system. The CSI RX is
+ * only started when all registered streams are configured.
+ *
+ * @param[in]	port		CSI port
+ * @param[in]	isys_stream_id	Stream handle generated with ia_css_isys_generate_stream_id()
+ *				Must be lower than SH_CSS_MAX_ISYS_CHANNEL_NODES
+ * @return			IA_CSS_SUCCESS if successful, IA_CSS_ERR_INTERNAL_ERROR if
+ *				there is already a stream registered with the same handle
+ */
 enum ia_css_err ia_css_isys_csi_rx_register_stream(
 	enum ia_css_csi2_port port,
-	uint32_t sp_thread_id);
+	uint32_t isys_stream_id);
 
+/**
+ * @brief Unregister one (virtual) stream. This is used to track when all
+ * virtual streams are configured inside the input system. The CSI RX is
+ * only started when all registered streams are configured.
+ *
+ * @param[in]	port		CSI port
+ * @param[in]	isys_stream_id	Stream handle generated with ia_css_isys_generate_stream_id()
+ *				Must be lower than SH_CSS_MAX_ISYS_CHANNEL_NODES
+ * @return			IA_CSS_SUCCESS if successful, IA_CSS_ERR_INTERNAL_ERROR if
+ *				there is no stream registered with that handle
+ */
 enum ia_css_err ia_css_isys_csi_rx_unregister_stream(
 	enum ia_css_csi2_port port,
-	uint32_t sp_thread_id);
+	uint32_t isys_stream_id);
+
+enum ia_css_err ia_css_isys_convert_compressed_format(
+		struct ia_css_csi2_compression *comp,
+		struct input_system_cfg_s *cfg);
+unsigned int ia_css_csi2_calculate_input_system_alignment(
+	enum ia_css_stream_format fmt_type);
 #endif
 
 #if !defined(USE_INPUT_SYSTEM_VERSION_2401)
@@ -57,9 +92,15 @@ void ia_css_isys_rx_configure(
 
 void ia_css_isys_rx_disable(void);
 
-void ia_css_isys_rx_enable_all_interrupts(void);
+void ia_css_isys_rx_enable_all_interrupts(mipi_port_ID_t port);
 
-unsigned int ia_css_isys_rx_get_interrupt_reg(void);
+unsigned int ia_css_isys_rx_get_interrupt_reg(mipi_port_ID_t port);
+void ia_css_isys_rx_get_irq_info(mipi_port_ID_t port,
+				 unsigned int *irq_infos);
+void ia_css_isys_rx_clear_irq_info(mipi_port_ID_t port,
+				   unsigned int irq_infos);
+unsigned int ia_css_isys_rx_translate_irq_infos(unsigned int bits);
+
 #endif /* #if !defined(USE_INPUT_SYSTEM_VERSION_2401) */
 
 /** @brief Translate format and compression to format type.
@@ -84,7 +125,8 @@ enum ia_css_err ia_css_isys_convert_stream_format_to_mipi_format(
  */
 extern ia_css_isys_error_t ia_css_isys_stream_create(
 		ia_css_isys_descr_t	*isys_stream_descr,
-		ia_css_isys_stream_h	isys_stream);
+		ia_css_isys_stream_h	isys_stream,
+		uint32_t isys_stream_id);
 
 extern void ia_css_isys_stream_destroy(
 		ia_css_isys_stream_h	isys_stream);

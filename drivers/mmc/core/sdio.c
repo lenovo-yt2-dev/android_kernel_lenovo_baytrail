@@ -568,6 +568,13 @@ static int mmc_sdio_init_uhs_card(struct mmc_card *card)
 	if (err)
 		goto out;
 
+	/*
+	 * revert me :
+	 * SW enable for EAI is required for SDR50 & SDR104 modes in LnP A0/K0
+	 */
+	if ((card->cis.vendor == 0x0089) && (card->cis.device == 0x5502))
+		mmc_io_rw_direct(card, 1, 0, 0x16, 0x2, 0);
+
 	/* Initialize and start re-tuning timer */
 	if (!mmc_host_is_spi(card->host) && card->host->ops->execute_tuning)
 		err = card->host->ops->execute_tuning(card->host,
@@ -1027,6 +1034,7 @@ static int mmc_sdio_power_restore(struct mmc_host *host)
 
 out:
 	mmc_release_host(host);
+
 	return ret;
 }
 

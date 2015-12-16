@@ -22,13 +22,17 @@
 #ifndef __IA_CSS_MACC_TYPES_H
 #define __IA_CSS_MACC_TYPES_H
 
+/** @file
+* CSS-API header file for Multi-Axis Color Correction (MACC) parameters.
+*/
+
 /** Number of axes in the MACC table. */
 #define IA_CSS_MACC_NUM_AXES           16
 /** Number of coefficients per MACC axes. */
 #define IA_CSS_MACC_NUM_COEFS          4
 /** The number of planes in the morphing table. */
 
-/** Multi-Axes Color Correction (MACC) table.
+/** Multi-Axis Color Correction (MACC) table.
  *
  *  ISP block: MACC1 (MACC by only matrix)
  *             MACC2 (MACC by matrix and exponent(ia_css_macc_config))

@@ -2089,6 +2089,10 @@ __init int intel_pmu_init(void)
 	case 39: /* Penwell */
 	case 53: /* Cloverview */
 	case 54: /* Cedarview */
+	case 55: /* Valleyview */
+	case 74: /* Tangier */
+	case 90: /* Anniedale */
+	case 92: /* Broxton */
 		memcpy(hw_cache_event_ids, atom_hw_cache_event_ids,
 		       sizeof(hw_cache_event_ids));
 
@@ -2193,14 +2197,14 @@ __init int intel_pmu_init(void)
 		switch (x86_pmu.version) {
 		case 1:
 			x86_pmu.event_constraints = intel_v1_event_constraints;
-			pr_cont("generic architected perfmon v1, ");
+			pr_cont("generic architected perfmon v1 (model %d), ", boot_cpu_data.x86_model);
 			break;
 		default:
 			/*
 			 * default constraints for v2 and up
 			 */
 			x86_pmu.event_constraints = intel_gen_event_constraints;
-			pr_cont("generic architected perfmon, ");
+			pr_cont("generic architected perfmon (model %d)), ", boot_cpu_data.x86_model);
 			break;
 		}
 	}

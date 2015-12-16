@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_FPN_TYPES_H
 #define __IA_CSS_FPN_TYPES_H
 
+/** @file
+* CSS-API header file for Fixed Pattern Noise parameters.
+*/
+
 /** Fixed Pattern Noise table.
  *
  *  This contains the fixed patterns noise values

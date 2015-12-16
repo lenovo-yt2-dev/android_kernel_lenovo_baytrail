@@ -77,7 +77,8 @@ struct smiapp_platform_data {
 	struct smiapp_flash_strobe_parms *strobe_setup;
 
 	int (*set_xclk)(struct v4l2_subdev *sd, int hz);
-	char *ext_clk_name;
+	int (*set_power)(struct v4l2_subdev *sd, int power_state);
+
 	int xshutdown;			/* gpio or SMIAPP_NO_XSHUTDOWN */
 };
 

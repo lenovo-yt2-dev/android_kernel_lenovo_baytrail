@@ -309,7 +309,6 @@ void drm_helper_disable_unused_functions(struct drm_device *dev)
 				(*crtc_funcs->disable)(crtc);
 			else
 				(*crtc_funcs->dpms)(crtc, DRM_MODE_DPMS_OFF);
-            printk("%s jianming set fb as null", __func__) ;   
 			crtc->fb = NULL;
 		}
 	}
@@ -391,6 +390,9 @@ drm_crtc_prepare_encoders(struct drm_device *dev)
  * RETURNS:
  * True if the mode was set successfully, or false otherwise.
  */
+#ifdef CONFIG_DLP
+extern void dual_pipeb_crtc_prepare(struct drm_crtc *crtc);
+#endif
 bool drm_crtc_helper_set_mode(struct drm_crtc *crtc,
 			      struct drm_display_mode *mode,
 			      int x, int y,
@@ -465,6 +467,13 @@ bool drm_crtc_helper_set_mode(struct drm_crtc *crtc,
 	}
 
 	drm_crtc_prepare_encoders(dev);
+
+    //the process of prepare is disable... however, don't know its part in new code...
+#ifdef CONFIG_DLP
+    dual_pipeb_crtc_prepare(crtc);
+#endif
+
+    printk("%s : %p\n", __func__, crtc_funcs->prepare);
 
 	crtc_funcs->prepare(crtc);
 
@@ -765,23 +774,13 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 					" userspace\n");
 			drm_mode_debug_printmodeline(set->mode);
 			old_fb = set->crtc->fb;
-
-            if(set->fb == NULL) 
-                    printk("%s jianming set fb as null %d", __func__, __LINE__) ;   
-            
-            set->crtc->fb = set->fb;
-			
-            if (!drm_crtc_helper_set_mode(set->crtc, set->mode,
+			set->crtc->fb = set->fb;
+			if (!drm_crtc_helper_set_mode(set->crtc, set->mode,
 						      set->x, set->y,
 						      old_fb)) {
 				DRM_ERROR("failed to set mode on [CRTC:%d]\n",
 					  set->crtc->base.id);
-                
-                if(old_fb == NULL) 
-                    printk("%s jianming set fb as null %d", __func__, __LINE__) ;   
-
 				set->crtc->fb = old_fb;
-
 				ret = -EINVAL;
 				goto fail;
 			}
@@ -798,18 +797,11 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 		set->crtc->y = set->y;
 
 		old_fb = set->crtc->fb;
-        if (set->crtc->fb != set->fb) {
-            if(set->fb == NULL)
-                    printk("%s jianming set fb as null %d", __func__, __LINE__) ;   
-            set->crtc->fb = set->fb;
-        }
-
-        ret = crtc_funcs->mode_set_base(set->crtc,
+		if (set->crtc->fb != set->fb)
+			set->crtc->fb = set->fb;
+		ret = crtc_funcs->mode_set_base(set->crtc,
 						set->x, set->y, old_fb);
 		if (ret != 0) {
-            if(old_fb == NULL)
-                    printk("%s jianming set fb as null %d", __func__, __LINE__) ;   
-
 			set->crtc->fb = old_fb;
 			goto fail;
 		}

@@ -162,7 +162,7 @@ struct snd_ctl_elem_value32 {
 	unsigned int indirect;	/* bit-field causes misalignment */
         union {
 		s32 integer[256];
-		unsigned char data[1024];
+		unsigned char data[4096];
 #ifndef CONFIG_X86_64
 		s64 integer64[128];
 #endif
@@ -209,7 +209,7 @@ static int get_elem_size(int type, int count)
 	case SNDRV_CTL_ELEM_TYPE_ENUMERATED:
 		return sizeof(int) * count;
 	case SNDRV_CTL_ELEM_TYPE_BYTES:
-		return 512;
+		return 4096;
 	case SNDRV_CTL_ELEM_TYPE_IEC958:
 		return sizeof(struct snd_aes_iec958);
 	default:
@@ -418,6 +418,15 @@ static inline long snd_ctl_ioctl_compat(struct file *file, unsigned int cmd, uns
 	case SNDRV_CTL_IOCTL_TLV_READ:
 	case SNDRV_CTL_IOCTL_TLV_WRITE:
 	case SNDRV_CTL_IOCTL_TLV_COMMAND:
+#if IS_ENABLED(CONFIG_SND_EFFECTS_OFFLOAD)
+	case SNDRV_CTL_IOCTL_EFFECT_VERSION:
+	case SNDRV_CTL_IOCTL_EFFECT_CREATE:
+	case SNDRV_CTL_IOCTL_EFFECT_DESTROY:
+	case SNDRV_CTL_IOCTL_EFFECT_SET_PARAMS:
+	case SNDRV_CTL_IOCTL_EFFECT_GET_PARAMS:
+	case SNDRV_CTL_IOCTL_EFFECT_QUERY_NUM:
+	case SNDRV_CTL_IOCTL_EFFECT_QUERY_CAPS:
+#endif
 		return snd_ctl_ioctl(file, cmd, (unsigned long)argp);
 	case SNDRV_CTL_IOCTL_ELEM_LIST32:
 		return snd_ctl_elem_list_compat(ctl->card, argp);

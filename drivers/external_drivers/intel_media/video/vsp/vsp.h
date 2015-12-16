@@ -82,6 +82,9 @@
 #define VSP_FIRMWARE_MEM_ALIGNMENT 4096
 /* #define VP8_ENC_DEBUG 1 */
 
+#define MAX_VP8_CONTEXT_NUM 3
+#define MAX_VPP_CONTEXT_NUM 1
+
 static const unsigned int vsp_processor_base[] = {
 				SP0_SP_REG_BASE,
 				SP1_SP_REG_BASE,
@@ -91,13 +94,13 @@ static const unsigned int vsp_processor_base[] = {
 				};
 
 /* help macro */
-#define MM_WRITE32(base, offset, value)					\
+#define MM_VSP_WRITE32(base, offset, value)					\
 	do {								\
 		*((uint32_t *)((unsigned char *)(dev_priv->vsp_reg) \
 				    + base + offset)) = value;		\
 	} while (0)
 
-#define MM_READ32(base, offset, pointer)				\
+#define MM_VSP_READ32(base, offset, pointer)				\
 	do {								\
 		*(pointer) =						\
 			*((uint32_t *)((unsigned char *)		\
@@ -106,41 +109,41 @@ static const unsigned int vsp_processor_base[] = {
 	} while (0)
 
 #define SP1_DMEM_WRITE32(offset, value)		\
-	MM_WRITE32(SP1_SP_DMEM_IP, offset, value)
+	MM_VSP_WRITE32(SP1_SP_DMEM_IP, offset, value)
 #define SP1_DMEM_READ32(offset, pointer)	\
-	MM_READ32(SP1_SP_DMEM_IP, offset, pointer)
+	MM_VSP_READ32(SP1_SP_DMEM_IP, offset, pointer)
 
 #define SP_REG_WRITE32(offset, value, processor)			 \
 	do {								 \
-		MM_WRITE32(vsp_processor_base[processor], offset, value); \
+		MM_VSP_WRITE32(vsp_processor_base[processor], offset, value); \
 	} while (0)
 
 #define SP_REG_READ32(offset, pointer, processor)		\
 	do {							\
-		MM_READ32(vsp_processor_base[processor], offset, pointer); \
+		MM_VSP_READ32(vsp_processor_base[processor], offset, pointer); \
 	} while (0)
 
 
 #define SP0_REG_WRITE32(offset, value)		\
-	MM_WRITE32(SP0_SP_REG_BASE, offset, value)
+	MM_VSP_WRITE32(SP0_SP_REG_BASE, offset, value)
 #define SP0_REG_READ32(offset, pointer)		\
-	MM_READ32(SP0_SP_REG_BASE, offset, pointer)
+	MM_VSP_READ32(SP0_SP_REG_BASE, offset, pointer)
 
 #define SP1_REG_WRITE32(offset, value)		\
-	MM_WRITE32(SP1_SP_REG_BASE, offset, value)
+	MM_VSP_WRITE32(SP1_SP_REG_BASE, offset, value)
 #define SP1_REG_READ32(offset, pointer)		\
 	MM_READ32(SP1_SP_REG_BASE, offset, pointer)
 
 #define CONFIG_REG_WRITE32(offset, value)			\
-	MM_WRITE32(VSP_CONFIG_REG_SDRAM_BASE, ((offset) * 4), value)
+	MM_VSP_WRITE32(VSP_CONFIG_REG_SDRAM_BASE, ((offset) * 4), value)
 #define CONFIG_REG_READ32(offset, pointer)			\
-	MM_READ32(VSP_CONFIG_REG_SDRAM_BASE, ((offset) * 4), pointer)
+	MM_VSP_READ32(VSP_CONFIG_REG_SDRAM_BASE, ((offset) * 4), pointer)
 
 #define PAGE_TABLE_SHIFT PAGE_SHIFT
-#define INVALID_MMU MM_WRITE32(0, MMU_INVALID, 0x1)
+#define INVALID_MMU MM_VSP_WRITE32(0, MMU_INVALID, 0x1)
 #define SET_MMU_PTD(address)						\
 	do {								\
-		MM_WRITE32(0, MMU_TABLE_ADDR, address);			\
+		MM_VSP_WRITE32(0, MMU_TABLE_ADDR, address);			\
 	} while (0)
 
 #define VSP_SET_FLAG(val, offset) \
@@ -153,9 +156,9 @@ static const unsigned int vsp_processor_base[] = {
 	((val) = (val ^ (0x1 << (offset))))
 
 #define IRQ_REG_WRITE32(offset, value)		\
-	MM_WRITE32(VSP_IRQ_REG_BASE, offset, value)
+	MM_VSP_WRITE32(VSP_IRQ_REG_BASE, offset, value)
 #define IRQ_REG_READ32(offset, pointer)		\
-	MM_READ32(VSP_IRQ_REG_BASE, offset, pointer)
+	MM_VSP_READ32(VSP_IRQ_REG_BASE, offset, pointer)
 
 #define VSP_NEW_PMSTATE(drm_dev, vsp_priv, new_state)			\
 do {									\
@@ -261,14 +264,12 @@ struct vsp_private {
 	struct VssVp8encPictureParameterBuffer *vp8_encode_frame_cmd;
 	struct ttm_bo_kmap_obj vp8_encode_frame__kmap;
 
-	void *coded_buf;
-	struct ttm_bo_kmap_obj coded_buf_kmap;
-	struct ttm_buffer_object *coded_buf_bo;
-	int context_num;
-
 	/* For VP8 dual encoding */
-	struct file *vp8_filp[2];
+	struct file *vp8_filp[4];
 	int context_vp8_num;
+
+	/* The context number of VPP */
+	int context_vpp_num;
 
 	/*
 	 * to fix problem when CTRL+C vp8 encoding *
@@ -280,6 +281,16 @@ struct vsp_private {
 
 	/* to save the last sequence */
 	uint32_t last_sequence;
+
+	/* VPP pnp usage */
+	unsigned long cmd_submit_time;
+	int acc_num_cmd;
+	int force_flush_cmd;
+	int delayed_burst_cnt;
+	struct delayed_work vsp_cmd_submit_check_wq;
+
+	/* Composer related */
+	uint32_t compose_fence;
 };
 
 extern int vsp_init(struct drm_device *dev);
@@ -320,6 +331,7 @@ extern int psb_vsp_dump_info(struct drm_psb_private *dev_priv);
 
 extern void psb_powerdown_vsp(struct work_struct *work);
 extern void vsp_irq_task(struct work_struct *work);
+extern void vsp_cmd_submit_check(struct work_struct *work);
 
 static inline
 unsigned int vsp_is_idle(struct drm_psb_private *dev_priv,

@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_CTC_TYPES_H
 #define __IA_CSS_CTC_TYPES_H
 
+/** @file
+* CSS-API header file for Chroma Tone Control parameters.
+*/
+
 /** Fractional bits for CTC gain (used only for ISP1).
  *
  *  IA_CSS_CTC_COEF_SHIFT(=13) includes not only the fractional bits
@@ -37,10 +41,12 @@
 
 /** Number of elements in the CTC table. */
 #define IA_CSS_VAMEM_1_CTC_TABLE_SIZE_LOG2      10
+/** Number of elements in the CTC table. */
 #define IA_CSS_VAMEM_1_CTC_TABLE_SIZE           (1U<<IA_CSS_VAMEM_1_CTC_TABLE_SIZE_LOG2)
 
 /** Number of elements in the CTC table. */
 #define IA_CSS_VAMEM_2_CTC_TABLE_SIZE_LOG2      8
+/** Number of elements in the CTC table. */
 #define IA_CSS_VAMEM_2_CTC_TABLE_SIZE           ((1U<<IA_CSS_VAMEM_2_CTC_TABLE_SIZE_LOG2) + 1)
 
 enum ia_css_vamem_type {

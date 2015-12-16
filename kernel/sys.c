@@ -4,6 +4,7 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
+#include <linux/tablet_config.h>
 #include <linux/export.h>
 #include <linux/mm.h>
 #include <linux/utsname.h>
@@ -44,6 +45,7 @@
 #include <linux/ctype.h>
 #include <linux/mm.h>
 #include <linux/mempolicy.h>
+#include <linux/gpio.h>
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
@@ -446,9 +448,20 @@ void kernel_power_off(void)
 		pm_power_off_prepare();
 	migrate_to_reboot_cpu();
 	syscore_shutdown();
+#if defined(BLADE2_13)
 	printk(KERN_EMERG "Power down.\n");
 	kmsg_dump(KMSG_DUMP_POWEROFF);
 	machine_power_off();
+#elif defined(BLADE2_8) || defined(BLADE2_10)
+	if(!gpio_get_value(146)) {
+		printk(KERN_EMERG "Power button is pressed, Restarting system.\n");
+		kernel_restart(NULL);
+	} else {
+		printk(KERN_EMERG "Power down.\n");
+		kmsg_dump(KMSG_DUMP_POWEROFF);
+		machine_power_off();
+	}
+#endif
 }
 EXPORT_SYMBOL_GPL(kernel_power_off);
 

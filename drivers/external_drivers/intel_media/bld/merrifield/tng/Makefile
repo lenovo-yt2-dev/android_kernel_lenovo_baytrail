@@ -34,6 +34,7 @@ ccflags-y += -DANDROID -DLINUX -D_linux_ -D__KERNEL__
 ccflags-y += -DMERRIFIELD -DCONFIG_PCI_MSI
 ccflags-y += -DCONFIG_SLICE_HEADER_PARSING
 ccflags-y += -DCONFIG_VIDEO_MRFLD_EC
+ccflags-y += -DCONFIG_SUPPORT_TRIGER_RGX_HWR
 
 #
 # HDMI
@@ -57,7 +58,8 @@ ccflags-$(CONFIG_SUPPORT_HDMI) += \
 	-I$(OTM_HDMI_INC)/ipil/common \
 	-I$(OTM_HDMI_INC)/ipil/specific/include \
 	-I$(OTM_HDMI_INC)/pil/specific/mrfld \
-	-I$(OTM_HDMI_INC)/ipil/specific/mfld
+	-I$(OTM_HDMI_INC)/ipil/specific/mfld \
+	-Idrivers/staging/sep54
 
 #
 # Video ccflags
@@ -99,25 +101,34 @@ $(DRIVER_NAME)-objs += \
 	$(DISPLAYDIR)/mdfld_dsi_esd.o \
 	$(DISPLAYDIR)/mdfld_dsi_dbi_dsr.o \
 	$(DISPLAYDIR)/dispmgrnl.o \
+	$(DISPLAYDIR)/dsp_sysfs_attrs.o \
 	$(DISPLAYDIR)/mdfld_dsi_pkg_sender.o \
 	$(DISPLAYDIR)/mrfld_clock.o \
 	$(DISPLAYDIR)/psb_irq.o \
 	$(DISPLAYDIR)/tng_wa.o \
 	$(DISPLAYDIR)/pmu_tng.o \
+	$(DISPLAYDIR)/cmn_cabc.o \
 	$(DISPLAYDIR)/jdi_vid.o \
 	$(DISPLAYDIR)/jdi_cmd.o \
 	$(DISPLAYDIR)/cmi_vid.o \
 	$(DISPLAYDIR)/cmi_cmd.o \
-	$(DISPLAYDIR)/sharp5_cmd.o \
+	$(DISPLAYDIR)/sharp10x19_vid.o \
+	$(DISPLAYDIR)/sharp10x19_cmd.o \
 	$(DISPLAYDIR)/sharp25x16_vid.o \
 	$(DISPLAYDIR)/sharp25x16_cmd.o \
+	$(DISPLAYDIR)/sdc16x25_8_cmd.o \
+	$(DISPLAYDIR)/sdc25x16_cmd.o \
 	$(DISPLAYDIR)/jdi25x16_vid.o \
+	$(DISPLAYDIR)/jdi25x16_cmd.o \
 	$(DISPLAYDIR)/ospm/pwr_mgmt.o \
 	$(DISPLAYDIR)/ospm/gfx_rtpm.o \
 	$(DISPLAYDIR)/ospm/dc_ospm.o \
+	$(DISPLAYDIR)/ospm/dc_maxfifo.o \
 	$(DISPLAYDIR)/ospm/video_ospm.o \
 	$(DISPLAYDIR)/ospm/early_suspend.o \
 	$(DISPLAYDIR)/ospm/early_suspend_sysfs.o
+
+$(DRIVER_NAME)-objs += $(DISPLAYDIR)/cmn_dc_callbacks.o
 
 ifeq ($(CONFIG_MOOREFIELD),y)
 $(DRIVER_NAME)-objs += \
@@ -151,13 +162,22 @@ $(DRIVER_NAME)-objs += \
 $(DRIVER_NAME)-objs += \
 	$(OTM_HDMI_SRC)/ipil/specific/mfld/ips_hdmi.o \
 	$(OTM_HDMI_SRC)/ipil/specific/mrfld/ips_hdcp.o \
-	$(OTM_HDMI_SRC)/ipil/specific/mrfld/ips_hdmi_priv.o \
+	$(OTM_HDMI_SRC)/ipil/specific/mrfld/ips_hdmi_priv.o
+
+ifeq ($(CONFIG_MOOREFIELD),y)
+$(DRIVER_NAME)-objs += \
+	$(OTM_HDMI_SRC)/pil/specific/mofd/ps_hdmi.o
+else
+$(DRIVER_NAME)-objs += \
 	$(OTM_HDMI_SRC)/pil/specific/mrfld/ps_hdmi.o
+endif
+
 endif
 
 $(DRIVER_NAME)-objs += \
 	$(VIDEO_COMMON_DIR)/psb_ttm_glue.o \
 	$(VIDEO_COMMON_DIR)/psb_cmdbuf.o \
+	$(VIDEO_COMMON_DIR)/tng_securefw.o \
 	$(VIDEO_COMMON_DIR)/psb_buffer.o \
 	$(VIDEO_COMMON_DIR)/psb_fence.o \
 	$(VIDEO_COMMON_DIR)/psb_mmu.o \

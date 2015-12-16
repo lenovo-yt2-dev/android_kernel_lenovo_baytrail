@@ -142,6 +142,6 @@ TRACE_EVENT(sst_fw_download,
 
 /* This part must be outside protection */
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH ../../sound/soc/intel/sst
+#define TRACE_INCLUDE_PATH .
 #define TRACE_INCLUDE_FILE sst_trace
 #include <trace/define_trace.h>

@@ -25,6 +25,9 @@
 
 #ifdef __SP
 #include <hive_isp_css_sp_api_modified.h>
+#include <ia_css_sp_file_id.sp.h>
+#define SP_FILE_ID SP_FILE_ID_CIRCBUF /* overrule default in ia_css_sp_assert_level.sp.h */
+#include <ia_css_sp_assert_level.sp.h>
 #endif
 
 /**********************************************************************
@@ -119,12 +122,12 @@ uint32_t ia_css_circbuf_pop(ia_css_circbuf_t *cb)
 	uint32_t ret;
 	ia_css_circbuf_elem_t elem;
 
-	if (ia_css_circbuf_is_empty(cb))
 #ifdef __SP
-		OP_std_break();
+	SP_ASSERT_FATAL(!ia_css_circbuf_is_empty(cb));
 #else
-		assert(0);
+	assert(!ia_css_circbuf_is_empty(cb));
 #endif
+
 	/* read an element from the buffer */
 	elem = ia_css_circbuf_read(cb);
 	ret = ia_css_circbuf_elem_get_val(&elem);
@@ -195,6 +198,72 @@ uint32_t ia_css_circbuf_peek(ia_css_circbuf_t *cb, int offset)
 	return cb->elems[pos].val;
 }
 
+/**
+ * @brief Get the value of an element from the circular buffer.
+ * Refer to "ia_css_circbuf.h" for details.
+ */
+uint32_t ia_css_circbuf_peek_from_start(ia_css_circbuf_t *cb, int offset)
+{
+	int pos;
+
+	pos = ia_css_circbuf_get_pos_at_offset(cb, cb->desc->start, offset);
+
+	/* get the value at the position */
+	return cb->elems[pos].val;
+}
+
+/** @brief increase size of a circular buffer.
+ * Use 'CAUTION' before using this function. This was added to
+ * support / fix issue with increasing size for tagger only
+ * Please refer to "ia_css_circbuf.h" for details.
+ */
+bool ia_css_circbuf_increase_size(
+				ia_css_circbuf_t *cb,
+				unsigned int sz_delta,
+				ia_css_circbuf_elem_t *elems)
+{
+	uint8_t curr_size;
+	uint8_t curr_end;
+	unsigned int i = 0;
+
+	if (!cb || sz_delta == 0)
+		return false;
+
+	curr_size = cb->desc->size;
+	curr_end = cb->desc->end;
+	/* We assume cb was pre defined as global to allow
+	 * increase in size */
+	/* FM: are we sure this cannot cause size to become too big? */
+	if (((uint8_t)(cb->desc->size + (uint8_t)sz_delta) > cb->desc->size) && ((uint8_t)sz_delta == sz_delta))
+		cb->desc->size += (uint8_t)sz_delta;
+	else
+		return false; /* overflow in size */
+
+	/* If elems are passed update them else we assume its been taken
+	 * care before calling this function */
+	if (elems) {
+		/* cb element array size will not be increased dynamically,
+		 * but pointers to new elements can be added at the end
+		 * of existing pre defined cb element array of
+		 * size >= new size if not already added */
+		for (i = curr_size; i <  cb->desc->size; i++)
+			cb->elems[i] = elems[i - curr_size];
+	}
+	/* Fix Start / End */
+	if (curr_end < cb->desc->start) {
+		if (curr_end == 0) {
+			/* Easily fix End */
+			cb->desc->end = curr_size;
+		} else {
+			/* Move elements and fix Start*/
+			ia_css_circbuf_shift_chunk(cb,
+						curr_size - 1,
+						curr_size + sz_delta - 1);
+		}
+	}
+
+	return true;
+}
 
 /****************************************************************
  *

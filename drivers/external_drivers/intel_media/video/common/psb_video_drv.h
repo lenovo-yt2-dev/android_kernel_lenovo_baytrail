@@ -58,21 +58,19 @@ struct drm_psb_private;
 #define PSB_BO_HASH_ORDER 8
 #endif
 
-#define PSB_TT_PRIV0_LIMIT	 (256*1024*1024)
+#define PSB_TT_PRIV0_LIMIT	 (512*1024*1024)
 #define PSB_TT_PRIV0_PLIMIT	 (PSB_TT_PRIV0_LIMIT >> PAGE_SHIFT)
 #define PSB_NUM_VALIDATE_BUFFERS 2048
 
 #ifdef MERRIFIELD
 /*
  * For Merrifield, the VSP memory must be in 1GB.
- *	MMU size is 448M
- *	IMR size is 64M
- *	TT size is 256M
+ *	TT size is 256M or 512M
+ *	MMU size is 256M
  *	TILING size is 256M
  */
 #define PSB_MEM_MMU_START		0x00000000
-#define PSB_MEM_IMR_START		0x1C000000
-#define PSB_MEM_TT_START		0x20000000
+#define PSB_MEM_TT_START		0x10000000
 #define PSB_MEM_MMU_TILING_START	0x30000000
 #else
 #define PSB_MEM_MMU_START		0x00000000
@@ -189,10 +187,16 @@ extern void psb_mmu_mirror_gtt(struct psb_mmu_pd *pd, uint32_t mmu_offset,
 extern int psb_mmu_virtual_to_pfn(struct psb_mmu_pd *pd, uint32_t virtual,
 				  unsigned long *pfn);
 #endif
+int psb_ttm_bo_clflush(struct psb_mmu_driver *mmu,
+			struct ttm_buffer_object *bo);
+
+int tng_securefw(struct drm_device *dev, char *fw_basename, char *island_name, int imrl_reg);
+int tng_rawfw(struct drm_device *dev, uint8_t *name);
 
 
 /* Currently defined profiles */
 enum VAProfile {
+	VAProfileNone                   = -1,
 	VAProfileMPEG2Simple		= 0,
 	VAProfileMPEG2Main		= 1,
 	VAProfileMPEG4Simple		= 2,
@@ -207,7 +211,7 @@ enum VAProfile {
 	VAProfileH263Baseline		= 11,
 	VAProfileJPEGBaseline           = 12,
 	VAProfileH264ConstrainedBaseline = 13,
-	VAProfileVP8Version0_3          = 16,
+	VAProfileVP8Version0_3          = 14,
 	VAProfileMax
 };
 
@@ -261,6 +265,14 @@ struct psb_validate_buffer {
 #define	LOG2_WB_FIFO_SIZE	(5)
 #define	WB_FIFO_SIZE		(1 << (LOG2_WB_FIFO_SIZE))
 
+struct adaptive_intra_refresh_info_type{
+       int8_t *air_table;
+       int32_t air_per_frame;
+       int16_t air_skip_cnt;
+       uint16_t air_scan_pos;
+       int32_t sad_threshold;
+};
+
 struct psb_video_ctx {
 	struct list_head head;
 	struct file *filp; /* DRM device file pointer */
@@ -274,18 +286,31 @@ struct psb_video_ctx {
 	struct ttm_buffer_object *mtx_ctx_bo;
 	struct ttm_bo_kmap_obj mtx_ctx_kmap;
 	uint32_t setv_addr;
+
+	/* CIR parameters */
 	struct ttm_buffer_object *cir_input_ctrl_bo;
 	struct ttm_bo_kmap_obj cir_input_ctrl_kmap;
 	uint32_t *cir_input_ctrl_addr;
 	uint32_t pseudo_rand_seed;
 	int32_t last_cir_index;
+
+	/* AIR parameters */
+	struct adaptive_intra_refresh_info_type air_info;
+	struct ttm_buffer_object *bufs_first_pass_out_params_bo;
+	struct ttm_bo_kmap_obj bufs_first_pass_out_params_kmap;
+	uint32_t *bufs_first_pass_out_params_addr;
+	struct ttm_buffer_object *bufs_first_pass_out_best_multipass_param_bo;
+	struct ttm_bo_kmap_obj bufs_first_pass_out_best_multipass_param_kmap;
+	uint32_t *bufs_first_pass_out_best_multipass_param_addr;
+
 	/* Save state registers */
-	uint32_t *mtx_reg;
 	uint32_t *bias_reg;
 
 	uint32_t status;
 	uint32_t codec;
 	uint32_t frame_count;
+	uint32_t frame_w;
+	uint32_t frame_h;
 	/* Firmware data section offset and size */
 	uint32_t mtx_debug_val;
 	uint32_t mtx_bank_size;
@@ -303,8 +328,7 @@ struct psb_video_ctx {
 	uint32_t slice_extract_flag;
 	uint32_t frame_boundary;
 	uint32_t frame_end_seq;
-	uint32_t frame_end;
-	uint32_t copy_cmd_send;
+	uint32_t frame_end; /* frame end command is synced in interrupt */
 #endif
 };
 

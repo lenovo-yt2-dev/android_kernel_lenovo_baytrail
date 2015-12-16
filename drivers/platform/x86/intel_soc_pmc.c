@@ -31,6 +31,7 @@
 #include <linux/suspend.h>
 #include <linux/time.h>
 #include <linux/intel_mid_pm.h>
+#include <linux/pm_qos.h>
 #include <asm/intel_mid_pcihelpers.h>
 
 #define BYT_S3_HINT		0x64
@@ -48,6 +49,7 @@
 #define	D3_STS1			0xA4
 #define FUNC_DIS		0x34
 #define FUNC_DIS2		0x38
+#define PMC_PSS			0x98
 
 #define	PMC_MMIO_BAR		1
 #define	BASE_ADDRESS_MASK	0xFFFFFFFE00
@@ -78,7 +80,7 @@
 #define DISPLAY_POS		6
 
 #define DSP_SSS_CHT		0x36
-#define DSP_SSS_POS_CHT		0x16
+#define DSP_SSS_POS_CHT		16
 
 #define MAX_POWER_ISLANDS	16
 #define ISLAND_UP		0x0
@@ -105,6 +107,30 @@
 #define SC_NUM_DEVICES 36
 #define NC_NUM_DEVICES 6
 
+#define MTPMC_VAL 0x20
+#define DYN_MODE 0x105
+
+#define LPCC_ADDR 0xFED08084
+#define PLT_CLK(x)	(0x60 + (0x04 * (x)))
+#define PLT_CLK_MAXCOUNT	6
+#define MTPMC 0xB0
+#define VLV_PM_STS 0xC
+const char *pg_device_cht[] = {
+	"0 - Reserved", "1 - SATA", "2 - HDA", "3 - SEC",
+	"4 - PCIE 5", "5 - LPSS ", "6 - LPE", "7 - UFS",
+	"8 - Reserved", "9 - Reserved", "10 - Reserved",
+	"11 - UXD(xDCI)", "12 - UXD FD SX(xDCI)",
+	"13 - Reserved ", "14 - Reserved ",
+	"15 - UX Engine(xHCI) ", "16 - USB SUS ",
+	"17 - GMM", "18 - ISH ", "19 - Reserved",
+	"20 - Reserved", "21 - Reserved",
+	"22 - Reserved", "23 - Reserved",
+	"24 - Reserved", "25 - Reserved",
+	"26 - DFX Master ", "27 - DFX Cluster1",
+	"28 - DFX Cluster2", "29 - DFX Cluster3",
+	"30 - DFX Cluster4", "31 - DFX Cluster5"
+};
+
 const char *d3_device_cht[] = {
 	"0 - LPSS 0 DMA 1", "1 - LPSS 0 PMW 0",
 	"2 - LPSS 0 PMW 0", "3 - LPSS 0 UART1",
@@ -112,8 +138,8 @@ const char *d3_device_cht[] = {
 	"6 - LPSS 0 function 6", "7 - LPSS 0 function 7",
 	"8 - SCC EMMC", "9 - SCC SD",
 	"10 - SCC SDIO", "11 - MIPI", "12 - HDA",
-	"13 - LPE", "14 - USB SIP Bridge", "15 - UFS ",
-	"16 - GBE", "17 - SATA", "18 - USB ", "19 - SEC",
+	"13 - LPE", "14 - OTG", "15 - UFS ",
+	"16 - GBE", "17 - SATA", "18 - xHCI ", "19 - SEC",
 	"20 - PCIE function 0", "21 - PCIE function 1",
 	"22 - PCIE function 2", "23 - PCIE function 3",
 	"24 - LPSS 1 DMA1", "25 - LPSS 1 I2c 1",
@@ -180,12 +206,19 @@ struct pmc_dev {
 	u32 __iomem *d3_sts1;
 	u32 __iomem *func_dis;
 	u32 __iomem *func_dis2;
+	u32 __iomem *pmc_pss;
+	u32 __iomem *pc[PLT_CLK_MAXCOUNT];
+	u32 __iomem *lpcc;
+	u32 __iomem *mtpmc_1;
+	u32 __iomem *vlv_pm_sts;
 	struct pci_dev const *pdev;
 	spinlock_t nc_ready_lock;
+	struct mutex pc_mutex;
 	u32 state_residency[STATE_MAX];
 	u32 state_resi_offset[STATE_MAX];
 	u32 residency_total;
 	u32 s3_count;
+	struct platform_device *tco_wdt_dev;
 };
 
 char *states[] = {
@@ -338,6 +371,83 @@ int pmc_nc_set_power_state(int islands, int state_type, int reg)
 }
 EXPORT_SYMBOL(pmc_nc_set_power_state);
 
+#define CLK_CONFG_BIT_POS		0
+#define CLK_CONFG_BIT_LEN		2
+#define CLK_CONFG_D3_GATED		0
+#define CLK_CONFG_FORCE_ON		1
+#define CLK_CONFG_FORCE_OFF		2
+
+#define CLK_FREQ_TYPE_BIT_POS		2
+#define CLK_FREQ_TYPE_BIT_LEN		1
+#define CLK_FREQ_TYPE_XTAL		0	/* 25 MHz */
+#define CLK_FREQ_TYPE_PLL		1	/* 19.2 MHz */
+
+#define REG_MASK(n)		(((1 << (n##_BIT_LEN)) - 1) << (n##_BIT_POS))
+#define REG_SET_FIELD(r, n, v)	(((r) & ~REG_MASK(n)) | \
+				 (((v) << (n##_BIT_POS)) & REG_MASK(n)))
+#define REG_GET_FIELD(r, n)	(((r) & REG_MASK(n)) >> n##_BIT_POS)
+
+int pmc_pc_set_freq(int clk_num, int freq_type)
+{
+	if (unlikely(!pmc))
+		return -EAGAIN;
+
+	if (clk_num < 0 && clk_num > PLT_CLK_MAXCOUNT) {
+		dev_err(&pmc->pdev->dev,
+			"Clock number out of range (%d)\n", clk_num);
+		return -EINVAL;
+	}
+
+	if (freq_type != CLK_FREQ_TYPE_XTAL &&
+	    freq_type != CLK_FREQ_TYPE_PLL) {
+		dev_err(&pmc->pdev->dev, "wrong clock type\n");
+		return -EINVAL;
+	}
+
+	mutex_lock(&pmc->pc_mutex);
+	writel(REG_SET_FIELD(readl(pmc->pc[clk_num]), CLK_FREQ_TYPE, freq_type),
+		pmc->pc[clk_num]);
+	mutex_unlock(&pmc->pc_mutex);
+
+	return 0;
+}
+EXPORT_SYMBOL(pmc_pc_set_freq);
+
+/*
+ * pmc_pc_configure - Configure the specified platform clock
+ * @clk_num: Platform clock number (i.e. 0, 1, 2, ...,5)
+ * @conf:      Clock gating:
+ *		0   - Clock gated on D3 state
+ *		1   - Force on
+ *		2,3 - Force off
+ */
+int pmc_pc_configure(int clk_num, u32 conf)
+{
+	if (unlikely(!pmc))
+		return -EAGAIN;
+
+	if (clk_num < 0 && clk_num > PLT_CLK_MAXCOUNT) {
+		dev_err(&pmc->pdev->dev,
+			"Clock number out of range (%d)\n", clk_num);
+		return -EINVAL;
+	}
+
+	if (conf != CLK_CONFG_D3_GATED &&
+	    conf != CLK_CONFG_FORCE_ON &&
+	    conf != CLK_CONFG_FORCE_OFF) {
+		dev_err(&pmc->pdev->dev,
+			"Invalid clock configuration requested\n");
+		return -EINVAL;
+	}
+
+	mutex_lock(&pmc->pc_mutex);
+	writel(REG_SET_FIELD(readl(pmc->pc[clk_num]), CLK_CONFG, conf),
+		pmc->pc[clk_num]);
+	mutex_unlock(&pmc->pc_mutex);
+	return 0;
+}
+EXPORT_SYMBOL(pmc_pc_configure);
+
 static inline u32 pmc_register_read(int reg_offset)
 {
 	return readl(pmc->pmc_registers + reg_offset);
@@ -373,14 +483,14 @@ static int pmc_devices_state_show(struct seq_file *s, void *unused)
 	struct pmc_dev *pmc_cxt = (struct pmc_dev *)s->private;
 	int i, j;
 	u32 val, nc_pwr_sts, reg, reg_d3sts0, reg_d3sts1, reg_func_dis,
-	    reg_func_dis2, tmp;
-	u8 bit;
+		reg_func_dis2, tmp, pg_status;
+	u8 bit, bit1;
 	u32 ignore_flag;
-	char **d3_device;
-	struct nc_device *nc_devices;
-	unsigned int base_class, sub_class;
-	struct pci_dev *dev = NULL;
-	u16 pmcsr;
+	/*All Reserved bit removed*/
+	u32 pg_ignore_flag = 0x3F86701;
+	const char **d3_device;
+	const char **pg_device;
+	const struct nc_device *nc_devices;
 	int cpu_dma_qos = pm_qos_request(PM_QOS_CPU_DMA_LATENCY);
 
 	pmc_cxt->residency_total = 0;
@@ -403,6 +513,8 @@ static int pmc_devices_state_show(struct seq_file *s, void *unused)
 	pr_info("func_dis = %x\n", reg_func_dis);
 	reg_func_dis2 = readl(pmc_cxt->func_dis2);
 	pr_info("func_dis2 = %x\n", reg_func_dis2);
+	pg_status = readl(pmc_cxt->pmc_pss);
+	pr_info("Power Gate status = %x\n", pg_status);
 
 	seq_puts(s, "\nPM_QOS LATENCIES\n");
 	seq_printf(s, "CPU_DMA_QOS LATENCY= %d [us]\n\n", cpu_dma_qos);
@@ -428,9 +540,10 @@ static int pmc_devices_state_show(struct seq_file *s, void *unused)
 		d3_device = d3_device_cht;
 		/* shift 3rd & 4th bits to 1st & 2nd position to align them in
 		 * order and ignore 3rd bit of d3_sts1 as it is reserved */
-		tmp = reg_func_dis2 & 0x01;
+		reg_func_dis2 &= 0x19;
+		tmp = reg_func_dis2 & 0x1;
 		reg_func_dis2 >>= 2;
-		reg_func_dis2 &= (tmp & 0x08);
+		reg_func_dis2 |= tmp;
 	}
 
 	seq_puts(s, "State \t\t Time[sec] \t\t Residency[%%] \t\t Count\n");
@@ -454,7 +567,7 @@ static int pmc_devices_state_show(struct seq_file *s, void *unused)
 
 	seq_puts(s, "\nSOUTH COMPLEX DEVICES :\n");
 
-	for (j = 0; j < SC_NUM_DEVICES; j++) {
+	for (j = 0; j < (SC_NUM_DEVICES-2); j++) {
 		if (j >= 32) {
 			ignore_flag = reg_func_dis2 & 0x01;
 			reg_func_dis2 >>= 1;
@@ -482,6 +595,22 @@ static int pmc_devices_state_show(struct seq_file *s, void *unused)
 
 	seq_puts(s, "\n");
 
+	if (platform_is(INTEL_ATOM_CHT)) {
+		seq_puts(s, "\nIP POWER GATE STATUS :\n");
+		pg_device = pg_device_cht;
+		for (j = 0; j < (SC_NUM_DEVICES-5); j++) {
+					bit  = pg_status & 0x01;
+					bit1 = pg_ignore_flag & 0x01;
+			if (bit1 != 1)
+				seq_printf(s, "%9s  : %s\n", *(pg_device + j),
+						bit ? "is PG" : "not PG");
+			pg_status >>= 1;
+			pg_ignore_flag >>= 1;
+			continue;
+		}
+
+		seq_puts(s, "\n");
+	}
 	return 0;
 }
 
@@ -559,6 +688,110 @@ static const struct file_operations nc_set_power_operations = {
 	.release        = single_release,
 };
 
+static int s0i3_enable_show(struct seq_file *s, void *unused)
+{
+	return 0;
+}
+
+static ssize_t s0i3_enable_write(struct file *file,
+		const char __user *userbuf, size_t count, loff_t *ppos)
+{
+	char buf[64];
+	int val;
+	unsigned int buf_size;
+	u32 mtpmc_1 = 0;
+		buf_size = count < 64 ? count : 64;
+
+	if (copy_from_user(buf, userbuf, buf_size))
+		return -EFAULT;
+
+	if (sscanf(buf, "%d", &val) != 1)
+		return -EFAULT;
+	if (val == 1) {
+		pr_info(KERN_INFO "Platform Clocks forced OFF\n");
+		{
+			int i;
+
+			for (i = 0; i < PLT_CLK_MAXCOUNT; i++)
+				pmc_pc_configure(i, 0);
+		}
+		pr_info(KERN_INFO "Force LPCC clk\n");
+		writel(DYN_MODE, pmc->lpcc);
+		pr_info(KERN_INFO "PLL force off mtpmc\n");
+		mtpmc_1 = readl(pmc->mtpmc_1);
+		mtpmc_1 |= MTPMC_VAL;
+		writel(mtpmc_1, pmc->mtpmc_1);
+		pr_info(KERN_INFO "Wait to clear VLV PM STS\n");
+		do {
+			pr_info(KERN_INFO "... vlv_pm_sts = %x\n", readl(pmc->vlv_pm_sts));
+		} while ((readl(pmc->vlv_pm_sts)));
+		pr_info(KERN_INFO "S0i3 enabled\n");
+	}
+	return count;
+}
+static int s0i3_enable_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, s0i3_enable_show, inode->i_private);
+}
+
+static const struct file_operations s0i3_enable_operations = {
+	.open           = s0i3_enable_open,
+	.read           = seq_read,
+	.write          = s0i3_enable_write,
+	.llseek         = seq_lseek,
+	.release        = single_release,
+};
+
+static int func_dis_show(struct seq_file *s, void *unused)
+{
+	return 0;
+}
+
+static ssize_t func_dis_write(struct file *file,
+		const char __user *userbuf, size_t count, loff_t *ppos)
+{
+	char buf[64];
+	int val;
+	unsigned int buf_size;
+	u32 mtpmc_1 = 0;
+	u32 fd;
+
+	buf_size = count < 64 ? count : 64;
+
+	if (copy_from_user(buf, userbuf, buf_size))
+		return -EFAULT;
+
+	if (sscanf(buf, "%d", &val) != 1)
+		return -EFAULT;
+
+	if (val < (SC_NUM_DEVICES-4)) {
+		fd = readl(pmc->func_dis);
+		fd |= (1<<val);
+		writel(fd, pmc->func_dis);
+		pr_info("Disabling IP %s\n", d3_device_cht[val]);
+	} else if (val < (SC_NUM_DEVICES-1)) {
+		fd = readl(pmc->func_dis2);
+		fd |= (1<<val);
+		writel(fd, pmc->func_dis2);
+		pr_info("Disabling IP %s\n", d3_device_cht[val]);
+	} else
+		pr_err("Invalid South IP\n");
+
+	return count;
+}
+static int func_dis_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, func_dis_show, inode->i_private);
+}
+
+static const struct file_operations func_dis_operations = {
+	.open           = func_dis_open,
+	.read           = seq_read,
+	.write          = func_dis_write,
+	.llseek         = seq_lseek,
+	.release        = single_release,
+};
+
 static int sc_set_power_show(struct seq_file *s, void *unused)
 {
 	return 0;
@@ -609,6 +842,9 @@ static int pmc_suspend_enter(suspend_state_t state)
 {
 	u32 temp = 0, last_s0i3_residency, s3_res;
 
+	if (platform_is(INTEL_ATOM_CHT))
+		writel((PMC_WAKE_EN_SETTING & ~(0x4000)), pmc->s0ix_wake_en);
+
 	if (state != PM_SUSPEND_MEM)
 		return -EINVAL;
 
@@ -620,6 +856,10 @@ static int pmc_suspend_enter(suspend_state_t state)
 	__mwait(BYT_S3_HINT, 1);
 
 	trace_printk("s3_exit\n");
+
+	if (platform_is(INTEL_ATOM_CHT))
+		writel(PMC_WAKE_EN_SETTING, pmc->s0ix_wake_en);
+
 	s3_res = pmc_register_read(STATE_S0I3) - last_s0i3_residency;
 	if (s3_res) {
 		pmc->state_residency[STATE_S3] += s3_res;
@@ -669,12 +909,57 @@ static DEFINE_PCI_DEVICE_TABLE(pmc_pci_tbl) = {
 };
 MODULE_DEVICE_TABLE(pci, pmc_pci_tbl);
 
+#define BYT_TCO_IRQ 51
+#define BYT_TCO_IRQ_SETTINGS IORESOURCE_IRQ_HIGHEDGE
+
+#define CHT_TCO_IRQ 108
+#define CHT_TCO_IRQ_SETTINGS IORESOURCE_IRQ_LOWEDGE
+
+static struct resource tco_warn_interrupt[] = {
+	{	.name = "warning_interrupt",
+		.start = BYT_TCO_IRQ,
+		.end = BYT_TCO_IRQ,
+		.flags = IORESOURCE_IRQ | BYT_TCO_IRQ_SETTINGS
+	},
+	{	.name = "warning_interrupt",
+		.start = CHT_TCO_IRQ,
+		.end = CHT_TCO_IRQ,
+		.flags = IORESOURCE_IRQ | CHT_TCO_IRQ_SETTINGS
+	}
+};
+
+static void pmc_pci_register_tco_device(struct pci_dev *pdev,
+					struct pmc_dev *pmc_cxt)
+{
+	unsigned int i;
+	struct resource *res = NULL;
+
+	for (i = 0 ; i < ARRAY_SIZE(pmc_pci_tbl) ; i++)
+		if (pmc_pci_tbl[i].device == pdev->device) {
+			if (i < ARRAY_SIZE(tco_warn_interrupt))
+				res = &tco_warn_interrupt[i];
+			break;
+		}
+
+	pmc_cxt->tco_wdt_dev =
+		platform_device_register_resndata(&pdev->dev, "iTCO_wdt", -1,
+						  res, res != NULL ? 1 : 0,
+						  NULL, 0);
+
+	if (IS_ERR(pmc_cxt->tco_wdt_dev)) {
+		dev_err(&pdev->dev,
+			"Failed to create iTCO_wdt platform device\n");
+		return;
+	}
+}
+
 static int pmc_pci_probe(struct pci_dev *pdev,
 				const struct pci_device_id *id)
 {
 	int error = 0, state;
-	struct dentry *d1, *d2, *d3;
+	struct dentry *d1, *d2, *d3, *d4;
 	struct pmc_dev *pmc_cxt;
+	int i;
 
 	pmc_cxt = devm_kzalloc(&pdev->dev,
 			sizeof(struct pmc_dev), GFP_KERNEL);
@@ -718,6 +1003,24 @@ static int pmc_pci_probe(struct pci_dev *pdev,
 	pmc_cxt->func_dis2 = devm_ioremap_nocache(&pdev->dev,
 		pmc_cxt->base_address + FUNC_DIS2, 4);
 
+	pmc_cxt->pmc_pss = devm_ioremap_nocache(&pdev->dev,
+		pmc_cxt->base_address + PMC_PSS, 4);
+/* These changes should be reverted once PMC bugs are fixed*/
+	{
+		int i;
+
+		for (i = 0; i < PLT_CLK_MAXCOUNT; i++)
+			pmc_cxt->pc[i] = devm_ioremap_nocache(&pdev->dev,
+				pmc_cxt->base_address + PLT_CLK(i), 4);
+	}
+	pmc_cxt->lpcc = devm_ioremap_nocache(&pdev->dev,
+		LPCC_ADDR, 4);
+	pmc_cxt->mtpmc_1 = devm_ioremap_nocache(&pdev->dev,
+		pmc_cxt->base_address + MTPMC, 4);
+	pmc_cxt->vlv_pm_sts = devm_ioremap_nocache(&pdev->dev,
+		pmc_cxt->base_address + VLV_PM_STS, 4);
+
+
 	if (!pmc_cxt->pmc_registers || !pmc_cxt->s0ix_wake_en) {
 		dev_err(&pdev->dev, "Failed to map PMC registers.\n");
 		error = -EFAULT;
@@ -727,8 +1030,12 @@ static int pmc_pci_probe(struct pci_dev *pdev,
 	suspend_set_ops(&pmc_suspend_ops);
 
 	spin_lock_init(&pmc->nc_ready_lock);
+	mutex_init(&pmc->pc_mutex);
 
 	pci_set_drvdata(pdev, pmc_cxt);
+
+	/* Register the Watchdog device */
+	pmc_pci_register_tco_device(pdev, pmc_cxt);
 
 	/* /sys/kernel/debug/mid_pmu_states */
 	d1 = debugfs_create_file("mid_pmu_states", S_IFREG | S_IRUGO,
@@ -758,19 +1065,41 @@ static int pmc_pci_probe(struct pci_dev *pdev,
 	d3 = debugfs_create_file("sc_set_power", S_IFREG | S_IRUGO,
 				NULL, NULL, &sc_set_power_operations);
 
-	if (!d3) {
-		dev_err(&pdev->dev, "Can not create a debug file\n");
-		error = -ENOMEM;
-		debugfs_remove(d1);
-		debugfs_remove(d2);
-		goto err_release_region;
-	}
+	if (platform_is(INTEL_ATOM_CHT)) {
+		/* temperory debugfs entry for S0i3 enabling */
+		d3 = debugfs_create_file("s0i3_enable", S_IFREG | S_IRUGO,
+							NULL, NULL, &s0i3_enable_operations);
 
+		if (!d3) {
+			dev_err(&pdev->dev, "Can not create a debug file\n");
+			error = -ENOMEM;
+			debugfs_remove(d1);
+			debugfs_remove(d2);
+			goto err_release_region;
+		}
+
+		d4 = debugfs_create_file("func_dis", S_IFREG | S_IRUGO,
+								NULL, NULL, &func_dis_operations);
+
+		if (!d4) {
+			dev_err(&pdev->dev, "Can not create a debug file\n");
+			error = -ENOMEM;
+			debugfs_remove(d1);
+			debugfs_remove(d2);
+			goto err_release_region;
+		}
+
+
+		pr_info("Forcing all platform clocks to OFF\n");
+		for (i = 0; i < PLT_CLK_MAXCOUNT; i++)
+			pmc_pc_configure(i, CLK_CONFG_FORCE_OFF);
+	}
 	writel(PMC_WAKE_EN_SETTING, pmc_cxt->s0ix_wake_en);
 
 	return 0;
 
 err_release_region:
+	platform_device_unregister(pmc_cxt->tco_wdt_dev);
 	pci_release_region(pdev, PMC_MMIO_BAR);
 exit_err:
 	dev_err(&pdev->dev, "Initialization failed\n");

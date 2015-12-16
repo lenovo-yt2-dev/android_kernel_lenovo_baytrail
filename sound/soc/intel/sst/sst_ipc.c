@@ -190,7 +190,7 @@ void sst_post_message_mrfld(struct work_struct *work)
 	list_del(&msg->node);
 	pr_debug("sst: size: = %x\n", msg->mrfld_header.p.header_low_payload);
 	if (msg->mrfld_header.p.header_high.part.large)
-		memcpy_toio(sst_drv_ctx->mailbox + SST_MAILBOX_SEND,
+		memcpy_toio(sst_drv_ctx->ipc_mailbox + SST_MAILBOX_SEND,
 			    msg->mailbox_data, msg->mrfld_header.p.header_low_payload);
 
 	trace_sst_ipc("POST  ->", msg->mrfld_header.p.header_high.full,
@@ -245,7 +245,7 @@ void sst_post_message_mfld(struct work_struct *work)
 	list_del(&msg->node);
 	pr_debug("size: = %x\n", msg->header.part.data);
 	if (msg->header.part.large)
-		memcpy_toio(sst_drv_ctx->mailbox + SST_MAILBOX_SEND,
+		memcpy_toio(sst_drv_ctx->ipc_mailbox + SST_MAILBOX_SEND,
 			msg->mailbox_data, msg->header.part.data);
 
 	sst_shim_write(sst_drv_ctx->shim, sst_drv_ctx->ipc_reg.ipcx, msg->header.full);
@@ -283,7 +283,7 @@ int sst_sync_post_message_mrfld(struct ipc_post *msg)
 					msg->mrfld_header.p.header_high.full);
 	pr_debug("sst: size = 0x%x\n", msg->mrfld_header.p.header_low_payload);
 	if (msg->mrfld_header.p.header_high.part.large)
-		memcpy_toio(sst_drv_ctx->mailbox + SST_MAILBOX_SEND,
+		memcpy_toio(sst_drv_ctx->ipc_mailbox + SST_MAILBOX_SEND,
 			msg->mailbox_data, msg->mrfld_header.p.header_low_payload);
 
 	trace_sst_ipc("POST  ->", msg->mrfld_header.p.header_high.full,
@@ -325,7 +325,7 @@ int sst_sync_post_message_mfld(struct ipc_post *msg)
 	}
 	pr_debug("sst: Post message: header = %x\n", msg->header.full);
 	if (msg->header.part.large)
-		memcpy_toio(sst_drv_ctx->mailbox + SST_MAILBOX_SEND,
+		memcpy_toio(sst_drv_ctx->ipc_mailbox + SST_MAILBOX_SEND,
 			msg->mailbox_data, msg->header.part.data);
 	sst_shim_write(sst_drv_ctx->shim, sst_drv_ctx->ipc_reg.ipcx, msg->header.full);
 
@@ -415,7 +415,7 @@ static void process_fw_init(void *msg)
 
 	pr_debug("*** FW Init msg came***\n");
 	if (init->result) {
-		sst_drv_ctx->sst_state =  SST_ERROR;
+		sst_drv_ctx->sst_state =  SST_RESET;
 		pr_debug("FW Init failed, Error %x\n", init->result);
 		pr_err("FW Init failed, Error %x\n", init->result);
 		retval = init->result;
@@ -528,59 +528,40 @@ void sst_process_message_mrfld(struct ipc_post *msg)
 	return;
 }
 
-#define VTSV_MAX_NUM_RESULTS 6
-#define VTSV_SIZE_PER_RESULT 7 /* 7 16 bit words */
-/* Max 6 results each of size 7 words + 1 num results word */
-#define VTSV_MAX_TOTAL_RESULT_SIZE \
-	(VTSV_MAX_NUM_RESULTS*VTSV_SIZE_PER_RESULT + 1)
-/* Each data word in the result is sent as a string in the format:
-DATAn=d, where n is the data word index varying from 0 to
-				VTSV_MAX_TOTAL_RESULT_SIZE-1
-d = string representation of data in decimal format;
-				unsigned 16bit data needs max 5 chars
-So total data string size = 4("DATA")+2("n")+1("=")
-				+5("d")+1(null)+5(reserved) = 18  */
-#define VTSV_DATA_STRING_SIZE 18
 
 static int send_vtsv_result_event(void *data, int size)
 {
-	char *envp[VTSV_MAX_TOTAL_RESULT_SIZE+3];
-	char res_size[30];
-	char ev_type[30];
-	char result[VTSV_MAX_TOTAL_RESULT_SIZE][VTSV_DATA_STRING_SIZE];
-	int offset = 0;
-	u16 *tmp;
-	int i;
-	int ret;
+	/* Add 2 bytes for valid data in bytecontrol */
+	u8 result[VTSV_MAX_TOTAL_RESULT_ARRAY_SIZE];
+	struct sst_platform_cb_params	cb_params;
 
 	if (!data) {
 		pr_err("Data pointer Null into %s\n", __func__);
 		return -EINVAL;
 	}
-	size = size / (sizeof(u16)); /* Number of 16 bit data words*/
 	if (size > VTSV_MAX_TOTAL_RESULT_SIZE) {
-		pr_err("VTSV result size exceeds expected value, no uevent sent\n");
+		pr_err("VTSV result size exceeds expected value\n");
 		return -EINVAL;
 	}
 
-	snprintf(ev_type, sizeof(res_size), "EVENT_TYPE=SST_VTSV");
-	envp[offset++] = ev_type;
-	snprintf(res_size, sizeof(ev_type), "VTSV_RESULT_SIZE=%u", size);
-	envp[offset++] = res_size;
-	tmp = (u16 *)(data);
-	for (i = 0; i < size; i++) {
-		/* Driver assumes all data to be u16; The VTSV service
-		layer will type cast to u16 or s16 as appropriate for
-		a given data word*/
-		snprintf(result[i], VTSV_DATA_STRING_SIZE,
-				"DATA%u=%u", i, *tmp++);
-		envp[offset++] = result[i];
-	}
-	envp[offset] = NULL;
-	ret = kobject_uevent_env(&sst_drv_ctx->dev->kobj, KOBJ_CHANGE, envp);
-	if (ret)
-		pr_err("VTSV event send failed: ret = %d\n", ret);
-	return ret;
+	/* First element in byte controls which is 16 bits is size of the data
+	 */
+	result[0] = size;
+	/* Second element is reserved just to maintain 16-bit alignment. App
+	 * parses VTSV  data in terms of 16-bit key value pair
+	 */
+	result[1] = 0x0;
+
+	/* We are filling actual data from index 2 since first two bytes in
+	 * array specify valid data size in an array
+	 */
+	memcpy(&result[2], (char *)data, size);
+	cb_params.event =  SST_PLATFORM_VTSV_READ_EVENT;
+	cb_params.params = &result;
+
+	print_hex_dump_bytes(__func__, DUMP_PREFIX_NONE, (char *)data, size);
+
+	return sst_platform_cb(&cb_params);
 }
 
 static void process_fw_async_msg(struct ipc_post *msg)
@@ -611,6 +592,8 @@ static void process_fw_async_msg(struct ipc_post *msg)
 				stream->period_elapsed(stream->pcm_substream);
 			if (stream->compr_cb)
 				stream->compr_cb(stream->compr_cb_param);
+			sst_update_timer(sst_drv_ctx);
+
 		}
 		break;
 
@@ -662,6 +645,8 @@ void sst_process_reply_mrfld(struct ipc_post *msg)
 	void *data;
 	union ipc_header_high msg_high;
 	u32 msg_low;
+	struct ipc_dsp_hdr *dsp_hdr;
+	unsigned int cmd_id;
 
 	msg_high = msg->mrfld_header.p.header_high;
 	msg_low = msg->mrfld_header.p.header_low_payload;
@@ -693,14 +678,33 @@ void sst_process_reply_mrfld(struct ipc_post *msg)
 	/* if it is a large message, the payload contains the size to
 	 * copy from mailbox */
 	if (msg_high.part.large) {
+
+		if (!msg_low) {
+			pr_err("payload size is 0 for large message\n");
+			pr_err("IPC header %#x has %#x payload\n",
+					msg_high.full, msg_low);
+
+			sst_wake_up_block(sst_drv_ctx, msg_high.part.result,
+					msg_high.part.drv_id,
+					msg_high.part.msg_id, NULL, 0);
+			WARN_ON(1);
+			return;
+		}
+
 		data = kzalloc(msg_low, GFP_KERNEL);
 		if (!data)
 			goto end;
 		memcpy(data, (void *) msg->mailbox_data, msg_low);
+		/* Copy command id so that we can use to put sst to reset */
+		dsp_hdr = (struct ipc_dsp_hdr *)data;
+		cmd_id = dsp_hdr->cmd_id;
+		pr_debug("cmd_id %d\n", dsp_hdr->cmd_id);
 		if (sst_wake_up_block(sst_drv_ctx, msg_high.part.result,
 				msg_high.part.drv_id,
 				msg_high.part.msg_id, data, msg_low))
 			kfree(data);
+		if (cmd_id == IPC_SST_VB_RESET)
+			sst_set_fw_state_locked(sst_drv_ctx, SST_RESET);
 	} else {
 		sst_wake_up_block(sst_drv_ctx, msg_high.part.result,
 				msg_high.part.drv_id,

@@ -37,8 +37,6 @@
 
 /* #define DRM_DEBUG_CODE 2 */
 
-#include <linux/firmware.h>
-
 #include <drm/drmP.h>
 #include <drm/drm.h>
 
@@ -58,15 +56,11 @@
 #define	MEM_AND_CACHE	1
 #define CACHE_ONLY	2
 
-#define FW_NAME_A0 "topazhp_fw.bin"
-#define FW_NAME_B0 "topazhp_fw_b0.bin"
-#define FW_NAME_ANN "ann_a0_signed_vec_key0.bin"
-
-#ifdef CONFIG_DX_SEP54
-extern int sepapp_image_verify(u8 *addr, ssize_t size, u32 key_index, u32 magic_num);
-#endif
-
 extern int drm_psb_msvdx_tiling;
+
+/* Height is bigger than (1920 - 1). Encode will
+   treat TTM_PL_TT buffers as tilied memory */
+#define PSB_TOPAZ_TILING_THRESHOLD (1920 - 1)
 
 #ifdef MRFLD_B0_DEBUG
 /* #define TOPAZHP_ENCODE_FPGA */
@@ -281,13 +275,13 @@ static int32_t get_mtx_control_from_dash(struct drm_psb_private *dev_priv);
 
 static void release_mtx_control_from_dash(struct drm_psb_private *dev_priv);
 
-static void tng_topaz_mmu_hwsetup(struct drm_psb_private *dev_priv);
-
+#if 0
 static int mtx_dma_write(
 	struct drm_device *dev,
 	struct ttm_buffer_object *src_bo,
 	uint32_t dst_ram_addr,
 	uint32_t size);
+#endif
 
 #ifdef MRFLD_B0_DEBUG
 static int tng_error_dump_reg(struct drm_psb_private *dev_priv)
@@ -506,7 +500,8 @@ int tng_topaz_wait_for_register(
 	uint32_t check_func,
 	uint32_t addr,
 	uint32_t value,
-	uint32_t mask)
+	uint32_t mask,
+	bool is_atomic)
 {
 #ifdef KPDUMP
 	printk(KERN_ERR "POL :REG_TOPAZHP_MULTICORE:0x%x 0x%x 0x%x\n",
@@ -529,15 +524,16 @@ int tng_topaz_wait_for_register(
 	}
 
 	/* # poll topaz register for certain times */
-	while (count) {
+	while (--count) {
 		MM_READ32(addr, 0, &tmp);
 
 		if (func(value, tmp, mask))
 			return 0;
 
-		/* FIXME: use cpu_relax instead */
-		PSB_UDELAY(1000);/* derive from reference driver */
-		--count;
+		if (is_atomic)
+			udelay(100);
+		else
+			usleep_range(1000, 1000);
 	}
 
 	/* # now waiting is timeout, return 1 indicat failed */
@@ -606,12 +602,16 @@ static void tng_topaz_mmu_configure(struct drm_device *dev)
 #endif
 
 void tng_topaz_mmu_enable_tiling(
-	struct drm_psb_private *dev_priv)
+	struct drm_psb_private *dev_priv,
+	struct psb_video_ctx *video_ctx)
 {
 	uint32_t reg_val;
-	uint32_t min_addr = dev_priv->bdev.man[TTM_PL_TT].gpu_offset;
+	uint32_t min_addr = dev_priv->bdev.man[DRM_PSB_MEM_MMU_TILING].gpu_offset;
 	uint32_t max_addr = dev_priv->bdev.man[DRM_PSB_MEM_MMU_TILING].gpu_offset +
 			(dev_priv->bdev.man[DRM_PSB_MEM_MMU_TILING].size<<PAGE_SHIFT);
+
+	if ((video_ctx->frame_h > PSB_TOPAZ_TILING_THRESHOLD))
+		min_addr = dev_priv->bdev.man[TTM_PL_TT].gpu_offset;
 
 	PSB_DEBUG_TOPAZ("TOPAZ: Enable tiled memory from %08x ~ %08x\n",
 			min_addr, max_addr);
@@ -645,11 +645,8 @@ void tng_powerdown_topaz(struct work_struct *work)
 {
 	struct tng_topaz_private *topaz_priv =
 		container_of(work, struct tng_topaz_private,
-					topaz_suspend_work);
-	struct drm_psb_private *dev_priv =
-		(struct drm_psb_private *)topaz_priv->dev->dev_private;
+					topaz_suspend_work.work);
 	struct drm_device *dev = (struct drm_device *)topaz_priv->dev;
-	struct ospm_power_island *p_island;
 	int32_t ret = 0;
 
 	PSB_DEBUG_TOPAZ("TOPAZ: Task start\n");
@@ -659,7 +656,7 @@ void tng_powerdown_topaz(struct work_struct *work)
 			ret = tng_topaz_power_off(dev);
 			if (ret) {
 				DRM_ERROR("TOPAZ: Failed to power off");
-				return ret;
+				return;
 			}
 		}
 		tng_topaz_dequeue_send(dev);
@@ -668,11 +665,10 @@ void tng_powerdown_topaz(struct work_struct *work)
 		ret = tng_topaz_power_off(dev);
 		if (ret) {
 			DRM_ERROR("TOPAZ: Failed to power off");
-			return ret;
+			return;
 		}
 	}
 
-out:
 	if (drm_topaz_cmdpolicy != PSB_CMDPOLICY_PARALLEL) {
 		atomic_set(&topaz_priv->cmd_wq_free, 1);
 		wake_up_interruptible(&topaz_priv->cmd_wq);
@@ -690,9 +686,7 @@ int tng_topaz_init(struct drm_device *dev)
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct ttm_bo_device *bdev = &dev_priv->bdev;
 	int ret = 0, n;
-	int ui32RegValue;
 	bool is_iomem;
-	uint32_t reg_val;
 	struct tng_topaz_private *topaz_priv;
 	void *topaz_bo_virt;
 	PSB_DEBUG_TOPAZ("TOPAZ: init topazsc data structures\n");
@@ -721,8 +715,8 @@ int tng_topaz_init(struct drm_device *dev)
 
 	INIT_LIST_HEAD(&topaz_priv->topaz_queue);
 	mutex_init(&topaz_priv->topaz_mutex);
+	mutex_init(&topaz_priv->ctx_mutex);
 	spin_lock_init(&topaz_priv->topaz_lock);
-	spin_lock_init(&topaz_priv->ctx_spinlock);
 
 	topaz_priv->topaz_busy = 0;
 	topaz_priv->topaz_fw_loaded = 0;
@@ -824,6 +818,16 @@ int tng_topaz_init(struct drm_device *dev)
 		}
 	}
 
+	for (n = 0; n < MAX_TOPAZHP_CORES; n++)
+		topaz_priv->topaz_mtx_reg_state[n] = NULL;
+
+	topaz_priv->topaz_mtx_reg_state[0] = kzalloc(2 * PAGE_SIZE, GFP_KERNEL);
+	if (topaz_priv->topaz_mtx_reg_state[0] == NULL) {
+		DRM_ERROR("Failed to kzalloc mtx reg, OOM\n");
+		ret = -1;
+		goto out;
+	}
+
 	return ret;
 out:
 	for (n = 0; n < IMG_CODEC_NUM; ++n) {
@@ -873,7 +877,9 @@ int tng_topaz_reset(struct drm_psb_private *dev_priv)
 		TOPAZCORE_READ32(i, TOPAZHP_CR_TOPAZHP_SRST, &reg_val);
 	}
 
+	/*
 	tng_topaz_mmu_hwsetup(dev_priv);
+	*/
 
 	return 0;
 }
@@ -918,6 +924,14 @@ int tng_topaz_uninit(struct drm_device *dev)
 	}
 
 	if (topaz_priv) {
+		for(n = 0; n < MAX_TOPAZHP_CORES; n++) {
+			if (topaz_priv->topaz_mtx_reg_state[n] != NULL) {
+				PSB_DEBUG_TOPAZ("TOPAZ: Free mtx reg\n");
+				kfree(topaz_priv->topaz_mtx_reg_state[n]);
+				topaz_priv->topaz_mtx_reg_state[n] = NULL;
+			}
+		}
+
 		pci_set_drvdata(dev->pdev, NULL);
 		device_remove_file(&dev->pdev->dev,
 				   &dev_attr_topaz_pmstate);
@@ -931,291 +945,6 @@ int tng_topaz_uninit(struct drm_device *dev)
 	return 0;
 }
 
-extern struct soft_platform_id spid;
-
-int tng_topaz_init_fw_chaabi(struct drm_device *dev)
-{
-	struct drm_psb_private *dev_priv = dev->dev_private;
-	struct tng_topaz_private *topaz_priv = dev_priv->topaz_private;
-	const struct firmware *raw = NULL;
-	uint32_t imr6l_val, imr6l_addr;
-	void *ptr = NULL;
-	int32_t ret = 0;
-	int fw_size;
-	uint8_t *imr_ptr;
-	const uint32_t tng_magic_num = 0x43455624;
-	const int FW_NAME_LEN = 30;
-	char fw_name[FW_NAME_LEN];
-	int name_ret;
-
-#ifdef VERIFYFW_INIT
-	uint32_t i, *p_buf;
-#endif
-
-	name_ret = snprintf(fw_name, FW_NAME_LEN, "topaz.bin.%04x.%04x",
-		 (int)spid.platform_family_id, (int)spid.hardware_id);
-	if (name_ret > FW_NAME_LEN) {
-		DRM_ERROR("failed to get fw name, ret %d vs expect %d\n",
-			  name_ret, FW_NAME_LEN);
-		/* no way */
-		return -1;
-	}
-
-	/* try load with spid first */
-	ret = request_firmware(&raw, fw_name, &dev->pdev->dev);
-	if (ret) {
-		DRM_INFO("failed to load fw: %s, try to load different fw\n",
-			  fw_name);
-
-		/* # get firmware */
-		ret = request_firmware(&raw, FW_NAME_B0, &dev->pdev->dev);
-		if (IS_TNG_B0(dev))
-			ret = request_firmware(&raw, FW_NAME_B0,
-					       &dev->pdev->dev);
-		else if (IS_ANN_A0(dev))
-			ret = request_firmware(&raw, FW_NAME_ANN,
-					       &dev->pdev->dev);
-		else
-			DRM_ERROR("VEC secure fw: bad platform\n");
-	}
-
-	if (ret) {
-		DRM_ERROR("TOPAZ: Request firmware failed: %d\n", ret);
-		return ret;
-	}
-
-	if ((NULL == raw) || (raw->size < 20)) {
-		DRM_ERROR("TOPAZ: Firmware file size is not correct.\n");
-		ret = -1;
-		goto out;
-	}
-
-	PSB_DEBUG_TOPAZ("TOPAZ: Opened firmware, size 0x%08x\n", raw->size);
-
-	/* # load fw from file */
-	PSB_DEBUG_TOPAZ("TOPAZ: copy firmware data to IMR6\n");
-
-	/* get imr 11 region start address and size */
-	imr6l_val = intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,
-		TNG_IMR6L_MSG_REGADDR);
-
-	imr6l_addr = (imr6l_val & TNG_IMR_ADDRESS_MASK) << TNG_IMR_ADDRESS_SHIFT;
-
-	PSB_DEBUG_TOPAZ("IMR6 base address 0x%08x, 0x%08x\n",
-		imr6l_val, imr6l_addr);
-
-	ptr = (int *)(raw)->data;
-	if (!ptr) {
-		DRM_ERROR("TOPAZ: firmware data addr = 0x%08x\n",
-			(unsigned int)ptr);
-		ret = -1;
-		goto out;
-	}
-
-	fw_size = (int)(raw)->size;
-	/* FIXME: set imr_addr to default value */
-	/* imr_addr = 0x48f3000; */
-
-	/* map imr 11 */
-	/* check if raw size is smaller than */
-	/* ioremap the region */
-	PSB_DEBUG_TOPAZ("ioremap fw size 0x%08x\n", fw_size);
-	imr_ptr = ioremap(imr6l_addr, fw_size);
-	if (!imr_ptr) {
-		DRM_ERROR("failed to map imr6l_addr\n");
-		ret = -1;
-		goto out;
-	}
-
-	PSB_DEBUG_TOPAZ("copy fw data to IMR6 0x%08x\n", (u32)imr_ptr);
-	/* copy the firmware to imr 11 */
-	memcpy(imr_ptr, ptr, fw_size);
-
-	PSB_DEBUG_TOPAZ("iounmap IMR6 0x%08x\n", imr_ptr);
-	/* unmap the region */
-	iounmap(imr_ptr);
-
-#ifdef CONFIG_DX_SEP54
-	PSB_DEBUG_TOPAZ("CALL chaabi API to verify it\n");
-	PSB_DEBUG_TOPAZ("addr = 0x%08x, fw_size = 0x%08x, magic = 0x%08x\n",
-		imr6l_addr, fw_size, tng_magic_num);
-#ifdef MRFLD_B0_DEBUG
-	PSB_DEBUG_TOPAZ("imr6 L 0x98 = 0x%x\n", intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,0X98));
-	PSB_DEBUG_TOPAZ("imr6 H 0x99 = 0x%x\n", intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,0X99));
-	PSB_DEBUG_TOPAZ("imr6 RAC 0x9a = 0x%x\n", intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,0X9a));
-	PSB_DEBUG_TOPAZ("imr6 WAC 0x9b = 0x%x\n", intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,0X9b));
-#endif
-	ret = sepapp_image_verify(imr6l_addr, fw_size, 15, tng_magic_num);
-	if (ret) {
-		DRM_ERROR("failed to verify vec firmware ret %x\n", ret);
-		ret = -1;
-		goto out;
-	}
-	PSB_DEBUG_TOPAZ("FW is verified\n");
-#ifdef MRFLD_B0_DEBUG
-	PSB_DEBUG_TOPAZ("imr6 L 0x98 = 0x%x\n", intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,0X98));
-	PSB_DEBUG_TOPAZ("imr6 H 0x99 = 0x%x\n", intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,0X99));
-	PSB_DEBUG_TOPAZ("imr6 RAC 0x9a = 0x%x\n", intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,0X9a));
-	PSB_DEBUG_TOPAZ("imr6 WAC 0x9b = 0x%x\n", intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,0X9b));
-	PSB_DEBUG_TOPAZ("vec FW power PM0 = 0x%x\n", intel_mid_msgbus_read32(0x04, 0x34));
-	ret = 0;
-#endif
-#endif
-
-	release_firmware(raw);
-	PSB_DEBUG_TOPAZ("Return from firmware init\n");
-
-	return ret;
-
-out:
-	if (raw) {
-		DRM_ERROR("Error occues, release firmware....\n");
-		release_firmware(raw);
-	}
-
-	return ret;
-}
-
-/* read firmware bin file and load all data into driver */
-int tng_topaz_init_fw(struct drm_device *dev)
-{
-	struct drm_psb_private *dev_priv = dev->dev_private;
-	struct tng_topaz_private *topaz_priv = dev_priv->topaz_private;
-	const struct firmware *raw = NULL;
-	struct tng_secure_fw *cur_sec_fw;
-	struct ttm_buffer_object **cur_drm_obj;
-	struct ttm_bo_kmap_obj tmp_kmap;
-	bool is_iomem;
-
-	int cur_size, total_size;
-	unsigned char *uc_ptr;
-	unsigned char *uc_header;
-	unsigned int  *ui_ptr;
-	uint32_t ret = 0;
-	int n;
-
-#ifdef VERIFYFW_INIT
-	uint32_t i, *p_buf;
-#endif
-	/* # get firmware */
-	ret = request_firmware(&raw, FW_NAME_A0, &dev->pdev->dev);
-	if (ret) {
-		DRM_ERROR("TOPAZ: Request firmware failed: %d\n", ret);
-		return ret;
-	}
-
-	if ((NULL == raw) || (raw->size < sizeof(struct tng_secure_fw))) {
-		DRM_ERROR("TOPAZ: Firmware file size is not correct.\n");
-		ret = -1;
-		goto out;
-	}
-
-	total_size = raw->size;
-	PSB_DEBUG_TOPAZ("TOPAZ: Opened firmware, size %d\n", raw->size);
-
-	uc_ptr = (unsigned char *) raw->data;
-	if (!uc_ptr) {
-		DRM_ERROR("TOPAZ: Failed to load firmware.\n");
-		ret = -1;
-		goto out;
-	}
-
-	/* # load fw from file */
-	PSB_DEBUG_TOPAZ("TOPAZ: Load firmware......\n");
-	cur_sec_fw = NULL;
-
-	uc_header = uc_ptr;
-	uc_ptr += SECURE_VRL_HEADER + SECURE_FIP_HEADER;
-	ui_ptr = (unsigned int*)uc_ptr;
-	cur_sec_fw = topaz_priv->topaz_fw;
-
-	for (n = 0; n < IMG_CODEC_NUM; ++n, ++cur_sec_fw) {
-		cur_sec_fw->codec_idx = n;
-		cur_sec_fw->addr_data = *ui_ptr++;
-		cur_sec_fw->text_size = *ui_ptr++;
-		cur_sec_fw->data_size = *ui_ptr++;
-		cur_sec_fw->data_loca = *ui_ptr++;
-
-		PSB_DEBUG_TOPAZ("TOPAZ: load codec %d\n",
-			cur_sec_fw->codec_idx);
-
-		PSB_DEBUG_TOPAZ("TOPAZ: address 0x%08x, text size: 0x%08x\n",
-			cur_sec_fw->addr_data, cur_sec_fw->text_size);
-		PSB_DEBUG_TOPAZ("TOPAZ: data size 0x%08x, data loca 08%x\n",
-			cur_sec_fw->data_size, cur_sec_fw->data_loca);
-
-		/* handle text section */
-		cur_drm_obj = &(cur_sec_fw->text);
-		cur_size = cur_sec_fw->text_size;
-
-		/* fill DRM object with firmware data */
-		ret = ttm_bo_kmap(*cur_drm_obj, 0,
-			(*cur_drm_obj)->num_pages, &tmp_kmap);
-		if (ret) {
-			DRM_ERROR("drm_bo_kmap failed: %d\n", ret);
-			ttm_bo_unref(cur_drm_obj);
-			*cur_drm_obj = NULL;
-			goto out;
-		}
-
-		uc_ptr = uc_header + cur_sec_fw->addr_data;
-		PSB_DEBUG_TOPAZ("TOPAZ: data size 0x%08x, data loca 08%x\n",
-			cur_sec_fw->data_size, cur_sec_fw->data_loca);
-
-		memcpy(ttm_kmap_obj_virtual(&tmp_kmap, &is_iomem),
-			uc_ptr, cur_size);
-#ifdef VERIFYFW_INIT
-		PSB_DEBUG_TOPAZ("TOPAZ: ###Firmware text section(FW)###\n");
-		p_buf = (unsigned int *)ttm_kmap_obj_virtual(
-				&tmp_kmap, &is_iomem);
-		PSB_DEBUG_TOPAZ("TOPAZ: First 10(FW):\n");
-		for (i = 0; i < 10; i++)
-			PSB_DEBUG_TOPAZ("%08x ,", p_buf[i]);
-#endif
-		ttm_bo_kunmap(&tmp_kmap);
-
-		/* handle data section */
-		uc_ptr += cur_sec_fw->text_size;
-
-		cur_drm_obj = &cur_sec_fw->data;
-		cur_size = cur_sec_fw->data_size;
-
-		/* fill DRM object with firmware data */
-		ret = ttm_bo_kmap(*cur_drm_obj, 0,
-			(*cur_drm_obj)->num_pages, &tmp_kmap);
-		if (ret) {
-			DRM_ERROR("drm_bo_kmap failed: %d\n", ret);
-			ttm_bo_unref(cur_drm_obj);
-			*cur_drm_obj = NULL;
-			goto out;
-		}
-
-		memcpy(ttm_kmap_obj_virtual(&tmp_kmap, &is_iomem),
-			uc_ptr, cur_size);
-#ifdef VERIFYFW_INIT
-		PSB_DEBUG_TOPAZ("TOPAZ: ###Firmware data section(FW)###\n");
-		p_buf = (unsigned int *)ttm_kmap_obj_virtual(
-				&tmp_kmap, &is_iomem);
-		PSB_DEBUG_TOPAZ("TOPAZ: First 10(FW):\n");
-		for (i = 0; i < 10; i++)
-			PSB_DEBUG_TOPAZ("%08x ,", p_buf[i]);
-#endif
-		ttm_bo_kunmap(&tmp_kmap);
-	}
-
-	release_firmware(raw);
-	PSB_DEBUG_TOPAZ("Return from firmware init\n");
-
-	return ret;
-
-out:
-	if (raw) {
-		DRM_ERROR("Error occues, release firmware....\n");
-		release_firmware(raw);
-	}
-
-	return ret;
-}
 
 static void tng_set_auto_clk_gating(
 	struct drm_device *dev,
@@ -1312,7 +1041,6 @@ int tng_topaz_init_board(
 	struct drm_psb_private *dev_priv;
 	struct tng_topaz_private *topaz_priv;
 	int32_t i;
-	int32_t ret = 0;
 	uint32_t reg_val = 0;
 
 	dev_priv = dev->dev_private;
@@ -1366,7 +1094,7 @@ int tng_topaz_init_board(
 		TOPAZCORE_WRITE32(i, TOPAZHP_CR_TOPAZHP_SRST, 0);
 	}
 
-	tng_topaz_mmu_hwsetup(dev_priv);
+	tng_topaz_mmu_hwsetup(dev_priv, video_ctx);
 
 	tng_set_producer(dev, 0);
 	tng_set_consumer(dev, 0);
@@ -1380,8 +1108,6 @@ int tng_topaz_setup_fw(
 {
 	struct drm_psb_private *dev_priv;
 	struct tng_topaz_private *topaz_priv;
-	uint32_t verify_pc;
-	int32_t i;
 	int32_t ret = 0;
 	uint32_t reg_val = 0;
 
@@ -1455,7 +1181,7 @@ int tng_topaz_setup_fw(
 	ret = tng_topaz_wait_for_register(
 		dev_priv, CHECKFUNC_ISEQUAL,
 		TOPAZHP_TOP_CR_FIRMWARE_REG_1 + (MTX_SCRATCHREG_BOOTSTATUS << 2),
-		TOPAZHP_FW_BOOT_SIGNAL, 0xffffffff);
+		TOPAZHP_FW_BOOT_SIGNAL, 0xffffffff, 1);
 	if (ret) {
 		DRM_ERROR("Firmware failed to complete its setup\n");
 		return ret;
@@ -1503,7 +1229,6 @@ int tng_topaz_fw_run(
 {
 	struct drm_psb_private *dev_priv;
 	struct tng_topaz_private *topaz_priv;
-	uint32_t verify_pc;
 	int32_t ret = 0;
 	uint32_t reg_val = 0;
 
@@ -1551,7 +1276,7 @@ int tng_topaz_fw_run(
 		MULTICORE_WRITE32(MTX_SCRATCHREG_IDLE, 0);
 
 	/* set up mmu */
-	tng_topaz_mmu_hwsetup(dev_priv);
+	tng_topaz_mmu_hwsetup(dev_priv, video_ctx);
 
 	/* write 50 */
 	MULTICORE_WRITE32(TOPAZHP_TOP_CR_MULTICORE_CORE_SEL_0, 0);
@@ -1566,7 +1291,7 @@ int tng_topaz_fw_run(
 	ret = tng_topaz_wait_for_register(
 		dev_priv, CHECKFUNC_ISEQUAL,
 		TOPAZHP_TOP_CR_FIRMWARE_REG_1 + (MTX_SCRATCHREG_BOOTSTATUS << 2),
-		TOPAZHP_FW_BOOT_SIGNAL, 0xffffffff);
+		TOPAZHP_FW_BOOT_SIGNAL, 0xffffffff, 1);
 
 #ifdef MRFLD_B0_DEBUG
 	/* read 104 */
@@ -1661,7 +1386,7 @@ int mtx_upload_fw(struct drm_device *dev,
 	ret = tng_topaz_wait_for_register(dev_priv, CHECKFUNC_ISEQUAL,
 			REG_OFFSET_TOPAZ_DMAC + IMG_SOC_DMAC_IRQ_STAT(0),
 			F_ENCODE(1, IMG_SOC_TRANSFER_FIN),
-			F_ENCODE(1, IMG_SOC_TRANSFER_FIN));
+			F_ENCODE(1, IMG_SOC_TRANSFER_FIN), 1);
 	if (ret) {
 		DRM_ERROR("Transfer text by DMA timeout\n");
 		/* tng_error_dump_reg(dev_priv); */
@@ -1694,7 +1419,7 @@ int mtx_upload_fw(struct drm_device *dev,
 	ret = tng_topaz_wait_for_register(dev_priv, CHECKFUNC_ISEQUAL,
 			REG_OFFSET_TOPAZ_DMAC + IMG_SOC_DMAC_IRQ_STAT(0),
 			F_ENCODE(1, IMG_SOC_TRANSFER_FIN),
-			F_ENCODE(1, IMG_SOC_TRANSFER_FIN));
+			F_ENCODE(1, IMG_SOC_TRANSFER_FIN), 1);
 	if (ret) {
 		DRM_ERROR("Transfer data by DMA timeout\n");
 		/* tng_error_dump_reg(dev_priv); */
@@ -1850,7 +1575,7 @@ int32_t mtx_write_core_reg(
 	/* wait for operation finished */
 	ret = tng_topaz_wait_for_register(dev_priv, CHECKFUNC_ISEQUAL,
 		REG_OFFSET_TOPAZ_MTX + MTX_CR_MTX_REGISTER_READ_WRITE_REQUEST,
-		MASK_MTX_MTX_DREADY, MASK_MTX_MTX_DREADY);
+		MASK_MTX_MTX_DREADY, MASK_MTX_MTX_DREADY, 1);
 	if (ret) {
 		DRM_ERROR("Wait for register timeout");
 		return ret;
@@ -1876,12 +1601,12 @@ int32_t mtx_read_core_reg(
 
 	/* Issue read request */
 	MTX_WRITE32(MTX_CR_MTX_REGISTER_READ_WRITE_REQUEST,
-		    MASK_MTX_MTX_RNW | reg & ~MASK_MTX_MTX_DREADY);
+		    MASK_MTX_MTX_RNW | (reg & ~MASK_MTX_MTX_DREADY));
 
 	/* Wait for done */
 	ret = tng_topaz_wait_for_register(dev_priv, CHECKFUNC_ISEQUAL,
 		REG_OFFSET_TOPAZ_MTX + MTX_CR_MTX_REGISTER_READ_WRITE_REQUEST,
-		MASK_MTX_MTX_DREADY, MASK_MTX_MTX_DREADY);
+		MASK_MTX_MTX_DREADY, MASK_MTX_MTX_DREADY, 1);
 	if (ret) {
 		DRM_ERROR("Wait for register timeout");
 		return ret;
@@ -1939,15 +1664,12 @@ static void release_mtx_control_from_dash(struct drm_psb_private *dev_priv)
 	MULTICORE_WRITE32(TOPAZHP_TOP_CR_MTX_DEBUG_MSTR, reg_val);
 }
 
-/* When width or height is bigger than 1280. Encode will
-   treat TTM_PL_TT buffers as tilied memory */
-#define PSB_TOPAZ_TILING_THRESHOLD (1280)
-
-void tng_topaz_mmu_hwsetup(struct drm_psb_private *dev_priv)
+void tng_topaz_mmu_hwsetup(
+	struct drm_psb_private *dev_priv,
+	struct psb_video_ctx *video_ctx)
 {
 	uint32_t reg_val = 0;
 	uint32_t pd_addr = 0;
-	struct tng_topaz_private *topaz_priv = dev_priv->topaz_private;
 
 	PSB_DEBUG_TOPAZ("TOPAZ: Setup MMU\n");
 
@@ -1967,11 +1689,8 @@ void tng_topaz_mmu_hwsetup(struct drm_psb_private *dev_priv)
 	/* setup index register, all pointing to directory bank 0 */
 
 	/* Enable tiling */
-	if (drm_psb_msvdx_tiling && dev_priv->have_mem_mmu_tiling &&
-		((topaz_priv->frame_w>PSB_TOPAZ_TILING_THRESHOLD) ||
-		(topaz_priv->frame_h>PSB_TOPAZ_TILING_THRESHOLD))) {
-		tng_topaz_mmu_enable_tiling(dev_priv);
-	}
+	if (drm_psb_msvdx_tiling && dev_priv->have_mem_mmu_tiling)
+		tng_topaz_mmu_enable_tiling(dev_priv, video_ctx);
 
 	/* now enable MMU access for all requestors */
 	reg_val = F_ENCODE(0, TOPAZHP_TOP_CR_MMU_BYPASS_TOPAZ);
@@ -2042,7 +1761,7 @@ int32_t mtx_dma_read(struct drm_device *dev, struct ttm_buffer_object *dst_bo,
 	ret = tng_topaz_wait_for_register(dev_priv, CHECKFUNC_ISEQUAL,
 		REG_OFFSET_TOPAZ_DMAC + IMG_SOC_DMAC_IRQ_STAT(0),
 		F_ENCODE(1, IMG_SOC_TRANSFER_FIN),
-		F_ENCODE(1, IMG_SOC_TRANSFER_FIN));
+		F_ENCODE(1, IMG_SOC_TRANSFER_FIN), 1);
 	if (ret) {
 		/* tng_error_dump_reg(dev_priv); */
 		DRM_ERROR("Waiting register timeout");
@@ -2055,6 +1774,7 @@ int32_t mtx_dma_read(struct drm_device *dev, struct ttm_buffer_object *dst_bo,
 	return ret;
 }
 
+#if 0
 static int mtx_dma_write(
 	struct drm_device *dev,
 	struct ttm_buffer_object *src_bo,
@@ -2094,7 +1814,7 @@ static int mtx_dma_write(
 	ret = tng_topaz_wait_for_register(dev_priv, CHECKFUNC_ISEQUAL,
 		REG_OFFSET_TOPAZ_DMAC + IMG_SOC_DMAC_IRQ_STAT(0),
 		F_ENCODE(1, IMG_SOC_TRANSFER_FIN),
-		F_ENCODE(1, IMG_SOC_TRANSFER_FIN));
+		F_ENCODE(1, IMG_SOC_TRANSFER_FIN), 1);
 	if (ret) {
 		/* tng_error_dump_reg(dev_priv); */
 		DRM_ERROR("Waiting register timeout");
@@ -2106,6 +1826,7 @@ static int mtx_dma_write(
 
 	return ret;
 }
+#endif
 
 
 

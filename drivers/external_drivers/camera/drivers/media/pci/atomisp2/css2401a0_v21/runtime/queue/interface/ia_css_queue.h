@@ -114,6 +114,58 @@ extern int ia_css_queue_is_empty(
 			ia_css_queue_t *qhandle,
 			bool *is_empty);
 
+/** @brief Check if the queue is full
+ *
+ * @param[in]  qhandle.  Handle to queue instance
+ * @param[in]  is_full   True if Full, False if not.
+ * @return     0       - Successfully access state.
+ * @return     EINVAL  - Invalid argument.
+ * @return     ENOSYS  - Function not implemented.
+ *
+ */
+extern int ia_css_queue_is_full(
+			ia_css_queue_t *qhandle,
+			bool *is_full);
+
+/** @brief Get used space in the queue
+ *
+ * @param[in]  qhandle.  Handle to queue instance
+ * @param[in]  size      Number of available elements in the queue
+ * @return     0       - Successfully access state.
+ * @return     EINVAL  - Invalid argument.
+ *
+ */
+extern int ia_css_queue_get_used_space(
+			ia_css_queue_t *qhandle,
+			uint32_t *size);
+
+/** @brief Get free space in the queue
+ *
+ * @param[in]  qhandle.  Handle to queue instance
+ * @param[in]  size      Number of free elements in the queue
+ * @return     0       - Successfully access state.
+ * @return     EINVAL  - Invalid argument.
+ *
+ */
+extern int ia_css_queue_get_free_space(
+			ia_css_queue_t *qhandle,
+			uint32_t *size);
+
+/** @brief Peek at an element in the queue
+ *
+ * @param[in]  qhandle.  Handle to queue instance
+ * @param[in]  offset   Offset of element to peek,
+ * 			 starting from head of queue
+ * @param[in]  element   Value of element returned
+ * @return     0       - Successfully access state.
+ * @return     EINVAL  - Invalid argument.
+ *
+ */
+extern int ia_css_queue_peek(
+		ia_css_queue_t *qhandle,
+		uint32_t offset,
+		uint32_t *element);
+
 /** @brief Get the usable size for the queue
  *
  * @param[in]  qhandle. Handle to queue instance
