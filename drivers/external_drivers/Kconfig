@@ -42,14 +42,4 @@ menuconfig EXTERNAL_CAMERA
 if EXTERNAL_CAMERA
 source "drivers/external_drivers/camera/Kconfig"
 endif
-
-menuconfig EXTERNAL_CAMERA_IPU
-        bool "Enable support to Intel camera ipu drivers"
-        depends on EXTERNAL_DRIVERS
-        default n
-        help
-          Enable support to external Intel camera ipu drivers.
-
-source "drivers/external_drivers/ipu/Kconfig"
-
 endif
