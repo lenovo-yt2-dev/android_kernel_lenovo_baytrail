@@ -25,6 +25,7 @@
 #include <type_support.h>
 
 #define HIVE_ISYS2401_DMA_IBUF_DDR_CONN	0
+#define HIVE_ISYS2401_DMA_IBUF_VMEM_CONN	1
 #define _DMA_V2_ZERO_EXTEND		0
 #define _DMA_V2_SIGN_EXTEND		1
 
@@ -37,7 +38,7 @@
  *
  * zhengjie.lu@intel.com:
  * The DMA port definition for the input system
- * 2401 DMA is the duplicattion of the DMA port
+ * 2401 DMA is the duplication of the DMA port
  * definition for the CSS system DMA. It is duplicated
  * here just as the temporal step before the device libary
  * is available. The device libary is suppose to provide
@@ -71,7 +72,8 @@ struct isys2401_dma_port_cfg_s {
  *
  ************************************************/
 typedef enum {
-	isys2401_dma_ibuf_to_ddr_connection = HIVE_ISYS2401_DMA_IBUF_DDR_CONN
+	isys2401_dma_ibuf_to_ddr_connection	= HIVE_ISYS2401_DMA_IBUF_DDR_CONN,
+	isys2401_dma_ibuf_to_vmem_connection	= HIVE_ISYS2401_DMA_IBUF_VMEM_CONN
 } isys2401_dma_connection;
 
 typedef enum {
@@ -89,8 +91,6 @@ struct isys2401_dma_cfg_s {
 /** end of DMA Device */
 
 /* isys2401_dma_channel limits per DMA ID */
-static const isys2401_dma_channel N_ISYS2401_DMA_CHANNEL_PROCS[N_ISYS2401_DMA_ID] = {
-	N_ISYS2401_DMA_CHANNEL
-};
+extern const isys2401_dma_channel N_ISYS2401_DMA_CHANNEL_PROCS[N_ISYS2401_DMA_ID];
 
 #endif /* __ISYS_DMA_GLOBAL_H_INCLUDED__ */

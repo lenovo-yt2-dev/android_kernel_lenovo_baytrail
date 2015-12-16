@@ -28,7 +28,11 @@
 #include <media/lm3554.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
-
+#include <linux/acpi.h>
+#ifdef CONFIG_GMIN_INTEL_MID
+#include <linux/gpio/consumer.h>
+#include <linux/atomisp_gmin_platform.h>
+#endif
 #include <linux/atomisp.h>
 
 struct lm3554_ctrl_id {
@@ -175,29 +179,17 @@ static int lm3554_set_config1(struct lm3554 *flash)
  * Hardware reset and trigger
  */
 
-static int lm3554_hw_reset(struct i2c_client *client)
+static void lm3554_hw_reset(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct lm3554 *flash = to_lm3554(sd);
 	struct lm3554_platform_data *pdata = flash->pdata;
-	int ret;
-
-	ret = gpio_request(pdata->gpio_reset, "flash reset");
-	if (ret < 0)
-		return ret;
-
-	ret = gpio_direction_output(pdata->gpio_reset, 1);
-	if (ret < 0)
-		return ret;
 
 	gpio_set_value(pdata->gpio_reset, 0);
 	msleep(50);
 
 	gpio_set_value(pdata->gpio_reset, 1);
 	msleep(50);
-
-	gpio_free(pdata->gpio_reset);
-	return ret;
 }
 
 static void lm3554_flash_off_delay(long unsigned int arg)
@@ -437,6 +429,22 @@ static int lm3554_g_flash_status(struct v4l2_subdev *sd, s32 *val)
 	return 0;
 }
 
+#ifndef CSS15
+static int lm3554_g_flash_status_register(struct v4l2_subdev *sd, s32 *val)
+{
+	struct lm3554 *flash = to_lm3554(sd);
+	int ret;
+
+	ret = lm3554_read(flash, LM3554_FLAGS_REG);
+
+	if (ret < 0)
+		return ret;
+
+	*val = ret;
+	return 0;
+}
+#endif
+
 static const struct lm3554_ctrl_id lm3554_ctrls[] = {
 	s_ctrl_id_entry_integer(V4L2_CID_FLASH_TIMEOUT,
 				"Flash Timeout",
@@ -498,6 +506,17 @@ static const struct lm3554_ctrl_id lm3554_ctrls[] = {
 				0,
 				NULL,
 				lm3554_g_flash_status),
+#ifndef CSS15
+	s_ctrl_id_entry_integer(V4L2_CID_FLASH_STATUS_REGISTER,
+				"Flash Status Register",
+				0,   /* don't assume any enum ID is first */
+				100, /* enum value, may get extended */
+				1,
+				0,
+				0,
+				NULL,
+				lm3554_g_flash_status_register),
+#endif
 };
 
 static const struct lm3554_ctrl_id *find_ctrl_id(unsigned int id)
@@ -740,28 +759,43 @@ static int lm3554_gpio_init(struct i2c_client *client)
 	struct lm3554_platform_data *pdata = flash->pdata;
 	int ret;
 
-	ret = gpio_request(pdata->gpio_strobe, "flash");
+#ifdef CONFIG_GMIN_INTEL_MID
+	if (!gpio_is_valid(pdata->gpio_reset))
+		return -EINVAL;
+#else
+	ret = gpio_request(pdata->gpio_reset, "flash reset");
 	if (ret < 0)
 		return ret;
+#endif
+
+	ret = gpio_direction_output(pdata->gpio_reset, 1);
+	if (ret < 0)
+		goto err_gpio_reset;
+
+#ifdef CONFIG_GMIN_INTEL_MID
+	if (!gpio_is_valid(pdata->gpio_strobe)) {
+		ret = -EINVAL;
+		goto err_gpio_dir_reset;
+	}
+#else
+	ret = gpio_request(pdata->gpio_strobe, "flash");
+	if (ret < 0)
+		goto err_gpio_dir_reset;
+#endif
 
 	ret = gpio_direction_output(pdata->gpio_strobe, 0);
 	if (ret < 0)
-		goto err_gpio_flash;
-
-	ret = gpio_request(pdata->gpio_torch, "torch");
-	if (ret < 0)
-		goto err_gpio_flash;
-
-	ret = gpio_direction_output(pdata->gpio_torch, 0);
-	if (ret < 0)
-		goto err_gpio_torch;
+		goto err_gpio_strobe;
 
 	return 0;
 
-err_gpio_torch:
-	gpio_free(pdata->gpio_torch);
-err_gpio_flash:
+err_gpio_strobe:
 	gpio_free(pdata->gpio_strobe);
+err_gpio_dir_reset:
+	gpio_direction_output(pdata->gpio_reset, 0);
+err_gpio_reset:
+	gpio_free(pdata->gpio_reset);
+
 	return ret;
 }
 
@@ -772,20 +806,55 @@ static int lm3554_gpio_uninit(struct i2c_client *client)
 	struct lm3554_platform_data *pdata = flash->pdata;
 	int ret;
 
-	ret = gpio_direction_output(pdata->gpio_torch, 0);
-	if (ret < 0)
-		return ret;
-
 	ret = gpio_direction_output(pdata->gpio_strobe, 0);
 	if (ret < 0)
 		return ret;
 
-	gpio_free(pdata->gpio_torch);
+	ret = gpio_direction_output(pdata->gpio_reset, 0);
+	if (ret < 0)
+		return ret;
 
 	gpio_free(pdata->gpio_strobe);
-
+	gpio_free(pdata->gpio_reset);
 	return 0;
 }
+
+
+#ifdef CONFIG_GMIN_INTEL_MID
+void *lm3554_platform_data_func(struct i2c_client *client)
+{
+	static struct lm3554_platform_data platform_data;
+
+	if (ACPI_COMPANION(&client->dev)) {
+		platform_data.gpio_reset  =
+			desc_to_gpio(gpiod_get_index(&(client->dev), "lm3554_gpio2", 2));
+		platform_data.gpio_strobe =
+			desc_to_gpio(gpiod_get_index(&(client->dev), "lm3554_gpio0", 0));
+		platform_data.gpio_torch  =
+			desc_to_gpio(gpiod_get_index(&(client->dev), "lm3554_gpio1", 1));
+	}else {
+		platform_data.gpio_reset = -1;
+		platform_data.gpio_strobe = -1;
+		platform_data.gpio_torch = -1;
+	}
+
+	dev_info(&client->dev, "camera pdata: lm3554: reset: %d strobe %d torch %d\n",
+		platform_data.gpio_reset, platform_data.gpio_strobe,
+		platform_data.gpio_torch);
+
+	/* Set to TX2 mode, then ENVM/TX2 pin is a power amplifier sync input:
+	 * ENVM/TX pin asserted, flash forced into torch;
+	 * ENVM/TX pin desserted, flash set back;
+	 */
+	platform_data.envm_tx2 = 1;
+	platform_data.tx2_polarity = 0;
+
+	/* set peak current limit to be 1000mA */
+	platform_data.current_limit = 0;
+
+	return &platform_data;
+}
+#endif
 
 static int lm3554_probe(struct i2c_client *client,
 				  const struct i2c_device_id *id)
@@ -793,10 +862,12 @@ static int lm3554_probe(struct i2c_client *client,
 	int err;
 	struct lm3554 *flash;
 
+#ifndef CONFIG_GMIN_INTEL_MID
 	if (client->dev.platform_data == NULL) {
 		dev_err(&client->dev, "no platform data\n");
 		return -ENODEV;
 	}
+#endif
 
 	flash = kzalloc(sizeof(*flash), GFP_KERNEL);
 	if (!flash) {
@@ -805,6 +876,11 @@ static int lm3554_probe(struct i2c_client *client,
 	}
 
 	flash->pdata = client->dev.platform_data;
+
+#ifdef CONFIG_GMIN_INTEL_MID
+	if (!flash->pdata || ACPI_COMPANION(&client->dev))
+		flash->pdata = lm3554_platform_data_func(client);
+#endif
 
 	v4l2_i2c_subdev_init(&flash->sd, client, &lm3554_ops);
 	flash->sd.internal_ops = &lm3554_internal_ops;
@@ -831,6 +907,10 @@ static int lm3554_probe(struct i2c_client *client,
 		goto fail2;
 	}
 
+#ifdef CONFIG_GMIN_INTEL_MID
+	if (ACPI_HANDLE(&client->dev))
+		err = atomisp_register_i2c_module(&flash->sd, NULL, LED_FLASH);
+#endif
 	return 0;
 fail2:
 	media_entity_cleanup(&flash->sd.entity);
@@ -876,11 +956,19 @@ static const struct dev_pm_ops lm3554_pm_ops = {
 	.resume = lm3554_resume,
 };
 
+static struct acpi_device_id lm3554_acpi_match[] = {
+	{ "INTCF1C" },
+	{},
+};
+
+MODULE_DEVICE_TABLE(acpi, lm3554_acpi_match);
+
 static struct i2c_driver lm3554_driver = {
 	.driver = {
 		.owner = THIS_MODULE,
 		.name = LM3554_NAME,
 		.pm   = &lm3554_pm_ops,
+		.acpi_match_table = ACPI_PTR(lm3554_acpi_match),
 	},
 	.probe = lm3554_probe,
 	.remove = lm3554_remove,

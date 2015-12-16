@@ -2035,7 +2035,6 @@ enum ieee80211_sa_query_action {
 #define WLAN_CIPHER_SUITE_AES_CMAC	0x000FAC06
 #define WLAN_CIPHER_SUITE_GCMP		0x000FAC08
 
-/* WAPI */
 #define WLAN_CIPHER_SUITE_SMS4		0x00147201
 
 /* AKM suite selectors */

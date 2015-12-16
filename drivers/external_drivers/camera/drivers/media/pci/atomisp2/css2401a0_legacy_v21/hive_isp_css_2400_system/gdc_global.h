@@ -76,21 +76,21 @@ typedef struct gdc_scale_param_mem_s {
 	uint16_t  obuf_offset[N_GDC_PARAM];
 } gdc_scale_param_mem_t;
 
-typedef struct {
-	unsigned int      origin_x;
-	unsigned int      origin_y;
-	unsigned int      in_addr_offset;
-	unsigned int      in_block_width;
-	unsigned int      in_block_height;
-	unsigned int      p0_x;
-	unsigned int      p0_y;
-	unsigned int      p1_x;
-	unsigned int      p1_y;
-	unsigned int      p2_x;
-	unsigned int      p2_y;
-	unsigned int      p3_x;
-	unsigned int      p3_y;
-	unsigned int      padding[3];
+typedef struct gdc_warp_param_mem_s {
+	uint32_t      origin_x;
+	uint32_t      origin_y;
+	uint32_t      in_addr_offset;
+	uint32_t      in_block_width;
+	uint32_t      in_block_height;
+	uint32_t      p0_x;
+	uint32_t      p0_y;
+	uint32_t      p1_x;
+	uint32_t      p1_y;
+	uint32_t      p2_x;
+	uint32_t      p2_y;
+	uint32_t      p3_x;
+	uint32_t      p3_y;
+	uint32_t      padding[3];
 } gdc_warp_param_mem_t;
 
 

@@ -23,6 +23,15 @@ config CPU_FREQ_TABLE
 config CPU_FREQ_GOV_COMMON
 	bool
 
+config MODULE_CPU_FREQ
+	bool "Intel module level cpu frequency scaling"
+	help
+	  This option enables CPU frequency scaling to happen at module level on Intel
+	  processor based systems. This is useful on systems that have more than one
+	  cpu per module.
+
+	  If in doubt, say N
+
 config CPU_FREQ_STAT
 	tristate "CPU frequency translation statistics"
 	select CPU_FREQ_TABLE

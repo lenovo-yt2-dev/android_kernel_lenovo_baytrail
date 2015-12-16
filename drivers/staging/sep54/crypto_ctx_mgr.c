@@ -248,7 +248,7 @@ int ctxmgr_map_user_ctx(struct client_crypto_ctx_info *ctx_info,
 	    ((unsigned long)ctx_info->ctx_page |
 	     ((unsigned long)user_ctx_ptr & ~PAGE_MASK));
 
-	ctx_info->ctx_kptr = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	ctx_info->ctx_kptr = kzalloc(PAGE_SIZE, GFP_DMA);
 	if (ctx_info->ctx_kptr == NULL) {
 		SEP_LOG_ERR("Memory allocation failed\n");
 		return -ENOMEM;
@@ -846,12 +846,6 @@ bool ctxmgr_is_valid_size(struct client_crypto_ctx_info *ctx_info,
 			    data_unit_size == 0) {
 				/* Initialize on first data unit if not
 				   provided by the user */
-				if (data_unit_size < 32) {
-					pr_err(
-						"AES-XTS data unit size too small (%lu). Must be at least 32B\n",
-						data_unit_size);
-					return false;
-				}
 				host_ctx_p->props.alg_specific.aes_xts.
 				    data_unit_size = data_unit_size;
 				aes_ctx_p = (struct sep_ctx_cipher *)

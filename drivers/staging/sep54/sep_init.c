@@ -389,6 +389,10 @@ int sepinit_do_cc_init(struct sep_drvdata *drvdata)
 	struct cc_init_ctx *cc_init_ctx_p;
 	int rc;
 
+	/* Sep was already initialized */
+	if (GET_SEP_STATE(drvdata) == DX_SEP_STATE_DONE_FW_INIT)
+		return 0;
+
 	cur_state = dx_sep_wait_for_state(DX_SEP_STATE_START_SECURE_BOOT,
 					  COLD_BOOT_TIMEOUT_MSEC);
 	if (cur_state != DX_SEP_STATE_START_SECURE_BOOT) {
@@ -416,7 +420,7 @@ int sepinit_do_cc_init(struct sep_drvdata *drvdata)
 /*** FW_INIT handlers ***/
 
 #ifdef DEBUG
-#define ENUM_CASE_RETURN_STR(enum_name)	(case enum_name: return #enum_name)
+#define ENUM_CASE_RETURN_STR(enum_name) (case enum_name: return #enum_name)
 
 static const char *param2str(enum dx_fw_init_tlv_params param_type)
 {
@@ -593,6 +597,12 @@ static int create_fwinit_command(struct sep_drvdata *drvdata,
 	int i;
 	int rc;
 
+	/* For klocwork, add extra check */
+	if (qs_num > SEP_MAX_NUM_OF_DESC_Q) {
+		pr_err("Max number of desc queues (%d) exceeded (%d)\n");
+		return -EINVAL;
+	}
+
 	/* allocate coherent working buffer */
 	*fw_init_params_buf_pp = dma_alloc_coherent(drvdata->dev,
 						    FW_INIT_PARAMS_BUF_LEN,
@@ -759,6 +769,39 @@ static int sepinit_wait_for_fw_init_done(struct sep_drvdata *drvdata)
 
 	return rc;
 }
+/**
+ * sepinit_reload_driver_state() - Wait for FW to update Sep state to reload driver state.
+ * @drvdata:
+ *
+ * Returns int
+ */
+int sepinit_reload_driver_state(struct sep_drvdata *drvdata)
+{
+	int rc = 0;
+	enum dx_sep_state cur_state;
+	uint32_t cur_status;
+
+	WRITE_REGISTER(drvdata->cc_base +
+			HOST_SEP_GPR_REG_OFFSET(DX_HOST_REQ_GPR_IDX),
+			DX_HOST_REQ_CHANGE_TO_RELOAD_DRIVER_STATE);
+
+	cur_state = dx_sep_wait_for_state(
+		DX_SEP_STATE_RELOAD_DRIVER | DX_SEP_STATE_FATAL_ERROR,
+		FW_INIT_TIMEOUT_MSEC);
+	pr_debug("cur_state is 0x%x", cur_state);
+
+	if (cur_state != DX_SEP_STATE_RELOAD_DRIVER) {
+		rc = -EIO;
+		cur_status =
+			READ_REGISTER(drvdata->cc_base + SEP_STATUS_GPR_OFFSET);
+		pr_err("Failed waiting for DX_SEP_STATE_RELOAD_DRIVER from SeP (state=0x%08X status=0x%08X)\n",
+			cur_state, cur_status);
+	} else {
+		pr_info("DONE_FW_INIT\n");
+	}
+
+	return rc;
+}
 
 /**
  * sepinit_do_fw_init() - Initialize SeP FW
@@ -768,7 +811,7 @@ static int sepinit_wait_for_fw_init_done(struct sep_drvdata *drvdata)
  *
  * Returns int 0 on success
  */
-int sepinit_do_fw_init(struct sep_drvdata *drvdata)
+int sepinit_do_fw_init(struct sep_drvdata *drvdata, int init_flag)
 {
 	int rc;
 	u32 *fw_init_params_buf_p;
@@ -784,11 +827,22 @@ int sepinit_do_fw_init(struct sep_drvdata *drvdata)
 		       HOST_SEP_GPR_REG_OFFSET(DX_HOST_REQ_PARAM_GPR_IDX),
 		       fw_init_params_dma);
 	/* Initiate FW-init */
-	WRITE_REGISTER(drvdata->cc_base +
-		       HOST_SEP_GPR_REG_OFFSET(DX_HOST_REQ_GPR_IDX),
-		       DX_HOST_REQ_FW_INIT);
+	if (init_flag == INIT_FW_FLAG)
+		WRITE_REGISTER(drvdata->cc_base +
+			HOST_SEP_GPR_REG_OFFSET(DX_HOST_REQ_GPR_IDX),
+			DX_HOST_REQ_FW_INIT);
+	else
+		WRITE_REGISTER(drvdata->cc_base +
+			HOST_SEP_GPR_REG_OFFSET(DX_HOST_REQ_GPR_IDX),
+			DX_HOST_REQ_UPDATE_SWQ_ADDR);
+
 	rc = sepinit_wait_for_fw_init_done(drvdata);
 	destroy_fwinit_command(drvdata,
-			       fw_init_params_buf_p, fw_init_params_dma);
+		fw_init_params_buf_p, fw_init_params_dma);
+
+	WRITE_REGISTER(drvdata->cc_base +
+			HOST_SEP_GPR_REG_OFFSET(DX_HOST_REQ_GPR_IDX),
+			0);
+
 	return rc;
 }

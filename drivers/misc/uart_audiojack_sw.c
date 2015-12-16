@@ -23,6 +23,8 @@
  *        function driver will be placed in the same /proc directory, for example:
  *        /proc/racer-switch/
  */
+#include <linux/tablet_config.h>
+#ifndef BLADE2_13
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/fs.h>
@@ -47,7 +49,6 @@
 
 #define UART_PATH_EVT	(1)
 #define AUDIO_PATH_EVT	(0)
-
 unsigned int __read_mostly switch_to_uart = 0;
 
 static ssize_t switch_write(struct file *file, const char __user *buf, ssize_t nbytes, loff_t *ppos)
@@ -125,3 +126,4 @@ MODULE_LICENSE("GPL");
 
 fs_initcall(racer_switch_init);
 module_exit(racer_switch_exit);
+#endif

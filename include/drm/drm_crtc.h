@@ -369,6 +369,10 @@ struct drm_crtc_funcs {
 			 struct drm_framebuffer *fb,
 			 struct drm_pending_vblank_event *event);
 
+	int (*set_display)(struct drm_crtc *crtc,
+			struct drm_mode_set_display *disp,
+			struct drm_file *file_priv);
+
 	int (*set_property)(struct drm_crtc *crtc,
 			    struct drm_property *property, uint64_t val);
 };
@@ -1025,6 +1029,8 @@ extern int drm_mode_setcrtc(struct drm_device *dev,
 extern int drm_mode_getplane(struct drm_device *dev,
 			       void *data, struct drm_file *file_priv);
 extern int drm_mode_setplane(struct drm_device *dev,
+			       void *data, struct drm_file *file_priv);
+extern int drm_mode_setdisplay(struct drm_device *dev,
 			       void *data, struct drm_file *file_priv);
 extern int drm_mode_cursor_ioctl(struct drm_device *dev,
 				void *data, struct drm_file *file_priv);

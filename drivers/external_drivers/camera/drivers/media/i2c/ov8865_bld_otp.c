@@ -37,7 +37,7 @@ ov8865_read_otp(struct i2c_client *client, u16 len, u16 reg, u8 *val)
 {
 	struct i2c_msg msg[2];
 	u16 data[OV8865_SHORT_MAX];
-	int err, i;
+	int err;
 
 	if (!client->adapter) {
 		v4l2_err(client, "%s error, no client->adapter\n", __func__);
@@ -72,10 +72,9 @@ error:
 
 static int ov8865_otp_read(struct i2c_client *client, u8 *ov8865_data_ptr, u32 *ov8865_size)
 {
-	int i, ret;
+	int ret;
 	int address_start = SNR_OTP_START;
 	int address_end = SNR_OTP_END;
-	u16 val;
 
 	printk("ov8865 OTP debug\n");
 

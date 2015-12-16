@@ -37,13 +37,15 @@ void
 ia_css_ob_encode(
 	struct sh_css_isp_ob_params *to,
 	const struct ia_css_ob_config *from,
-	const struct sh_css_isp_ob_stream_config *config);
+	const struct sh_css_isp_ob_stream_config *config,
+	unsigned size);
 
 void
 ia_css_ob_vmem_encode(
 	struct sh_css_isp_ob_vmem_params *to,
 	const struct ia_css_ob_config *from,
-	const struct sh_css_isp_ob_stream_config *config);
+	const struct sh_css_isp_ob_stream_config *config,
+	unsigned size);
 
 void
 ia_css_ob_dump(

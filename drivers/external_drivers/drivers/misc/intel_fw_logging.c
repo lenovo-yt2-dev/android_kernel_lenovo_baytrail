@@ -18,6 +18,8 @@
  * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": %s: " fmt , __func__
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -40,6 +42,9 @@
 #include <linux/io.h>
 #include <asm/intel_scu_ipc.h>
 #include <asm/intel_scu_ipcutil.h>
+#ifdef CONFIG_TRACEPOINT_TO_EVENT
+#include <trace/events/tp2e.h>
+#endif
 
 #include "intel_fabricid_def.h"
 #include "intel_fw_trace.h"
@@ -117,8 +122,12 @@
 #define FABRIC_ERR_SIGNATURE_IDX1	1
 #define FABRIC_ERR_SCU_VERSIONINFO	2
 #define FABRIC_ERR_ERRORTYPE		3
+#define FABRIC_ERR_REGID0		4
+#define FABRIC_ERR_RECV_DUMP_START	5
+#define FABRIC_ERR_RECV_DUMP_LENGTH	6
+#define FABRIC_ERR_RECV_DUMP_START2	(FABRIC_ERR_RECV_DUMP_START + \
+					 FABRIC_ERR_RECV_DUMP_LENGTH)
 #define FABRIC_ERR_MAXIMUM_TXT		2048
-#define FABRIC_ERR_ERRORTYPE_MASK	0xFFFF
 
 /* Timeout in ms we wait SCU to generate dump on panic */
 #define SCU_PANIC_DUMP_TOUT		1
@@ -199,6 +208,15 @@ union error_scu_version {
 	u32 data;
 };
 
+union scu_error_type {
+	struct {
+		u32 postcode_err_type:16;
+		u32 protect_err_type:16;
+	} fields;
+	u32 data;
+};
+
+
 union reg_ids {
 	struct {
 		u32 reg_id0:8;
@@ -239,15 +257,31 @@ static u32 new_scu_trace_buffer_rb_size;
 static u32 new_sculog_offline_size;
 static u32 *new_sculog_offline_buf;
 
-struct sculog_list {
+static struct sculog_list {
 	struct list_head list;
 	char *data;
 	u32 size;
 	u32 curpos;
 } pending_sculog_list;
 
+/* Structure of the most important data of SCU Recoverable FE to save */
+static struct recovfe_list {
+	struct list_head list;
+	union error_header	header;
+	union error_scu_version	scuversion;
+	union scu_error_type	errortype;
+	union reg_ids		regid0;
+	u32			dumpDw1[FABRIC_ERR_RECV_DUMP_LENGTH];
+	u32			dumpDw2[FABRIC_ERR_RECV_DUMP_LENGTH];
+} pending_recovfe_list;
+
 static DEFINE_SPINLOCK(parsed_faberr_lock);
 static DEFINE_SPINLOCK(pending_list_lock);
+
+/* This lock protects the list of SCU Recoverable FE information, */
+/* stacked during the SCU Recoverable FE hard-irq, and unstacked  */
+/* during the interruptible thread (soft-irq) */
+static DEFINE_SPINLOCK(pending_recovfe_lock);
 
 static int scu_trace_irq;
 static int recoverable_irq;
@@ -338,7 +372,8 @@ static irqreturn_t fw_logging_irq_thread(int irq, void *ignored)
 		i += snprintf(prefix + i, sizeof(prefix) - i, "ERROR");
 		break;
 	default:
-		pr_err("Invalid message ID!\n");
+		pr_err("Invalid message ID! 0x%x\n",
+		       trace_hdr.cmd & TRACE_ID_MASK);
 		break;
 	}
 
@@ -381,6 +416,8 @@ static void read_scu_trace_hdr(struct scu_trace_hdr_t *hdr)
 	count = sizeof(struct scu_trace_hdr_t) / sizeof(u32);
 
 	if (!fabric_err_buf1) {
+		/*Invalidate old header data*/
+		hdr->magic = 0;
 		pr_err("Invalid Fabric Error buf1 offset\n");
 		return;
 	}
@@ -406,9 +443,16 @@ static irqreturn_t fw_logging_irq(int irq, void *ignored)
 {
 	read_scu_trace_hdr(&trace_hdr);
 
-	if (trace_hdr.magic != TRACE_MAGIC ||
-	    trace_hdr.offset + trace_hdr.size > scu_trace_buffer_size) {
-		pr_err("Invalid SCU trace!\n");
+	if (trace_hdr.magic != TRACE_MAGIC) {
+		pr_err("Invalid SCU trace! (0x%08X)\n", trace_hdr.magic);
+		return IRQ_HANDLED;
+	}
+
+	if (trace_hdr.offset + trace_hdr.size > scu_trace_buffer_size) {
+		pr_err("SCU log offset/wrong size\n");
+		pr_warn("offset (%d) + size (%d) > buffer_size (%d)\n",
+			trace_hdr.offset, trace_hdr.size,
+			scu_trace_buffer_size);
 		return IRQ_HANDLED;
 	}
 
@@ -433,7 +477,7 @@ static void __iomem *get_oshob_addr(void)
 
 	oshob_size = intel_scu_ipc_get_oshob_size();
 	if (oshob_size == 0) {
-		pr_err("Size of oshob is null!!\n");
+		pr_err("Size of OSHOB is null!!\n");
 		return NULL;
 	}
 
@@ -444,7 +488,7 @@ static void __iomem *get_oshob_addr(void)
 			(resource_size_t)oshob_base_addr,
 			(unsigned long)oshob_size);
 	if (oshob_addr == NULL) {
-		pr_err("ioremap of oshob address failed!!\n");
+		pr_err("ioremap of OSHOB address failed!!\n");
 		return NULL;
 	}
 
@@ -482,6 +526,7 @@ static bool fw_error_found(bool use_legacytype, int *only_sculog)
 
 		if (log_buffer[FABRIC_ERR_SIGNATURE_IDX1] !=
 			FABERR_INDICATOR1) {
+			pr_warn("no fabric error indicator\n");
 			return false;
 		}
 
@@ -492,7 +537,7 @@ static bool fw_error_found(bool use_legacytype, int *only_sculog)
 
 		if (caculate_checksum(MAX_NUM_ALL_LOGDWORDS << 2) !=
 		    checksum) {
-			pr_info("fw_error_found: new checksum error\n");
+			pr_warn("Checksum mismatch\n");
 			return false;
 		}
 	}
@@ -880,19 +925,19 @@ static int parse_fab_err_log(
 	u32 fabric_id;
 	union error_header err_header;
 	union error_scu_version err_scu_ver;
+	union scu_error_type scu_err_type;
 	int error_type, cmd_type, init_id, is_multi, is_secondary;
 	u16 scu_minor_ver, scu_major_ver;
-	u32 reg_ids = 0, error_typ = log_buffer[FABRIC_ERR_ERRORTYPE];
+	u32 reg_ids = 0;
 	int i, need_new_regid, num_flag_status,
 		num_err_logs, offset, total;
 
 	err_header.data = log_buffer[FABRIC_ERR_HEADER];
 	err_scu_ver.data = log_buffer[FABRIC_ERR_SCU_VERSIONINFO];
+	scu_err_type.data = log_buffer[FABRIC_ERR_ERRORTYPE];
 
 	scu_minor_ver = err_scu_ver.fields.scu_rt_minor_ver;
 	scu_major_ver = err_scu_ver.fields.scu_rt_major_ver;
-
-	error_typ &= FABRIC_ERR_ERRORTYPE_MASK;
 
 	num_flag_status = err_header.fields.num_flag_regs;
 	num_err_logs = err_header.fields.num_err_regs;
@@ -944,8 +989,12 @@ static int parse_fab_err_log(
 		err_header.fields.num_of_recv_err);
 	fab_err_snprintf(
 		*parsed_fab_err_log, *parsed_fab_err_log_sz,
-		"Fabric error type: %s\n\n",
-		get_errortype_str(error_typ));
+		"Fabric error type: %s\n",
+		get_errortype_str(scu_err_type.fields.postcode_err_type));
+	fab_err_snprintf(
+		*parsed_fab_err_log, *parsed_fab_err_log_sz,
+		"Protection violation type: %s\n\n",
+		get_errortype_str(scu_err_type.fields.protect_err_type));
 	fab_err_snprintf(
 		*parsed_fab_err_log, *parsed_fab_err_log_sz,
 		"Summary of Fabric Error detail:\n");
@@ -1238,8 +1287,13 @@ static ssize_t online_scu_log_proc_read(struct file *file,
 		ret = rpmsg_send_simple_command(fw_logging_instance,
 				IPCMSG_SCULOG_TRACE, IPC_CMD_SCU_LOG_DUMP);
 
-		if (ret || (!ret && *new_scu_trace_buffer != SCULOG_MAGIC)) {
-			pr_info("Fail getting SCU trace via IPC\n");
+		if (ret) {
+			pr_err("IPC_CMD_SCU_LOG_DUMP IPC failed\n");
+			return -EFAULT;
+		}
+
+		if (*new_scu_trace_buffer != SCULOG_MAGIC) {
+			pr_warn("Invalid signature\n");
 			return -EFAULT;
 		}
 
@@ -1434,6 +1488,7 @@ static void dump_unsolicited_scutrace_ascii(char *data,
 static irqreturn_t recoverable_faberror_irq(int irq, void *ignored)
 {
 	struct sculog_list *new_sculog_struct = NULL;
+	struct recovfe_list *new_recovfe_struct = NULL;
 	u32 i, *tmp_unsolicit_sram_data = new_scu_trace_buffer + 1;
 	void *new_sculog_data = NULL;
 
@@ -1447,12 +1502,52 @@ static irqreturn_t recoverable_faberror_irq(int irq, void *ignored)
 
 	if (has_recoverable_fe) {
 		pr_err("A recoverable fabric error intr was captured!!!\n");
-		spin_lock(&parsed_faberr_lock);
 
+		/* Updating /proc/ipanic_fab_recv_err */
+		spin_lock(&parsed_faberr_lock);
 		parsed_fab_err_length = parse_fab_err_log(&parsed_fab_err,
 							&parsed_fab_err_sz);
-
 		spin_unlock(&parsed_faberr_lock);
+
+		/* Stack of Recoverable events (hopefully only one!)    */
+		/* This is needed in case another hard-irq fires before */
+		/* the first soft-irq thread is finished.               */
+		new_recovfe_struct = kzalloc(sizeof(struct recovfe_list),
+					    GFP_ATOMIC);
+
+		if (!new_recovfe_struct) {
+			pr_err("Fail to allocate memory for "
+				"SCU recoverable fabric error copy\n");
+			return IRQ_HANDLED;
+		}
+		/* We take a snapshot of the buffer's characteristic DWords  */
+		/* in case the attached file becomes obsolete (when multiple */
+		/* IRQ occur in quick succession). That way, we can check    */
+		/* the file integrity and still have data if it fails        */
+		new_recovfe_struct->header.data =
+				log_buffer[FABRIC_ERR_HEADER];
+		new_recovfe_struct->scuversion.data =
+				log_buffer[FABRIC_ERR_SCU_VERSIONINFO];
+		new_recovfe_struct->errortype.data =
+				log_buffer[FABRIC_ERR_ERRORTYPE];
+		new_recovfe_struct->regid0.data =
+				log_buffer[FABRIC_ERR_REGID0];
+		memcpy(new_recovfe_struct->dumpDw1,
+				log_buffer + FABRIC_ERR_RECV_DUMP_START,
+				FABRIC_ERR_RECV_DUMP_LENGTH *
+					sizeof(log_buffer[0]));
+		memcpy(new_recovfe_struct->dumpDw2,
+				log_buffer + FABRIC_ERR_RECV_DUMP_START2,
+				FABRIC_ERR_RECV_DUMP_LENGTH *
+					sizeof(log_buffer[0]));
+
+		/* Push on the stack of SCU recoverable events */
+		spin_lock(&pending_recovfe_lock);
+		list_add_tail(&(new_recovfe_struct->list),
+					&(pending_recovfe_list.list));
+
+		spin_unlock(&pending_recovfe_lock);
+
 		return IRQ_WAKE_THREAD;
 
 	} else if (global_unsolicit_scutrace_enable) {
@@ -1498,11 +1593,75 @@ static irqreturn_t recoverable_faberror_irq(int irq, void *ignored)
 	return IRQ_WAKE_THREAD;
 }
 
+#define LENGTH_HEX_VALUE	18	/* > sizeof("DW12:0x12345678") +1 */
 static irqreturn_t recoverable_faberror_thread(int irq, void *ignored)
 {
 	struct list_head *pos, *q;
 	struct sculog_list *tmp;
+	struct recovfe_list *iter;
 	unsigned long flags;
+
+#ifdef CONFIG_TRACEPOINT_TO_EVENT
+	char sData0[LENGTH_HEX_VALUE];
+	char sData1[LENGTH_HEX_VALUE];
+	char sData2[LENGTH_HEX_VALUE];
+	char sData3[LENGTH_HEX_VALUE*FABRIC_ERR_RECV_DUMP_LENGTH];
+	char sData4[LENGTH_HEX_VALUE*FABRIC_ERR_RECV_DUMP_LENGTH];
+	char sData5[LENGTH_HEX_VALUE];
+	int  idx;
+	int  len;
+#endif
+
+	spin_lock_irqsave(&pending_recovfe_lock, flags);
+
+	/* Flush remaining SCU trace log if any left */
+	list_for_each_safe(pos, q, &pending_recovfe_list.list) {
+		iter = list_entry(pos, struct recovfe_list, list);
+
+#ifdef CONFIG_TRACEPOINT_TO_EVENT
+		snprintf(sData0, sizeof(sData0), "DW3:0x%08x",
+			iter->errortype.data);
+		snprintf(sData1, sizeof(sData1), "DW0:0x%08x",
+			iter->header.data);
+		snprintf(sData2, sizeof(sData2), "DW4:0x%08x",
+			iter->regid0.data);
+
+		len = snprintf(sData3, sizeof(sData3), "DW%d:0x%08x",
+				FABRIC_ERR_RECV_DUMP_START, iter->dumpDw1[0]);
+		for (idx = 1; idx < FABRIC_ERR_RECV_DUMP_LENGTH; idx++) {
+			len += snprintf(sData3 + len, sizeof(sData3) - len,
+				" DW%d:0x%08x",
+				FABRIC_ERR_RECV_DUMP_START + idx,
+				iter->dumpDw1[idx]);
+		}
+
+		len = snprintf(sData4, sizeof(sData4), "DW%d:0x%08x",
+				FABRIC_ERR_RECV_DUMP_START2, iter->dumpDw2[0]);
+		for (idx = 1; idx < FABRIC_ERR_RECV_DUMP_LENGTH; idx++) {
+			len += snprintf(sData4 + len, sizeof(sData4) - len,
+				" DW%d:0x%08x",
+				FABRIC_ERR_RECV_DUMP_START2 + idx,
+				iter->dumpDw2[idx]);
+		}
+
+		snprintf(sData5, sizeof(sData5), "DW2:0x%08x",
+			iter->scuversion.data);
+
+		/* function added to create a crashtool event on condition */
+		trace_tp2e_scu_recov_event(TP2E_EV_ERROR,
+					"Fabric", "Recov",
+					sData0, sData1, sData2,
+					sData3, sData4, sData5,
+					"/proc/ipanic_fabric_recv_err", 0);
+#else
+		pr_info("SCU IRQ: TP2E not enabled\n");
+#endif
+
+		list_del(pos);
+		kfree(iter);
+	}
+
+	spin_unlock_irqrestore(&pending_recovfe_lock, flags);
 
 	if (global_unsolicit_scutrace_enable) {
 
@@ -1665,7 +1824,7 @@ static int intel_fw_logging_panic_handler(struct notifier_block *this,
 
 		if (!tmp_ia_trace_buf || !new_scu_trace_buffer ||
 			!new_scu_trace_buffer_size) {
-			pr_info("Invalid SRAM address or size\n");
+			pr_warn("Invalid SRAM address or size\n");
 			goto out; /* Invalid SRAM address/size info */
 		}
 
@@ -1681,7 +1840,7 @@ static int intel_fw_logging_panic_handler(struct notifier_block *this,
 			timeout++ < SCU_PANIC_DUMP_RECHECK1);
 
 		if (timeout > SCU_PANIC_DUMP_RECHECK1) {
-			pr_info("Waiting for trace from SCU timed out!\n");
+			pr_warn("Waiting for trace from SCU timed out!\n");
 			goto out;
 		}
 
@@ -1719,7 +1878,7 @@ static int intel_fw_logging_panic_handler(struct notifier_block *this,
 		 timeout++ < SCU_PANIC_DUMP_RECHECK);
 
 	if (timeout > SCU_PANIC_DUMP_RECHECK) {
-		pr_info("Waiting for trace from SCU timed out!\n");
+		pr_warn("Waiting for trace from SCU timed out!\n");
 		goto out;
 	}
 
@@ -1799,8 +1958,14 @@ static int intel_fw_logging_start_nc_pwr_reporting(void)
 		ret = rpmsg_send_command(fw_logging_instance, IPCMSG_SCULOG_TRACE,
 			IPC_CMD_SCU_LOG_IATRACE, NULL, (u32 *)rbuf, 0, rbuflen);
 
-		if (ret || (!ret && rbuf[2] != 0)) {
-			pr_err("Fail getting shared SRAM addr for IA trace\n");
+		if (ret) {
+			pr_err("IPC_CMD_SCU_LOG_IATRACE IPC failed\n");
+			return -EINVAL;
+		}
+
+		if (rbuf[2] != 0) {
+			pr_err("Unexpected result for "
+			       "IPC_CMD_SCU_LOG_IATRACE IPC\n");
 			return -EINVAL;
 		}
 
@@ -1888,7 +2053,7 @@ static int intel_fw_logging_probe(struct platform_device *pdev)
 
 	if (!disable_scu_tracing)
 			enable_irq(scu_trace_irq);
-
+	pr_info("intel_fw_logging_probe done.\n");
 	return err;
 
 err3:
@@ -1947,7 +2112,9 @@ static ssize_t scutrace_status_store(struct device *dev,
 	int ret = 0, rbuflen = 4;
 
 	char action[MAX_INPUT_LENGTH];
-	sscanf(buffer, "%s", action);
+	char format[10];
+	snprintf(format, sizeof(format), "%%%ds", MAX_INPUT_LENGTH-1);
+	sscanf(buffer, format, action);
 
 	if (!strcmp(action, "enabled")) {
 
@@ -1959,8 +2126,14 @@ static ssize_t scutrace_status_store(struct device *dev,
 					IPC_CMD_SCU_LOG_ENABLE, NULL,
 					(u32 *)rbuf, 0, rbuflen);
 
-		if (ret || (!ret && rbuf[0])) {
-			pr_err("Fail enable SCU trace logging via IPC\n");
+		if (ret) {
+			pr_err("IPC_CMD_SCU_LOG_ENABLE IPC failed\n");
+			return ret;
+		}
+
+		if (rbuf[0]) {
+			pr_err("Unexpected result for "
+			       "IPC_CMD_SCU_LOG_ENABLE IPC\n");
 			return ret;
 		}
 
@@ -1976,8 +2149,14 @@ static ssize_t scutrace_status_store(struct device *dev,
 					IPC_CMD_SCU_LOG_DISABLE, NULL,
 					(u32 *)rbuf, 0, rbuflen);
 
-		if (ret || (!ret && rbuf[0])) {
-			pr_err("Fail disable SCU trace logging via IPC\n");
+		if (ret) {
+			pr_err("IPC_CMD_SCU_LOG_DISABLE IPC failed\n");
+			return ret;
+		}
+
+		if (rbuf[0]) {
+			pr_err("Unexpected result for "
+			       "IPC_CMD_SCU_LOG_DISABLE IPC\n");
 			return ret;
 		}
 
@@ -2005,7 +2184,9 @@ static ssize_t unsolicit_scutrace_store(struct device *dev,
 	int ret = 0, rbuflen = 4;
 
 	char action[MAX_INPUT_LENGTH];
-	sscanf(buffer, "%s", action);
+	char format[10];
+	snprintf(format, sizeof(format), "%%%ds", MAX_INPUT_LENGTH-1);
+	sscanf(buffer, format, action);
 
 	if (!strcmp(action, "enabled")) {
 
@@ -2016,15 +2197,20 @@ static ssize_t unsolicit_scutrace_store(struct device *dev,
 			return count; /* Already enabled */
 		} else {
 			ret = rpmsg_send_command(fw_logging_instance,
-					IPCMSG_SCULOG_TRACE,
-						IPC_CMD_SCU_LOG_EN_RB, NULL,
-						(u32 *)rbuf, 0, rbuflen);
+						 IPCMSG_SCULOG_TRACE,
+						 IPC_CMD_SCU_LOG_EN_RB, NULL,
+						 (u32 *)rbuf, 0, rbuflen);
 
-			if (ret || (!ret && rbuf[0])) {
-				pr_err("Fail enable unsolicit SCU trace log\n");
+			if (ret) {
+				pr_err("IPC_CMD_SCU_LOG_EN_RB IPC failed\n");
 				return ret;
 			}
 
+			if (rbuf[0]) {
+				pr_err("Unexpected result for "
+				       "IPC_CMD_SCU_LOG_EN_RB\n");
+				return ret;
+			}
 			global_unsolicit_scutrace_enable = true;
 			return count;
 		}
@@ -2040,8 +2226,14 @@ static ssize_t unsolicit_scutrace_store(struct device *dev,
 						IPC_CMD_SCU_LOG_DIS_RB, NULL,
 						(u32 *)rbuf, 0, rbuflen);
 
-			if (ret || (!ret && rbuf[0])) {
-				pr_err("Fail disable unsolicit SCU trace log\n");
+			if (ret) {
+				pr_err("IPC_CMD_SCU_LOG_DIS_RB IPC failed\n");
+				return ret;
+			}
+
+			if (rbuf[0]) {
+				pr_err("Unexpected result for "
+				       "IPC_CMD_SCU_LOG_DIS_RB\n");
 				return ret;
 			}
 
@@ -2153,11 +2345,17 @@ static int intel_fw_logging_init(void)
 				}
 
 				tmp_addr = (u32 *)sram_trace_buf;
+				pr_debug("scu_trace_buffer_addr %d, len %d\n",
+					scu_trace_buffer_addr,
+					scu_trace_buffer_size);
+				pr_debug("sram_trace_buf %p, val %x\n",
+					sram_trace_buf,
+					*tmp_addr);
 				if (*tmp_addr != SCULOG_MAGIC) {
 					/* No SCU log detected */
 					iounmap(sram_trace_buf);
 					sram_trace_buf = NULL;
-					pr_info("No valid SCU log magic found!\n");
+					pr_warn("No SCU log magic found!\n");
 				}
 			}
 		} else {
@@ -2213,6 +2411,7 @@ static int intel_fw_logging_init(void)
 	io_apic_set_pci_routing(NULL, RECOVERABLE_FABERR_INT, &irq_attr);
 
 	INIT_LIST_HEAD(&pending_sculog_list.list);
+	INIT_LIST_HEAD(&pending_recovfe_list.list);
 
 	recoverable_irq = RECOVERABLE_FABERR_INT;
 	err = request_threaded_irq(RECOVERABLE_FABERR_INT,
@@ -2251,8 +2450,13 @@ static int intel_fw_logging_init(void)
 	ret = rpmsg_send_command(fw_logging_instance, IPCMSG_SCULOG_TRACE,
 			IPC_CMD_SCU_LOG_ADDR, NULL, (u32 *)rbuf, 0, rbuflen);
 
-	if (ret || (!ret && rbuf[3] != 0)) {
-		pr_err("Fail getting new SCU log shared SRAM location via IPC!\n");
+	if (ret || rbuf[3] != 0) {
+		if (ret)
+			pr_err("IPC_CMD_SCU_LOG_ADDR IPC failed\n");
+		else
+			pr_err("Unexpected result for "
+			       "IPC_CMD_SCU_LOG_ADDR\n");
+
 		global_scutrace_enable = false;
 		global_unsolicit_scutrace_enable = false;
 	} else {
@@ -2284,9 +2488,13 @@ static int intel_fw_logging_init(void)
 		ret = rpmsg_send_command(fw_logging_instance, IPCMSG_SCULOG_TRACE,
 				IPC_CMD_SCU_EN_STATUS, NULL, (u32 *)rbuf, 0, rbuflen);
 
-		if (ret || (!ret && rbuf[0] == 0)) {
+		if (ret || rbuf[0] == 0) {
 			global_scutrace_enable = false;
-			pr_info("SCU trace logging is disabled\n");
+			if (ret)
+				pr_err("IPC_CMD_SCU_EN_STATUS IPC failed\n");
+			else
+				pr_err("Unexpected result for "
+				       "IPC_CMD_SCU_EN_STATUS\n");
 		} else {
 			global_scutrace_enable = true;
 			pr_info("SCU trace logging is enabled\n");

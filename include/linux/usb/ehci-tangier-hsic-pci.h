@@ -4,6 +4,7 @@
 #include <linux/notifier.h>
 #include <linux/usb.h>
 #include <linux/wakelock.h>
+#include <linux/pm_qos.h>
 
 #define HSIC_AUX_GPIO_NAME       "usb_hsic_aux1"
 #define HSIC_WAKEUP_GPIO_NAME    "usb_hsic_aux2"
@@ -103,7 +104,8 @@ struct hsic_tangier_priv {
 	struct wake_lock            resume_wake_lock;
 	struct wake_lock            s3_wake_lock;
 	enum wlock_state            s3_wlock_state;
-	enum wlock_state            s3_rt_state;
+	enum s3_state               s3_rt_state;
+	struct pm_qos_request		pm_qos_req;
 };
 
 enum {

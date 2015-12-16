@@ -322,11 +322,17 @@ int mid_hdmi_audio_setup(
 		struct hdmi_audio_registers_ops *reg_ops,
 		struct hdmi_audio_query_set_ops *query_ops)
 {
-	struct drm_device *dev = hdmi_priv->dev;
-	struct drm_i915_private *dev_priv =
-		(struct drm_i915_private *) dev->dev_private;
+	struct drm_device *dev;
+	struct drm_i915_private *dev_priv;
 	int ret = 0;
+
 	DRM_DEBUG_DRIVER("%s: called\n", __func__);
+
+	if (!hdmi_priv)
+		return -ENODEV;
+
+	dev = hdmi_priv->dev;
+	dev_priv = (struct drm_i915_private *) dev->dev_private;
 
 	reg_ops->hdmi_audio_read_register =
 		(hdmi_audio_reg_ops.hdmi_audio_read_register);
@@ -348,10 +354,15 @@ EXPORT_SYMBOL(mid_hdmi_audio_setup);
 int mid_hdmi_audio_register(struct snd_intel_had_interface *driver,
 				void *had_data)
 {
-	struct drm_device *dev = hdmi_priv->dev;
-	struct drm_i915_private *dev_priv =
-		(struct drm_i915_private *) dev->dev_private;
+	struct drm_device *dev;
+	struct drm_i915_private *dev_priv;
+
 	DRM_DEBUG_DRIVER("%s: called\n", __func__);
+	if (!hdmi_priv)
+		return -ENODEV;
+
+	dev = hdmi_priv->dev;
+	dev_priv = (struct drm_i915_private *) dev->dev_private;
 	dev_priv->had_pvt_data = had_data;
 	dev_priv->had_interface = driver;
 

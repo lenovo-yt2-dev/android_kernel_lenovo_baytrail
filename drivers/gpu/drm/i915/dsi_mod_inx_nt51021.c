@@ -22,6 +22,7 @@
  *
  */
 
+#include <linux/mutex.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_edid.h>
@@ -34,7 +35,9 @@
 #include "intel_dsi_cmd.h"
 #include "dsi_mod_inx_nt51021.h"
 #include "lenovo_lcd_panel.h"
+extern struct mutex lcd_mutex;
 static unsigned char ce_status = 0x1F;
+static unsigned char ce_status1 = 0x07;
 static void  inx_nt51021_vid_get_panel_info(int pipe, struct drm_connector *connector)
 {
 	if (!connector)
@@ -75,19 +78,27 @@ static int inx_nt51021_set_effect(struct hal_panel_ctrl_data *hal_panel_ctrl, st
 	if(level < 0 || level > effect.max_level)
 		return -EINVAL;
 
+    mutex_lock(&lcd_mutex);
 	for(i = 0; i < cmd_nums; i++){
 		cmd = effect_cmd.lcd_cmds[i];
 		dsi_vc_dcs_write(dsi, 0, cmd.cmds, cmd.len);
 	}
 
+    mutex_unlock(&lcd_mutex);
 	//store the effect level
 	effect_data->lcd_effects[effect_index].current_level = level;
     if(effect_index == 1)
     {
         if(level == 0)
+        {
             ce_status = 0x10;
+            ce_status1 = 0x03;
+        }
         else
+        {
             ce_status = 0x1F;
+            ce_status1 = 0x07;
+        }
     }
 	printk("[LCD]:==jinjt==%s line=%d effect_index=%d level=%d\n",__func__,__LINE__,effect_index,level);
 	return ret;
@@ -194,7 +205,7 @@ static int inx_nt51021_get_effect_levels(struct hal_panel_ctrl_data *hal_panel_c
 	return 0;
 }
 static struct lcd_panel_dev inx_nt51021_panel_device = {
-	.name = "inx_nt51021_1200x1920_panel",
+	.name = "NT51021_N080J41-G41_INX_1200x1920_8",
 	.status = OFF,
 	.set_effect = inx_nt51021_set_effect,
 	.get_current_level = inx_nt51021_get_current_level,
@@ -207,8 +218,6 @@ static struct lcd_panel_dev inx_nt51021_panel_device = {
 static bool inx_nt51021_init(struct intel_dsi_device *dsi)
 {
 	struct intel_dsi *intel_dsi = container_of(dsi, struct intel_dsi, dev);
-	struct drm_device *dev = intel_dsi->base.base.dev;
-	struct drm_i915_private *dev_priv = dev->dev_private;
 
 	/* create private data, slam to dsi->dev_priv. could support many panels
 	 * based on dsi->name. This panal supports both command and video mode,
@@ -241,15 +250,15 @@ static bool inx_nt51021_init(struct intel_dsi_device *dsi)
 	intel_dsi->clk_hs_to_lp_count = 0x14;
 	intel_dsi->video_frmt_cfg_bits = 0;
 	intel_dsi->dphy_reg = 0x3c1fc51f;
-
+	intel_dsi->port = 0; /* PORT_A by default */
+	intel_dsi->burst_mode_ratio = 100;
 	intel_dsi->backlight_off_delay = 20;
-		intel_dsi->backlight_on_delay = 50;
+	intel_dsi->backlight_on_delay = 50;
 	intel_dsi->send_shutdown = true;
 	intel_dsi->shutdown_pkt_delay = 20;
 
 	inx_nt51021_panel_device.dsi = intel_dsi;
 	lenovo_lcd_panel_register(&inx_nt51021_panel_device);
-	dev_priv->mipi.panel_bpp = PIPE_24BPP;
 
 	return true;
 }
@@ -261,21 +270,38 @@ static void inx_nt51021_enable(struct intel_dsi_device *dsi)
 	struct intel_dsi *intel_dsi = container_of(dsi, struct intel_dsi, dev);
 	printk("[LCD]:%s\n",__func__);
 	mdelay(20);
-	intel_dsi->hs=1;
+	intel_dsi->hs=0;
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X01, 0X00);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X83, 0X00);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X84, 0X00);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X9F, 0X00);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X97, 0XFF);
-	dsi_vc_dcs_write_1(intel_dsi, 0, 0X83, 0XBB);
+
+    dsi_vc_dcs_write_1(intel_dsi, 0, 0X83, 0XBB);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X84, 0X22);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA1, 0Xff);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA2, 0Xf5);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA3, 0Xeb);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA4, 0Xe2);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA5, 0Xd9);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA6, 0Xd1);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA7, 0Xc9);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA8, 0Xc1);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XA9, 0Xba);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0XAA, 0Xb3);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0Xb4, 0X2e);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0Xb5, 0X5c);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0Xb6, 0X4f);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X90, 0X00);
 	//dsi_vc_dcs_write_1(intel_dsi, 0, 0X90, 0XC0);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X91, 0XA2);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X95, 0X20);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X94, 0X2A);
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X9B, 0X8C);
-	dsi_vc_dcs_write_1(intel_dsi, 0, 0X96, 0X00);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0X96, 0X01);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0X9A, 0X10);
+    dsi_vc_dcs_write_1(intel_dsi, 0, 0XAD, ce_status1);
+
     dsi_vc_dcs_write_1(intel_dsi, 0, 0X83, 0XCC);
     dsi_vc_dcs_write_1(intel_dsi, 0, 0X84, 0X33);
     /*dsi_vc_dcs_write_1(intel_dsi, 0, 0X90, 0X1F);*/
@@ -292,6 +318,9 @@ static void inx_nt51021_enable(struct intel_dsi_device *dsi)
     dsi_vc_dcs_write_1(intel_dsi, 0, 0X84, 0X11);
     dsi_vc_dcs_write_1(intel_dsi, 0, 0XA0, 0X2D);
     dsi_vc_dcs_write_1(intel_dsi, 0, 0XA1, 0X2D);
+
+    dsi_vc_dcs_write_1(intel_dsi, 0, 0X83, 0X00);
+	dsi_vc_dcs_write_1(intel_dsi, 0, 0X84, 0X00);
 	inx_nt51021_panel_device.status = ON;
 
 }
@@ -332,7 +361,10 @@ static bool inx_nt51021_mode_fixup(struct intel_dsi_device *dsi,
 		    const struct drm_display_mode *mode,
 		    struct drm_display_mode *adjusted_mode)
 {
-	printk("[LCD]:%s\n",__func__);
+    struct intel_dsi *intel_dsi = container_of(dsi, struct intel_dsi, dev);
+    intel_dsi->pclk = adjusted_mode->clock;
+     DRM_DEBUG_KMS("pclk : %d\n", intel_dsi->pclk);
+
 	return true;
 }
 
@@ -411,9 +443,11 @@ static void inx_nt51021_set_backlight(struct intel_dsi_device *dsi, u8 level)
 	//printk("[LCD]:%s\n",__func__);
 	intel_dsi->hs = true;
 
-	dsi_vc_dcs_write_1(intel_dsi, 0, 0X83, 0X00);
-	dsi_vc_dcs_write_1(intel_dsi, 0, 0X84, 0X00);
+    mutex_lock(&lcd_mutex);
+	/*dsi_vc_dcs_write_1(intel_dsi, 0, 0X83, 0X00);*/
+	/*dsi_vc_dcs_write_1(intel_dsi, 0, 0X84, 0X00);*/
 	dsi_vc_dcs_write_1(intel_dsi, 0, 0X9F, level);
+    mutex_unlock(&lcd_mutex);
 }
 static void inx_nt51021_destroy(struct intel_dsi_device *dsi) { }
 

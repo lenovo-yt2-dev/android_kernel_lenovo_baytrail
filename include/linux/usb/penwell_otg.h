@@ -392,6 +392,20 @@ enum usb_charger_type {
 	CHRG_MHL	/* Moblie High-Definition Link */
 };
 
+#ifdef CONFIG_ME372CG_BATTERY_SMB345
+	#include "../../../drivers/power/battery/smb345_external_include.h"
+#else
+/*USB type*/
+typedef enum {
+	USB_IN,
+	AC_IN,
+	CABLE_OUT,
+	ENABLE_5V,
+	DISABLE_5V,
+	PAD_SUPPLY,
+};
+#endif
+
 struct adp_status {
 	struct completion	adp_comp;
 	u8			t_adp_rise;
@@ -491,9 +505,11 @@ struct penwell_otg {
 	struct intel_mid_otg_pdata	*otg_pdata;
 
 	struct wake_lock		wake_lock;
+	struct wake_lock		cable_lock;
 	spinlock_t			lock;
 
 	int				phy_power_state;
+	int				usb0_id_gpio;
 };
 
 static inline

@@ -27,6 +27,7 @@
 #include <linux/console.h>
 #include <drm/drmP.h>
 #include <drm/i915_drm.h>
+#include <linux/mfd/intel_mid_pmic.h>
 #include "intel_drv.h"
 #include "i915_reg.h"
 #include "intel_clrmgr.h"
@@ -801,9 +802,12 @@ static int valleyview_freeze(struct drm_device *dev)
 		if ((intel_crtc->pipe == PIPE_B)
 			&& (!dev_priv->audio_suspended)) {
 			/* audio was not suspended earlier
-			 * now we should disable the crtc */
-			dev_priv->display.crtc_disable(crtc);
+			 * now we should disable the crtc
+			 * and turn-off HDMI
+			 */
 			dev_priv->audio_suspended = true;
+			dev_priv->display.crtc_disable(crtc);
+			intel_mid_pmic_writeb(VHDMICNT, VHDMI_OFF);
 		} else
 			dev_priv->display.crtc_disable(crtc);
 	}

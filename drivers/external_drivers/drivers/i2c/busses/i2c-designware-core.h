@@ -188,6 +188,13 @@
 #define VLV2_FS_P_SCLK_HCNT 0x1b
 #define VLV2_FS_P_SCLK_LCNT 0x3a
 
+#define CHV_SS_SCLK_HCNT 0x28f
+#define CHV_SS_SCLK_LCNT 0x2ba
+#define CHV_FS_SCLK_HCNT 0x71
+#define CHV_FS_SCLK_LCNT 0xce
+#define CHV_FS_P_SCLK_HCNT 0x24
+#define CHV_FS_P_SCLK_LCNT 0x53
+
 #define DW_STD_SPEED	100000
 #define DW_FAST_SPEED	400000
 #define DW_HIGH_SPEED	3400000
@@ -313,14 +320,14 @@ enum dw_ctl_id_t {
 	valleyview_6,
 	valleyview_7,
 
-	cherryview_0 = valleyview_0,
-	cherryview_1 = valleyview_1,
-	cherryview_2 = valleyview_2,
-	cherryview_3 = valleyview_3,
-	cherryview_4 = valleyview_4,
-	cherryview_5 = valleyview_5,
-	cherryview_6 = valleyview_6,
-	cherryview_7 = valleyview_7,
+	cherryview_0,
+	cherryview_1,
+	cherryview_2,
+	cherryview_3,
+	cherryview_4,
+	cherryview_5,
+	cherryview_6,
+	cherryview_7,
 };
 
 extern int intel_mid_dw_i2c_abort(int busnum);

@@ -365,8 +365,8 @@ enum mei_pg_state {
  * @hbuf_depth - depth of hardware host/write buffer is slots
  * @hbuf_is_ready - query if the host host/write buffer is ready
  * @wr_msg - the buffer for hbm control messages
- * @wr_ext_msg - the buffer for hbm control responses (set in read cycle)
  * @write_mem_limit - limit write buffers, counted in bytes
+ * @wr_ext_msg - the buffer for hbm control responses (set in read cycle)
  */
 struct mei_device {
 	struct pci_dev *pdev;	/* pointer to pci device struct */

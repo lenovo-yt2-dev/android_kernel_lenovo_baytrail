@@ -22,10 +22,13 @@
 #ifndef _IA_CSS_STREAM_H_
 #define _IA_CSS_STREAM_H_
 
-#if !defined(HAS_NO_INPUT_SYSTEM)
+#include <type_support.h>
+#include <system_local.h>
+#if !defined(HAS_NO_INPUT_SYSTEM) && !defined(USE_INPUT_SYSTEM_VERSION_2401)
 #include <input_system.h>
 #endif
-#include "ia_css.h"
+#include "ia_css_types.h"
+#include "ia_css_stream_public.h"
 
 /**
  * structure to hold all internal stream related information
@@ -42,9 +45,21 @@ struct ia_css_stream {
 	struct ia_css_pipe           **pipes;
 	struct ia_css_pipe            *continuous_pipe;
 	struct ia_css_isp_parameters  *isp_params_configs;
+	struct ia_css_isp_parameters  *per_frame_isp_params_configs;
+
 	bool                           cont_capt;
-	bool						   started;
+	bool                           stop_copy_preview;
+	bool                           started;
 };
+
+/** @brief Get a binary in the stream, which binary has the shading correction.
+ *
+ * @param[in] stream: The stream.
+ * @return	The binary which has the shading correction.
+ *
+ */
+struct ia_css_binary *
+ia_css_stream_get_shading_correction_binary(const struct ia_css_stream *stream);
 
 struct ia_css_binary *
 ia_css_stream_get_dvs_binary(const struct ia_css_stream *stream);
@@ -58,9 +73,6 @@ ia_css_stream_input_format_bits_per_pixel(struct ia_css_stream *stream);
 bool
 sh_css_params_set_binning_factor(struct ia_css_stream *stream, unsigned int sensor_binning);
 
-enum ia_css_err
-sh_css_param_update_isp_params(struct ia_css_stream *stream, bool commit, struct ia_css_pipe *pipe);
-
 void
 sh_css_invalidate_params(struct ia_css_stream *stream);
 
@@ -68,6 +80,12 @@ sh_css_invalidate_params(struct ia_css_stream *stream);
 const struct ia_css_fpn_table *
 ia_css_get_fpn_table(struct ia_css_stream *stream);
 
+/** @brief Get a pointer to the shading table.
+ *
+ * @param[in] stream: The stream.
+ * @return	The pointer to the shading table.
+ *
+ */
 struct ia_css_shading_table *
 ia_css_get_shading_table(struct ia_css_stream *stream);
 

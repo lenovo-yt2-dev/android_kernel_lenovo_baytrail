@@ -223,7 +223,11 @@ static int ov9760_i2c_write(struct i2c_client *client, u16 len, u8 *data)
 	msg.flags = 0;
 	msg.len = len;
 	msg.buf = data;
-	ret = i2c_transfer(client->adapter, &msg, 1);
+       // printk("ov9760 msg.addr:%x,len: %u,buf:%p\r\n", msg.addr,msg.len,msg.buf);
+        ret = i2c_transfer(client->adapter, &msg, 1);
+      //  printk("ov9760 i2c_transfer ret = %d\r\n",ret);
+
+//	ret = i2c_transfer(client->adapter, &msg, 1);
 
 	return ret == num_msg ? 0 : -EIO;
 }
@@ -1130,7 +1134,7 @@ static long __ov9760_set_exposure(struct v4l2_subdev *sd, u16 coarse_itg,
 		goto out_disable;
 
 	/* set global gain */
-	gain = clamp(gain, 0, OV9760_MAX_GAIN_VALUE);
+	gain = clamp(gain, (u16)0, (u16)OV9760_MAX_GAIN_VALUE);
 	ret = ov9760_write_reg(client, OV9760_16BIT,
 			OV9760_GLOBAL_GAIN, (gain & 0x7ff));
 	if (ret)
@@ -1257,7 +1261,6 @@ ov9760_s_config(struct v4l2_subdev *sd, int irq, void *platform_data)
 {
 	struct ov9760_device *dev = to_ov9760_sensor(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	const struct firmware *fw;
 	u8 sensor_revision;
 	u16 sensor_id;
 	int ret;
@@ -1296,8 +1299,8 @@ ov9760_s_config(struct v4l2_subdev *sd, int irq, void *platform_data)
 
 	dev->otp_data = NULL;
 	/* try to load otp from user-space first */
-	ret = request_firmware(&fw, OV9760_OTP_NAME, &client->dev);
-	if(ret) {
+       //ret = request_firmware(&fw, OV9760_OTP_NAME, &client->dev);
+	//if(ret) {
 		OV9760_LOG(1,"ov9760 load from user-space failed, load from sensor\n");
 		ov9760_write_reg_array(client, ov9760_streaming);
 		ret = ov9760_otp_read(client, ov9760_data, &ov9760_size);
@@ -1312,17 +1315,17 @@ ov9760_s_config(struct v4l2_subdev *sd, int irq, void *platform_data)
 				dev->otp_data = otp_data;
 			}
 		}
-	} else {
-		OV9760_LOG(1,"ov9760 load from user-space success size:0x%x\n", fw->size);
-		memcpy(ov9760_data, fw->data, fw->size);
-		ov9760_size = fw->size;
-		ret = ov9760_otp_trans(ov9760_data, ov9760_size, otp_data, &otp_size);
-		if (!ret)
-		{
-			OV9760_LOG(1,"ov9760 otp trans done\n");
-			dev->otp_data = otp_data;
-		}
-	}
+//	} else {
+//		OV9760_LOG(1,"ov9760 load from user-space success size:0x%x\n", fw->size);
+//		memcpy(ov9760_data, fw->data, fw->size);
+//		ov9760_size = fw->size;
+//		ret = ov9760_otp_trans(ov9760_data, ov9760_size, otp_data, &otp_size);
+//		if (!ret)
+//		{
+//			OV9760_LOG(1,"ov9760 otp trans done\n");
+//			dev->otp_data = otp_data;
+//		}
+//	}
 
 	dev->sensor_id = sensor_id;
 	dev->sensor_revision = sensor_revision;

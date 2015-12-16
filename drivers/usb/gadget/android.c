@@ -28,7 +28,6 @@
 #include <linux/usb/composite.h>
 #include <linux/usb/gadget.h>
 
-#include <linux/gpio.h>
 #include "gadget_chips.h"
 
 #include "f_fs.c"
@@ -163,7 +162,7 @@ static struct usb_configuration android_config_driver = {
 	.bmAttributes	= USB_CONFIG_ATT_ONE,
 	.MaxPower	= 500, /* 500ma */
 };
-
+static int android_dev_flag = 0;
 void popup_usb_select_window(int popup){
 	struct android_dev *dev = _android_dev;
 	char *appear[2]    = { "USB_STATE=AVAILABLE", NULL };
@@ -171,6 +170,10 @@ void popup_usb_select_window(int popup){
 	char **uevent_envp = NULL;
 	static int old_state = 0;
 
+	if(!android_dev_flag){
+		printk("%s:android work not init\n",__func__);
+		return;
+	}
 	printk("old state is %d new state is %d in %s\n",old_state,popup,__func__);
 	if((old_state == popup) || (popup == 0))
 		return;
@@ -187,6 +190,7 @@ void popup_usb_select_window(int popup){
 	}
 }
 
+
 static void android_work(struct work_struct *data)
 {
 	struct android_dev *dev = container_of(data, struct android_dev, work);
@@ -196,7 +200,7 @@ static void android_work(struct work_struct *data)
 	char *configured[2]   = { "USB_STATE=CONFIGURED", NULL };
 	char **uevent_envp = NULL;
 	unsigned long flags;
-	int popup = 0;
+    int popup = 0;
 
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (cdev->config)
@@ -204,14 +208,12 @@ static void android_work(struct work_struct *data)
 	else if (dev->connected != dev->sw_connected)
 		uevent_envp = dev->connected ? connected : disconnected;
 	dev->sw_connected = dev->connected;
-
 	if (uevent_envp == configured){
 		popup = 1;
 	}
-
 	spin_unlock_irqrestore(&cdev->lock, flags);
 
-	popup_usb_select_window(popup);
+    popup_usb_select_window(popup);
 
 	if (uevent_envp) {
 		kobject_uevent_env(&dev->dev->kobj, KOBJ_CHANGE, uevent_envp);
@@ -827,15 +829,10 @@ static int mass_storage_function_init(struct android_usb_function *f,
 	if (!config)
 		return -ENOMEM;
 
-	config->fsg.nluns = 2;
+	config->fsg.nluns = 1;
 	config->fsg.luns[0].removable = 1;
 	config->fsg.luns[0].ro = 1;
 	config->fsg.luns[0].cdrom = 1;
-
-	config->fsg.luns[1].removable = 1;
-	config->fsg.luns[1].ro = 0;
-	config->fsg.luns[1].cdrom = 0;
-
 
 	common = fsg_common_init(NULL, cdev, &config->fsg);
 	if (IS_ERR(common)) {
@@ -846,10 +843,6 @@ static int mass_storage_function_init(struct android_usb_function *f,
 	err = sysfs_create_link(&f->dev->kobj,
 				&common->luns[0].dev.kobj,
 				"lun");
-
-	err |= sysfs_create_link(&f->dev->kobj,
-                                &common->luns[1].dev.kobj,
-                                "lun0");
 	if (err) {
 		kfree(config);
 		return err;
@@ -1644,7 +1637,7 @@ static DEVICE_ATTR(field, S_IRUGO | S_IWUSR, field ## _show, field ## _store);
 
 
 DESCRIPTOR_ATTR(idVendor, "%04x\n")
-//DESCRIPTOR_ATTR(idProduct, "%04x\n")
+DESCRIPTOR_ATTR(idProduct, "%04x\n")
 DESCRIPTOR_ATTR(bcdDevice, "%04x\n")
 DESCRIPTOR_ATTR(bDeviceClass, "%d\n")
 DESCRIPTOR_ATTR(bDeviceSubClass, "%d\n")
@@ -1653,42 +1646,6 @@ DESCRIPTOR_STRING_ATTR(iManufacturer, manufacturer_string)
 DESCRIPTOR_STRING_ATTR(iProduct, product_string)
 DESCRIPTOR_STRING_ATTR(iSerial, serial_string)
 
-int blade2_8_pid_base = 0x7794;
-int blade2_10_pid_base = 0x77A0;
-bool is_blade2_8(void)
-{
-	if(gpio_get_value_cansleep(210) == 0)
-		return true;
-	else
-		return false;
-}
-static ssize_t idProduct_show(struct device *dev, struct device_attribute *attr,	
-		char *buf)						
-{									
-	return sprintf(buf, "%04x\n", device_desc.idProduct);		
-}									
-static ssize_t idProduct_store(struct device *dev, struct device_attribute *attr,	
-		const char *buf, size_t size)				
-{									
-	int value;							
-	if (sscanf(buf, "%04x\n", &value) == 1) {			
-		if(value < 10)
-		{
-			if(is_blade2_8())
-				device_desc.idProduct= value + blade2_8_pid_base;
-			else
-				device_desc.idProduct = value + blade2_10_pid_base;				
-		}else
-		{
-			printk("set usb pid 0x%x directly\n",value);
-			device_desc.idProduct = value;				
-		}
-		return size;						
-	}								
-	return -1;							
-}									
-static DEVICE_ATTR(idProduct, S_IRUGO | S_IWUSR, idProduct_show,
-						 idProduct_store);
 static DEVICE_ATTR(functions, S_IRUGO | S_IWUSR, functions_show,
 						 functions_store);
 static DEVICE_ATTR(enable, S_IRUGO | S_IWUSR, enable_show, enable_store);
@@ -1949,6 +1906,7 @@ static int __init init(void)
 	composite_setup_func = android_usb_driver.gadget_driver.setup;
 	android_usb_driver.gadget_driver.setup = android_setup;
 
+	android_dev_flag = 1;
 	return 0;
 
 err_probe:
@@ -1967,6 +1925,7 @@ static void __exit cleanup(void)
 	usb_composite_unregister(&android_usb_driver);
 	class_destroy(android_class);
 	kfree(_android_dev);
+	android_dev_flag = 0;
 	_android_dev = NULL;
 }
 module_exit(cleanup);

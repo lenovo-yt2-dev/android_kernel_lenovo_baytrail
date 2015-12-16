@@ -342,6 +342,12 @@ static void mid_vblank_handler(struct drm_device *dev, uint32_t pipe)
 
 	if (dev_priv->psb_vsync_handler)
 		(*dev_priv->psb_vsync_handler)(dev, pipe);
+
+	mutex_lock(&dev_priv->vsync_lock);
+	if (pipe == 0 && !dev_priv->vsync_enabled &&
+			 ++dev_priv->vblank_disable_cnt > 10)
+		psb_disable_vblank(dev, 0);
+	mutex_unlock(&dev_priv->vsync_lock);
 }
 
 void psb_te_timer_func(unsigned long data)

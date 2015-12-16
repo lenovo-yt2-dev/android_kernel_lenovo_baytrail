@@ -32,13 +32,13 @@
 #define BLC_PWM_PRECISION_FACTOR 100	/* 10000000 */
 #define BLC_PWM_FREQ_CALC_CONSTANT 32
 #define MHz 1000000
-#define BRIGHTNESS_MIN_LEVEL 1
+#define BRIGHTNESS_MIN_LEVEL 0
 #define BRIGHTNESS_INIT_LEVEL 50
 #define BRIGHTNESS_MAX_LEVEL 100
 #define BRIGHTNESS_MASK	0xFF
 #define BLC_POLARITY_NORMAL 0
 #define BLC_POLARITY_INVERSE 1
-#define BLC_ADJUSTMENT_MAX 100
+#define BLC_ADJUSTMENT_MAX 255
 
 #define PSB_BLC_PWM_PRECISION_FACTOR    10
 #define PSB_BLC_MAX_PWM_REG_FREQ        0xFFFE
@@ -81,9 +81,11 @@ int psb_set_brightness(struct backlight_device *bd)
 
 		/* Adjust the backlight level with the percent in
 		 * dev_priv->blc_adj2;
+		 * But we do not divid blc_adj2 with its full range so that
+		 * we can map 100 to 255 scale.
 		 */
 		adjusted_level = level * dev_priv->blc_adj2;
-		adjusted_level = adjusted_level / BLC_ADJUSTMENT_MAX / 100;
+		adjusted_level = adjusted_level / BLC_ADJUSTMENT_MAX / BRIGHTNESS_MAX_LEVEL;
 		dev_priv->brightness_adjusted = adjusted_level;
 
 #ifndef CONFIG_MID_DSI_DPU
@@ -117,9 +119,16 @@ int psb_get_brightness(struct backlight_device *bd)
 	return psb_brightness;
 }
 
+/* alway return 0 */
+int psb_check_fb(struct backlight_device *bd, struct fb_info *info)
+{
+	return 0;
+}
+
 const struct backlight_ops psb_ops = {
 	.get_brightness = psb_get_brightness,
 	.update_status = psb_set_brightness,
+	.check_fb = psb_check_fb,
 };
 
 static int device_backlight_init(struct drm_device *dev)
@@ -128,7 +137,7 @@ static int device_backlight_init(struct drm_device *dev)
 	    (struct drm_psb_private *)dev->dev_private;
 
 	dev_priv->blc_adj1 = BLC_ADJUSTMENT_MAX;
-	dev_priv->blc_adj2 = BLC_ADJUSTMENT_MAX * 100;
+	dev_priv->blc_adj2 = BLC_ADJUSTMENT_MAX * BLC_ADJUSTMENT_MAX;
 
 	return 0;
 }

@@ -27,8 +27,6 @@
 #ifdef CONFIG_PM_DEBUG
 #define MAX_CSTATES_POSSIBLE	32
 
-
-
 static struct latency_stat *lat_stat;
 
 static void latency_measure_enable_disable(bool enable_measure)
@@ -115,9 +113,8 @@ static int show_pmu_s0ix_lat(struct seq_file *s, void *unused)
 	seq_printf(s, "%29s %35s\n", "SCU Latency", "OS Latency");
 	seq_printf(s, "%33s %35s\n", "min/avg/max(msec)", "min/avg/max(msec)");
 
-	for (i = SYS_STATE_S0I1; i <= SYS_STATE_S3; i++) {
-		seq_printf(s, "\n%s(%llu)", states[i - SYS_STATE_S0I1],
-							lat_stat->count[i]);
+	for (i = 0; i < ARRAY_SIZE(states); i++) {
+		seq_printf(s, "\n%s(%llu)", states[i], lat_stat->count[i]);
 
 		seq_printf(s, "\n%5s", "entry");
 		print_simple_stat(s, USEC_PER_MSEC, 1, lat_stat->count[i],
@@ -638,7 +635,7 @@ static void pmu_stat_seq_printf(struct seq_file *s, int type, char *typestr)
 	seq_printf(s, "%5lu.%06lu\t",
 	   (unsigned long) t, nanosec_rem / 1000);
 
-	t =  cpu_clock(raw_smp_processor_id());
+	t =  cpu_clock(0);
 	t -= mid_pmu_cxt->pmu_init_time;
 	nanosec_rem = do_div(t, NANO_SEC);
 
@@ -671,7 +668,7 @@ static unsigned long pmu_dev_res_print(int index, unsigned long *precision,
 	unsigned long nanosec_rem, remainder;
 	unsigned long time, init_to_now_time;
 
-	t =  cpu_clock(raw_smp_processor_id());
+	t =  cpu_clock(0);
 
 	if (dev_state) {
 		/* print for d0ix */
@@ -891,7 +888,7 @@ static ssize_t devices_state_write(struct file *file,
 					sizeof(mid_pmu_cxt->num_wakes));
 		mid_pmu_cxt->pmu_current_state = SYS_STATE_S0I0;
 		mid_pmu_cxt->pmu_init_time =
-			cpu_clock(raw_smp_processor_id());
+			cpu_clock(0);
 		clear_d0ix_stats();
 		up(&mid_pmu_cxt->scu_ready_sem);
 	}
@@ -1322,6 +1319,16 @@ static unsigned long long cur_s0ix_cnt[SYS_STATE_MAX];
 static u32 S3_count;
 static unsigned long long S3_res;
 
+static inline u32 s0ix_count_read(int state)
+{
+	return readl(s0ix_counters + s0ix_counter_reg_map[state]);
+}
+
+static inline u64 s0ix_residency_read(int state)
+{
+	return readq(s0ix_counters + s0ix_residency_reg_map[state]);
+}
+
 static void pmu_stat_seq_printf(struct seq_file *s, int type, char *typestr,
 							long long uptime)
 {
@@ -1340,7 +1347,7 @@ static void pmu_stat_seq_printf(struct seq_file *s, int type, char *typestr,
 		for (t = SYS_STATE_S0I1; t <= SYS_STATE_S3; t++)
 			time += cur_s0ix_res[t];
 	} else if (type < SYS_STATE_S3) {
-		t = readq(residency[type]);
+		t = s0ix_residency_read(type);
 		if (t < prev_s0ix_res[type])
 			t += (((unsigned long long)~0) - prev_s0ix_res[type]);
 		else
@@ -1407,7 +1414,7 @@ static void pmu_stat_seq_printf(struct seq_file *s, int type, char *typestr,
 		if (scu_val == 0) /* S0I0 residency 100% */
 			scu_val = 1;
 	} else if (type < SYS_STATE_S3) {
-		scu_val = readl(s0ix_counter[type]);
+		scu_val = s0ix_count_read(type);
 		if (scu_val < prev_s0ix_cnt[type])
 			scu_val += (((u32)~0) - prev_s0ix_cnt[type]);
 		else
@@ -1440,7 +1447,7 @@ static int pmu_devices_state_show(struct seq_file *s, void *unused)
 	unsigned int base_class;
 	u32 mask, val, nc_pwr_sts;
 	struct pmu_ss_states cur_pmsss;
-	long long uptime;
+	long long uptime, uptime_t;
 	int ret;
 
 	if (!pmu_initialized)
@@ -1455,11 +1462,11 @@ static int pmu_devices_state_show(struct seq_file *s, void *unused)
 	seq_printf(s, "SSS: ");
 
 	for (i = 0; i < 4; i++)
-		seq_printf(s, "%08lX ", cur_pmsss.pmu2_states[i]);
+		seq_printf(s, "%08X ", cur_pmsss.pmu2_states[i]);
 
 	seq_printf(s, "cmd_error_int count: %d\n", mid_pmu_cxt->cmd_error_int);
 
-	seq_printf(s, "\ttime(secs)\tresidency(%%)\tcount\tAvg.Res(Sec)\n");
+	seq_printf(s, "\t\t\ttime(secs)\tresidency(%%)\tcount\tAvg.Res(Sec)\n");
 
 	down(&mid_pmu_cxt->scu_ready_sem);
 	/* Dump S0ix residency counters */
@@ -1475,29 +1482,95 @@ static int pmu_devices_state_show(struct seq_file *s, void *unused)
 
 	uptime =  cpu_clock(0);
 	uptime -= mid_pmu_cxt->pmu_init_time;
-	pmu_stat_seq_printf(s, SYS_STATE_S0I1, "s0i1", uptime);
-	pmu_stat_seq_printf(s, SYS_STATE_LPMP3, "lpmp3", uptime);
-	pmu_stat_seq_printf(s, SYS_STATE_S0I2, "s0i2", uptime);
-	pmu_stat_seq_printf(s, SYS_STATE_S0I3, "s0i3", uptime);
-	pmu_stat_seq_printf(s, SYS_STATE_S3, "s3", uptime);
-	pmu_stat_seq_printf(s, SYS_STATE_S0I0, "s0", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I1, "s0i1             ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I1_LPMP3, "s0i1-lpe         ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I1_PSH, "s0i1-psh         ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I1_DISP, "s0i1-disp        ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I1_LPMP3_PSH, "s0i1-lpe-psh     ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I1_LPMP3_DISP, "s0i1-lpe-disp    ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I1_PSH_DISP, "s0i1-psh-disp    ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I1_LPMP3_PSH_DISP, "s0i1-lpe-psh-disp", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I2, "s0i2             ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I3, "s0i3             ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I3_PSH_RET, "s0i3-psh-ret     ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S3, "s3               ", uptime);
+	pmu_stat_seq_printf(s, SYS_STATE_S0I0, "s0               ", uptime);
 
 	val = do_div(uptime, NANO_SEC);
 	seq_printf(s, "\n\nTotal time: %5lu.%03lu Sec\n", (unsigned long)uptime,
 		   (unsigned long) val/1000000);
 
-	seq_printf(s, "\nNORTH COMPLEX DEVICES :\n\n");
+	seq_puts(s, "\nNORTH COMPLEX DEVICES :\n\n");
+	seq_puts(s, "  IP_NAME : State D0i0_Time D0i0\% Count\n");
+	seq_puts(s, "========================================\n");
 
 	nc_pwr_sts = intel_mid_msgbus_read32(PUNIT_PORT, NC_PM_SSS);
 	for (i = 0; i < mrfl_no_of_nc_devices; i++) {
+		unsigned long long t, t1;
+		u32 remainder, time, d0i0_time_secs;
+
 		val = nc_pwr_sts & 3;
 		nc_pwr_sts >>= BITS_PER_LSS;
-		seq_printf(s, "%9s : %s\n", mrfl_nc_devices[i], dstates[val]);
+
+		/* For Islands after VED, we dont receive
+		 * requests for D0ix
+		 */
+		if (i <= VED) {
+			down(&mid_pmu_cxt->scu_ready_sem);
+
+			t = mid_pmu_cxt->nc_d0i0_time[i];
+			/* If in D0i0 add current time */
+			if (val == D0I0_MASK)
+				t += (cpu_clock(0) - mid_pmu_cxt->nc_d0i0_prev_time[i]);
+
+			uptime_t =  cpu_clock(0);
+			uptime_t -= mid_pmu_cxt->pmu_init_time;
+
+			up(&mid_pmu_cxt->scu_ready_sem);
+
+			t1 = t;
+			d0i0_time_secs = do_div(t1, NANO_SEC);
+
+			/* convert to usecs */
+			do_div(t, 10000);
+			do_div(uptime_t, 1000000);
+
+			if (uptime_t) {
+				remainder = do_div(t, uptime_t);
+
+				time = (unsigned long) t;
+
+				/* for getting 2 digit precision after
+				 * decimal dot */
+				t = (u64) remainder;
+				t *= 100;
+				remainder = do_div(t, uptime_t);
+			} else {
+				time = t = 0;
+			}
+		}
+
+		seq_printf(s, "%9s : %s", mrfl_nc_devices[i], dstates[val]);
+		if (i <= VED) {
+			seq_printf(s, " %5lu.%02lu", (unsigned long)t1,
+						   (unsigned long) d0i0_time_secs/10000000);
+			seq_printf(s, "   %3lu.%02lu", (unsigned long) time, (unsigned long) t);
+			seq_printf(s, " %5lu\n", (unsigned long) mid_pmu_cxt->nc_d0i0_count[i]);
+		} else
+			seq_puts(s, "\n");
 	}
 
 	seq_printf(s, "\nSOUTH COMPLEX DEVICES :\n\n");
 
+	seq_puts(s, "PCI VNDR DEVC DEVICE_NAME  DEVICE_DRIVER_STRING  LSS#");
+	seq_puts(s, "   State    D0i0_Time        D0i0\% Count\n");
+	seq_puts(s, "=====================================================");
+	seq_puts(s, "=========================================\n");
 	for_each_pci_dev(pdev) {
+		unsigned long long t, t1;
+		u32 remainder, time, d0i0_time_secs;
+		int lss;
+
 		/* find the base class info */
 		base_class = pdev->class >> 16;
 
@@ -1515,11 +1588,51 @@ static int pmu_devices_state_show(struct seq_file *s, void *unused)
 		val	= (cur_pmsss.pmu2_states[ss_idx] & mask) >>
 						(ss_pos * BITS_PER_LSS);
 
-		seq_printf(s, "pci %04x %04X %s %20.20s: lss:%02d reg:%d ",
+		lss = index - mid_pmu_cxt->pmu1_max_devs;
+
+		/* for calculating percentage residency */
+		down(&mid_pmu_cxt->scu_ready_sem);
+
+		t = mid_pmu_cxt->d0i0_time[lss];
+		/* If in D0i0 add current time */
+		if (val == D0I0_MASK)
+			t += (cpu_clock(0) - mid_pmu_cxt->d0i0_prev_time[lss]);
+
+		uptime_t =  cpu_clock(0);
+		uptime_t -= mid_pmu_cxt->pmu_init_time;
+
+		up(&mid_pmu_cxt->scu_ready_sem);
+
+		t1 = t;
+		d0i0_time_secs = do_div(t1, NANO_SEC);
+
+		/* convert to usecs */
+		do_div(t, 10000);
+		do_div(uptime_t, 1000000);
+
+		if (uptime_t) {
+			remainder = do_div(t, uptime_t);
+
+			time = (unsigned long) t;
+
+			/* for getting 2 digit precision after
+			 * decimal dot */
+			t = (u64) remainder;
+			t *= 100;
+			remainder = do_div(t, uptime_t);
+		} else {
+			time = t = 0;
+		}
+
+
+		seq_printf(s, "pci %04x %04X %s %20.20s: lss:%02d",
 			pdev->vendor, pdev->device, dev_name(&pdev->dev),
-			dev_driver_string(&pdev->dev),
-			index - mid_pmu_cxt->pmu1_max_devs, ss_idx);
-		seq_printf(s, "mask:%08X  %s\n",  mask, dstates[val & 3]);
+			dev_driver_string(&pdev->dev), lss);
+		seq_printf(s, " %s", dstates[val & 3]);
+		seq_printf(s, "\t%5lu.%02lu", (unsigned long)t1,
+						   (unsigned long) d0i0_time_secs/10000000);
+		seq_printf(s, "\t%3lu.%02lu", (unsigned long) time, (unsigned long) t);
+		seq_printf(s, "\t%5lu\n", (unsigned long) mid_pmu_cxt->d0i0_count[lss]);
 	}
 
 	return 0;
@@ -1554,20 +1667,52 @@ static ssize_t devices_state_write(struct file *file,
 		ret = intel_scu_ipc_simple_command(DUMP_S0IX_COUNT, 0);
 		if (ret)
 			printk(KERN_ERR "IPC command to DUMP S0ix count failed\n");
-		up(&mid_pmu_cxt->scu_ready_sem);
 
 		mid_pmu_cxt->pmu_init_time = cpu_clock(0);
-		prev_s0ix_cnt[SYS_STATE_S0I1] = readl(s0ix_counter[SYS_STATE_S0I1]);
-		prev_s0ix_cnt[SYS_STATE_LPMP3] = readl(s0ix_counter[SYS_STATE_LPMP3]);
-		prev_s0ix_cnt[SYS_STATE_S0I2] = readl(s0ix_counter[SYS_STATE_S0I2]);
-		prev_s0ix_cnt[SYS_STATE_S0I3] = readl(s0ix_counter[SYS_STATE_S0I3]);
+		prev_s0ix_cnt[SYS_STATE_S0I1] = s0ix_count_read(SYS_STATE_S0I1);
+		prev_s0ix_cnt[SYS_STATE_S0I1_LPMP3] = s0ix_count_read(SYS_STATE_S0I1_LPMP3);
+		prev_s0ix_cnt[SYS_STATE_S0I1_PSH] = s0ix_count_read(SYS_STATE_S0I1_PSH);
+		prev_s0ix_cnt[SYS_STATE_S0I1_DISP] = s0ix_count_read(SYS_STATE_S0I1_DISP);
+		prev_s0ix_cnt[SYS_STATE_S0I1_LPMP3_PSH] = s0ix_count_read(SYS_STATE_S0I1_LPMP3_PSH);
+		prev_s0ix_cnt[SYS_STATE_S0I1_LPMP3_DISP] = s0ix_count_read(SYS_STATE_S0I1_LPMP3_DISP);
+		prev_s0ix_cnt[SYS_STATE_S0I1_PSH_DISP] = s0ix_count_read(SYS_STATE_S0I1_PSH_DISP);
+		prev_s0ix_cnt[SYS_STATE_S0I1_LPMP3_PSH_DISP] = s0ix_count_read(SYS_STATE_S0I1_LPMP3_PSH_DISP);
+		prev_s0ix_cnt[SYS_STATE_S0I2] = s0ix_count_read(SYS_STATE_S0I2);
+		prev_s0ix_cnt[SYS_STATE_S0I3] = s0ix_count_read(SYS_STATE_S0I3);
+		prev_s0ix_cnt[SYS_STATE_S0I3_PSH_RET] = s0ix_count_read(SYS_STATE_S0I3_PSH_RET);
 		prev_s0ix_cnt[SYS_STATE_S3] = 0;
-		prev_s0ix_res[SYS_STATE_S0I1] = readq(residency[SYS_STATE_S0I1]);
-		prev_s0ix_res[SYS_STATE_LPMP3] = readq(residency[SYS_STATE_LPMP3]);
-		prev_s0ix_res[SYS_STATE_S0I2] = readq(residency[SYS_STATE_S0I2]);
-		prev_s0ix_res[SYS_STATE_S0I3] = readq(residency[SYS_STATE_S0I3]);
+		prev_s0ix_res[SYS_STATE_S0I1] = s0ix_residency_read(SYS_STATE_S0I1);
+		prev_s0ix_res[SYS_STATE_S0I1_LPMP3] = s0ix_residency_read(SYS_STATE_S0I1_LPMP3);
+		prev_s0ix_res[SYS_STATE_S0I1_PSH] = s0ix_residency_read(SYS_STATE_S0I1_PSH);
+		prev_s0ix_res[SYS_STATE_S0I1_DISP] = s0ix_residency_read(SYS_STATE_S0I1_DISP);
+		prev_s0ix_res[SYS_STATE_S0I1_LPMP3_PSH] = s0ix_residency_read(SYS_STATE_S0I1_LPMP3_PSH);
+		prev_s0ix_res[SYS_STATE_S0I1_LPMP3_DISP] = s0ix_residency_read(SYS_STATE_S0I1_LPMP3_DISP);
+		prev_s0ix_res[SYS_STATE_S0I1_PSH_DISP] = s0ix_residency_read(SYS_STATE_S0I1_PSH_DISP);
+		prev_s0ix_res[SYS_STATE_S0I1_LPMP3_PSH_DISP] = s0ix_residency_read(SYS_STATE_S0I1_LPMP3_PSH_DISP);
+		prev_s0ix_res[SYS_STATE_S0I2] = s0ix_residency_read(SYS_STATE_S0I2);
+		prev_s0ix_res[SYS_STATE_S0I3] = s0ix_residency_read(SYS_STATE_S0I3);
+		prev_s0ix_res[SYS_STATE_S0I3_PSH_RET] = s0ix_residency_read(SYS_STATE_S0I3_PSH_RET);
 		prev_s0ix_res[SYS_STATE_S3] = 0 ;
+
+		/* D0i0 time stats clear */
+		{
+			int i;
+			for (i = 0; i < MAX_LSS_POSSIBLE; i++) {
+				mid_pmu_cxt->d0i0_count[i] = 0;
+				mid_pmu_cxt->d0i0_time[i] = 0;
+				mid_pmu_cxt->d0i0_prev_time[i] = cpu_clock(0);
+			}
+
+			for (i = 0; i < OSPM_MAX_POWER_ISLANDS; i++) {
+				mid_pmu_cxt->nc_d0i0_count[i] = 0;
+				mid_pmu_cxt->nc_d0i0_time[i] = 0;
+				mid_pmu_cxt->nc_d0i0_prev_time[i] = cpu_clock(0);
+			}
+		}
+
+		up(&mid_pmu_cxt->scu_ready_sem);
 	}
+
 	return buf_size;
 }
 
@@ -1730,7 +1875,7 @@ static int pmu_sync_d0ix_show(struct seq_file *s, void *unused)
 	up(&mid_pmu_cxt->scu_ready_sem);
 
 	for (i = 0; i < 4; i++)
-		seq_printf(s, "OS_SSS[%d]: %08X\tSSS[%d]: %08lX\n", i,
+		seq_printf(s, "OS_SSS[%d]: %08X\tSSS[%d]: %08X\n", i,
 				local_os_sss[i], i, cur_pmsss.pmu2_states[i]);
 
 	return 0;
@@ -1968,7 +2113,7 @@ static int cstate_ignore_add_show(struct seq_file *s, void *unused)
 {
 	int i;
 	seq_printf(s, "CSTATES IGNORED: ");
-	for (i = 0; i < CPUIDLE_STATE_MAX; i++)
+	for (i = 0; i < (CPUIDLE_STATE_MAX-1); i++)
 		if ((mid_pmu_cxt->cstate_ignore & (1 << i)))
 			seq_printf(s, "%d, ", i+1);
 
@@ -2004,11 +2149,11 @@ static ssize_t cstate_ignore_add_write(struct file *file,
 		return -EINVAL;
 
 	if (cstate == MAX_CSTATES_POSSIBLE) {
-		mid_pmu_cxt->cstate_ignore = ((1 << CPUIDLE_STATE_MAX) - 1);
+		mid_pmu_cxt->cstate_ignore = ((1 << (CPUIDLE_STATE_MAX-1)) - 1);
 		pm_qos_update_request(mid_pmu_cxt->cstate_qos,
 					CSTATE_EXIT_LATENCY_C1 - 1);
 	} else {
-		u32 cstate_exit_latency[CPUIDLE_STATE_MAX+1];
+		u32 cstate_exit_latency[CPUIDLE_STATE_MAX];
 		u32 local_cstate_allowed;
 		int max_cstate_allowed;
 
@@ -2030,12 +2175,11 @@ static ssize_t cstate_ignore_add_write(struct file *file,
 		cstate_exit_latency[7] = CSTATE_EXIT_LATENCY_S0i2;
 		cstate_exit_latency[8] = CSTATE_EXIT_LATENCY_S0i3;
 		cstate_exit_latency[9] = PM_QOS_DEFAULT_VALUE;
-		cstate_exit_latency[10] = PM_QOS_DEFAULT_VALUE;
 
 		local_cstate_allowed = ~mid_pmu_cxt->cstate_ignore;
 
 		/* restrict to max c-states */
-		local_cstate_allowed &= ((1<<CPUIDLE_STATE_MAX)-1);
+		local_cstate_allowed &= ((1<<(CPUIDLE_STATE_MAX-1))-1);
 
 		/* If no states allowed will return 0 */
 		max_cstate_allowed = fls(local_cstate_allowed);
@@ -2063,7 +2207,7 @@ static int cstate_ignore_remove_show(struct seq_file *s, void *unused)
 {
 	int i;
 	seq_printf(s, "CSTATES ALLOWED: ");
-	for (i = 0; i < CPUIDLE_STATE_MAX; i++)
+	for (i = 0; i < (CPUIDLE_STATE_MAX-1); i++)
 		if (!(mid_pmu_cxt->cstate_ignore & (1 << i)))
 			seq_printf(s, "%d, ", i+1);
 
@@ -2100,18 +2244,17 @@ static ssize_t cstate_ignore_remove_write(struct file *file,
 
 	if (cstate == MAX_CSTATES_POSSIBLE) {
 		mid_pmu_cxt->cstate_ignore =
-				~((1 << CPUIDLE_STATE_MAX) - 1);
-		/* Ignore C2, C3, C5, C8 and C10 states */
+				~((1 << (CPUIDLE_STATE_MAX-1)) - 1);
+		/* Ignore C2, C3, C5, C8 states */
 		mid_pmu_cxt->cstate_ignore |= (1 << 1);
 		mid_pmu_cxt->cstate_ignore |= (1 << 2);
 		mid_pmu_cxt->cstate_ignore |= (1 << 4);
 		mid_pmu_cxt->cstate_ignore |= (1 << 7);
-		mid_pmu_cxt->cstate_ignore |= (1 << 9);
 
 		pm_qos_update_request(mid_pmu_cxt->cstate_qos,
 						PM_QOS_DEFAULT_VALUE);
 	} else {
-		u32 cstate_exit_latency[CPUIDLE_STATE_MAX+1];
+		u32 cstate_exit_latency[CPUIDLE_STATE_MAX];
 		u32 local_cstate_allowed;
 		int max_cstate_allowed;
 
@@ -2126,7 +2269,6 @@ static ssize_t cstate_ignore_remove_write(struct file *file,
 		cstate_exit_latency[7] = CSTATE_EXIT_LATENCY_S0i2;
 		cstate_exit_latency[8] = CSTATE_EXIT_LATENCY_S0i3;
 		cstate_exit_latency[9] = PM_QOS_DEFAULT_VALUE;
-		cstate_exit_latency[10] = PM_QOS_DEFAULT_VALUE;
 
 		/* 0 is C1 state */
 		cstate--;
@@ -2135,16 +2277,15 @@ static ssize_t cstate_ignore_remove_write(struct file *file,
 		/* by default remove C1 from ignore list */
 		mid_pmu_cxt->cstate_ignore &= ~(1 << 0);
 
-		/* Ignore C2, C3, C5, C8 and C10 states */
+		/* Ignore C2, C3, C5, C8 states */
 		mid_pmu_cxt->cstate_ignore |= (1 << 1);
 		mid_pmu_cxt->cstate_ignore |= (1 << 2);
 		mid_pmu_cxt->cstate_ignore |= (1 << 4);
 		mid_pmu_cxt->cstate_ignore |= (1 << 7);
-		mid_pmu_cxt->cstate_ignore |= (1 << 9);
 
 		local_cstate_allowed = ~mid_pmu_cxt->cstate_ignore;
 		/* restrict to max c-states */
-		local_cstate_allowed &= ((1<<CPUIDLE_STATE_MAX)-1);
+		local_cstate_allowed &= ((1<<(CPUIDLE_STATE_MAX-1))-1);
 
 		/* If no states allowed will return 0 */
 		max_cstate_allowed = fls(local_cstate_allowed);
@@ -2206,29 +2347,34 @@ static const struct file_operations s3_ctrl_ops = {
 	.release	= single_release,
 };
 
-
+/*
+ * cstate: c1=1, c2=2, ..., c6=6, c7=7, c8=7, c9=7
+ *         for s0i1/s0i2/s0i3 cstate=7.
+ * index: this is the index in cpuidle_driver cstates table
+ *        where c1 is the 2nd element of the table
+ */
 unsigned int pmu_get_new_cstate(unsigned int cstate, int *index)
 {
-	static int cstate_index_table[CPUIDLE_STATE_MAX] = {
-					1, 1, 1, 1, 1, 2, 3, 3, 4, 4};
+	static int cstate_index_table[CPUIDLE_STATE_MAX-1] = {
+					1, 1, 1, 1, 1, 2, 3, 3, 4};
 	unsigned int new_cstate = cstate;
 	u32 local_cstate = (u32)(cstate);
 	u32 local_cstate_allowed = ~mid_pmu_cxt->cstate_ignore;
-	u32 cstate_mask, cstate_no_s0ix_mask = (u32)((1 << 6) - 1);
+	u32 cstate_mask;
 
 	if (platform_is(INTEL_ATOM_MRFLD) || platform_is(INTEL_ATOM_MOORFLD)) {
 		/* cstate is also 7 for C9 so correct */
+		/* this is supposing that C9 is the 4th cstate allowed */
 		if ((local_cstate == 7) && (*index == 4))
 			local_cstate = 9;
 
 		/* get next low cstate allowed */
 		cstate_mask = (u32)((1 << local_cstate)-1);
-		/* in case if cstate == 0 which should not be the case*/
-		cstate_mask |= 1;
-		local_cstate_allowed	&= ((1<<CPUIDLE_STATE_MAX)-1);
+		local_cstate_allowed	&= ((1<<(CPUIDLE_STATE_MAX-1))-1);
 		local_cstate_allowed	&= cstate_mask;
-		if (!could_do_s0ix())
-			local_cstate_allowed &= cstate_no_s0ix_mask;
+
+		/* Make sure we dont end up with new_state == 0 */
+		local_cstate_allowed |= 1;
 		new_cstate	= fls(local_cstate_allowed);
 
 		*index	= cstate_index_table[new_cstate-1];
@@ -2346,12 +2492,12 @@ void pmu_s3_stats_update(int enter)
 	up(&mid_pmu_cxt->scu_ready_sem);
 
 	if (enter == 1) {
-		S3_count  = readl(s0ix_counter[SYS_STATE_S0I3]);
-		S3_res = readq(residency[SYS_STATE_S0I3]);
+		S3_count  = s0ix_count_read(SYS_STATE_S0I3);
+		S3_res = s0ix_residency_read(SYS_STATE_S0I3);
 	} else {
 		prev_s0ix_cnt[SYS_STATE_S3] +=
-			(readl(s0ix_counter[SYS_STATE_S0I3])) - S3_count;
-		prev_s0ix_res[SYS_STATE_S3] += (readq(residency[SYS_STATE_S0I3])) - S3_res;
+			(s0ix_count_read(SYS_STATE_S0I3)) - S3_count;
+		prev_s0ix_res[SYS_STATE_S3] += (s0ix_residency_read(SYS_STATE_S0I3)) - S3_res;
 	}
 
 #endif
@@ -2373,28 +2519,26 @@ void pmu_stats_init(void)
 		/* If s0ix is disabled then restrict to C6 */
 		if (!enable_s0ix) {
 			mid_pmu_cxt->cstate_ignore =
-				~((1 << CPUIDLE_STATE_MAX) - 1);
+				~((1 << (CPUIDLE_STATE_MAX-1)) - 1);
 
 			/* Ignore C2, C3, C5 states */
 			mid_pmu_cxt->cstate_ignore |= (1 << 1);
 			mid_pmu_cxt->cstate_ignore |= (1 << 2);
 			mid_pmu_cxt->cstate_ignore |= (1 << 4);
 
-			/* For now ignore C7, C8, C9, C10 states */
+			/* For now ignore C7, C8, C9 states */
 			mid_pmu_cxt->cstate_ignore |= (1 << 6);
 			mid_pmu_cxt->cstate_ignore |= (1 << 7);
 			mid_pmu_cxt->cstate_ignore |= (1 << 8);
-			mid_pmu_cxt->cstate_ignore |= (1 << 9);
 		} else {
 			mid_pmu_cxt->cstate_ignore =
-				~((1 << CPUIDLE_STATE_MAX) - 1);
+				~((1 << (CPUIDLE_STATE_MAX-1)) - 1);
 
-			/* Ignore C2, C3, C5, C8 and C10 states */
+			/* Ignore C2, C3, C5, C8 states */
 			mid_pmu_cxt->cstate_ignore |= (1 << 1);
 			mid_pmu_cxt->cstate_ignore |= (1 << 2);
 			mid_pmu_cxt->cstate_ignore |= (1 << 4);
 			mid_pmu_cxt->cstate_ignore |= (1 << 7);
-			mid_pmu_cxt->cstate_ignore |= (1 << 9);
 		}
 
 		mid_pmu_cxt->cstate_qos =
@@ -2409,6 +2553,20 @@ void pmu_stats_init(void)
 			/* Restrict platform Cx state to C6 */
 			pm_qos_update_request(mid_pmu_cxt->cstate_qos,
 						(CSTATE_EXIT_LATENCY_S0i1-1));
+		}
+
+		/* D0i0 time stats clear */
+		{
+			int i;
+			for (i = 0; i < MAX_LSS_POSSIBLE; i++) {
+				mid_pmu_cxt->d0i0_time[i] = 0;
+				mid_pmu_cxt->d0i0_prev_time[i] = cpu_clock(0);
+			}
+
+			for (i = 0; i < OSPM_MAX_POWER_ISLANDS; i++) {
+				mid_pmu_cxt->nc_d0i0_time[i] = 0;
+				mid_pmu_cxt->nc_d0i0_prev_time[i] = cpu_clock(0);
+			}
 		}
 
 		/* /sys/kernel/debug/ignore_add */

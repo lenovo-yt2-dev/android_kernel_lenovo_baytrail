@@ -32,6 +32,25 @@
 #ifndef __CRYPTO_API_H__
 #define __CRYPTO_API_H__
 
+#include <linux/crypto.h>
+#include <crypto/algapi.h>
+#include <crypto/hash.h>
+#include <crypto/internal/hash.h>
+#include <crypto/sha.h>
+#include <linux/workqueue.h>
+
+/**
+ * struct async_req_ctx - Context for async. request (__ctx of request)
+ * @op_ctx:		SeP operation context
+ * @initiating_req:	The initiating crypto request
+ * @comp_work:		Completion work handler
+ */
+struct async_req_ctx {
+	struct sep_op_ctx op_ctx;
+	struct crypto_async_request *initiating_req;
+	struct work_struct comp_work;
+};
+
 /* Crypto-API init. entry point (to be used by sep_setup) */
 int dx_crypto_api_init(struct sep_drvdata *drvdata);
 void dx_crypto_api_fini(void);

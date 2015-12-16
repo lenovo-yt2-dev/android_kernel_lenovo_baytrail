@@ -22,12 +22,7 @@
 #ifndef __INPUT_SYSTEM_PUBLIC_H_INCLUDED__
 #define __INPUT_SYSTEM_PUBLIC_H_INCLUDED__
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stdbool.h>
-#endif
-
+#include <type_support.h>
 #ifdef USE_INPUT_SYSTEM_VERSION_2401
 #include "isys_public.h"
 #else

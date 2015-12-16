@@ -19,13 +19,12 @@
  *
  */
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stddef.h>		/* NULL */
-#endif
+#include "system_global.h"
+
+#ifdef USE_INPUT_SYSTEM_VERSION_2
 
 #include "input_system.h"
+#include <type_support.h>
 #include "gp_device.h"
 
 #include "assert_support.h"
@@ -397,7 +396,7 @@ STORAGE_CLASS_INLINE void capture_unit_get_state(
 	state->Stop = input_system_sub_system_reg_load(ID,
 		sub_id,
 		CAPT_STOP_REG_ID);
-*/	
+*/
 	state->Packet_Length = input_system_sub_system_reg_load(ID,
 		sub_id,
 		CAPT_PACKET_LENGTH_REG_ID);
@@ -660,7 +659,7 @@ static void receiver_rst(
 	mipi_port_ID_t		port_id;
 
 	assert(ID < N_RX_ID);
-	
+
 // Disable all ports.
 	for (port_id = MIPI_PORT0_ID; port_id < N_MIPI_PORT_ID; port_id++) {
 		receiver_port_enable(ID, port_id, false);
@@ -741,9 +740,9 @@ static void input_selector_cfg_for_sensor(const gp_device_ID_t ID)
 static void input_switch_rst(const gp_device_ID_t ID)
 {
 	int addr;
-	
+
 	assert(ID < N_GP_DEVICE_ID);
-	
+
 	// Initialize the data&hsync LUT.
 	for (addr = _REG_GP_IFMT_input_switch_lut_reg0;
 			 addr <= _REG_GP_IFMT_input_switch_lut_reg7; addr += SIZEOF_HRT_REG) {
@@ -764,10 +763,10 @@ static void input_switch_cfg(
 	const input_switch_cfg_t * const	cfg)
 {
 	int addr_offset;
-	
+
 	assert(ID < N_GP_DEVICE_ID);
 	assert(cfg != NULL);
-	
+
 	// Initialize the data&hsync LUT.
 	for (addr_offset = 0; addr_offset < N_RX_CHANNEL_ID * 2; addr_offset++) {
 		assert(addr_offset * SIZEOF_HRT_REG + _REG_GP_IFMT_input_switch_lut_reg0 <= _REG_GP_IFMT_input_switch_lut_reg7);
@@ -788,7 +787,7 @@ static void input_switch_cfg(
 static void input_system_network_rst(const input_system_ID_t ID)
 {
 	unsigned int sub_id;
-	
+
 	// Reset all 3 multicasts.
 	input_system_sub_system_reg_store(ID,
 		GPREGS_UNIT0_ID,
@@ -816,7 +815,7 @@ static void input_system_network_rst(const input_system_ID_t ID)
 			CAPT_INIT_REG_ID,
 			1U << CAPT_INIT_RST_REG_BIT);
 	}
-	
+
 	// Reset acquisition unit.
 	for (sub_id = ACQUISITION_UNIT0_ID; sub_id < ACQUISITION_UNIT0_ID + N_ACQUISITION_UNIT_ID; sub_id++) {
 		input_system_sub_system_reg_store(ID,
@@ -826,7 +825,7 @@ static void input_system_network_rst(const input_system_ID_t ID)
 	}
 
 	// DMA unit reset is not needed.
-	
+
 	// Reset controller units.
 	// NB: In future we need to keep part of ctrl_state for split capture and
 	for (sub_id = CTRL_UNIT0_ID; sub_id < CTRL_UNIT0_ID + N_CTRL_UNIT_ID; sub_id++) {
@@ -835,7 +834,7 @@ static void input_system_network_rst(const input_system_ID_t ID)
 			ISYS_CTRL_INIT_REG_ID,
 			1U); //AM: Is there any named constant?
 	}
-	
+
 	return;
 }
 
@@ -845,15 +844,15 @@ input_system_error_t input_system_configuration_reset(void)
 	unsigned int i;
 
 	receiver_rst(RX0_ID);
-	
+
 	input_system_network_rst(INPUT_SYSTEM0_ID);
 
 	gp_device_rst(INPUT_SYSTEM0_ID);
-	
+
 	input_switch_rst(INPUT_SYSTEM0_ID);
 
 	//target_rst();
-	
+
 	// Reset IRQ_CTRLs.
 
 	// Reset configuration data structures.
@@ -864,15 +863,15 @@ input_system_error_t input_system_configuration_reset(void)
 		config.target_strm2mem_flags[i] = INPUT_SYSTEM_CFG_FLAG_RESET;
 	}
 
-	for (i = 0; i < N_CSI_PORTS; i++ ) { 
+	for (i = 0; i < N_CSI_PORTS; i++ ) {
 		config.csi_buffer_flags[i]	 = INPUT_SYSTEM_CFG_FLAG_RESET;
 		config.multicast[i]		 = INPUT_SYSTEM_CFG_FLAG_RESET;
 	}
 
 	config.source_type_flags				 = INPUT_SYSTEM_CFG_FLAG_RESET;
 	config.acquisition_buffer_unique_flags	 = INPUT_SYSTEM_CFG_FLAG_RESET;
-	config.unallocated_ib_mem_words			 = IB_CAPACITY_IN_WORDS; 
-	//config.acq_allocated_ib_mem_words		 = 0; 
+	config.unallocated_ib_mem_words			 = IB_CAPACITY_IN_WORDS;
+	//config.acq_allocated_ib_mem_words		 = 0;
 
 	// Set the start of the session cofiguration.
 	config.session_flags = INPUT_SYSTEM_CFG_FLAG_REQUIRED;
@@ -893,24 +892,24 @@ static input_system_error_t input_system_configure_channel(
 		switch (channel.source_type){
 			case INPUT_SYSTEM_SOURCE_SENSOR :
 				error = input_system_configure_channel_sensor(channel);
-				break;	
+				break;
 			case INPUT_SYSTEM_SOURCE_TPG :
 				return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
-				break;	
+				break;
 			case INPUT_SYSTEM_SOURCE_PRBS :
 				return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
-				break;	
+				break;
 			case INPUT_SYSTEM_SOURCE_FIFO :
 				return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
-				break;	
-			default :	
+				break;
+			default :
 				return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
-				break;	
+				break;
 		}
 
 		if (error != INPUT_SYSTEM_ERR_NO_ERROR) return error;
 		// Input switch channel configurations must be combined in united config.
-		config.input_switch_cfg.hsync_data_reg[channel.source_cfg.csi_cfg.csi_port * 2] = 
+		config.input_switch_cfg.hsync_data_reg[channel.source_cfg.csi_cfg.csi_port * 2] =
 				channel.target_cfg.input_switch_channel_cfg.hsync_data_reg[0];
 		config.input_switch_cfg.hsync_data_reg[channel.source_cfg.csi_cfg.csi_port * 2 + 1] =
 				channel.target_cfg.input_switch_channel_cfg.hsync_data_reg[1];
@@ -930,7 +929,7 @@ static input_system_error_t input_system_configure_channel(
 	return INPUT_SYSTEM_ERR_NO_ERROR;
 }
 
-// Function that partitions input buffer space with determining addresses. 
+// Function that partitions input buffer space with determining addresses.
 static input_system_error_t input_buffer_configuration(void)
 {
 	uint32_t current_address    = 0;
@@ -938,22 +937,21 @@ static input_system_error_t input_buffer_configuration(void)
 
 	ib_buffer_t 	candidate_buffer_acq  = IB_BUFFER_NULL;
 	uint32_t size_requested;
-	input_system_config_flags_t 	acq_already_specified = INPUT_SYSTEM_CFG_FLAG_RESET;  
+	input_system_config_flags_t 	acq_already_specified = INPUT_SYSTEM_CFG_FLAG_RESET;
 	input_system_csi_port_t port;
 	for (port = INPUT_SYSTEM_PORT_A; port < N_INPUT_SYSTEM_PORTS; port++) {
 
 		csi_cfg_t source = config.csi_value[port];//.csi_cfg;
-	
+
 		if ( config.csi_flags[port] & INPUT_SYSTEM_CFG_FLAG_SET) {
-	
-			uint32_t size_requested;
+
 			// Check and set csi buffer in input buffer.
 			switch (source.buffering_mode) {
 				case INPUT_SYSTEM_FIFO_CAPTURE :
 				case INPUT_SYSTEM_XMEM_ACQUIRE :
 					config.csi_buffer_flags[port] = INPUT_SYSTEM_CFG_FLAG_BLOCKED; // Well, not used.
 					break;
-				
+
 				case INPUT_SYSTEM_FIFO_CAPTURE_WITH_COUNTING :
 				case INPUT_SYSTEM_SRAM_BUFFERING :
 				case INPUT_SYSTEM_XMEM_BUFFERING :
@@ -974,7 +972,7 @@ static input_system_error_t input_buffer_configuration(void)
 							return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 					}
 					break;
-				
+
 				default :
 					config.csi_buffer_flags[port] |= INPUT_SYSTEM_CFG_FLAG_CONFLICT;
 					return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
@@ -988,12 +986,12 @@ static input_system_error_t input_buffer_configuration(void)
 				case INPUT_SYSTEM_XMEM_CAPTURE :
 					// Nothing to do.
 					break;
-				
+
 				case INPUT_SYSTEM_FIFO_CAPTURE_WITH_COUNTING :
 				case INPUT_SYSTEM_XMEM_BUFFERING :
 				case INPUT_SYSTEM_XMEM_ACQUIRE :
 					if (acq_already_specified == INPUT_SYSTEM_CFG_FLAG_RESET) {
-						uint32_t size_requested = source.acquisition_buffer.mem_reg_size 
+						size_requested = source.acquisition_buffer.mem_reg_size
 													* source.acquisition_buffer.nof_mem_regs;
 						if (source.acquisition_buffer.mem_reg_size > 0
 							&& source.acquisition_buffer.nof_mem_regs >0
@@ -1012,13 +1010,13 @@ static input_system_error_t input_buffer_configuration(void)
 						}
 					}
 					break;
-				
+
 				default :
 					return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
 					break;
 			}
 		} else {
-			config.csi_buffer_flags[port] = INPUT_SYSTEM_CFG_FLAG_BLOCKED;	
+			config.csi_buffer_flags[port] = INPUT_SYSTEM_CFG_FLAG_BLOCKED;
 		}
 	} // end of for ( port )
 
@@ -1191,32 +1189,32 @@ static void input_system_network_configure(
 	for (sub_id = CAPTURE_UNIT0_ID; sub_id < CAPTURE_UNIT0_ID + N_CAPTURE_UNIT_ID; sub_id++) {
 		capture_unit_configure(ID,
 			sub_id,
-			&(cfg->ctrl_unit_cfg[ID].buffer_mipi[sub_id - CAPTURE_UNIT0_ID])); 
+			&(cfg->ctrl_unit_cfg[ID].buffer_mipi[sub_id - CAPTURE_UNIT0_ID]));
 	}
-	
-	// Set acquisition units. 
+
+	// Set acquisition units.
 	for (sub_id = ACQUISITION_UNIT0_ID; sub_id < ACQUISITION_UNIT0_ID + N_ACQUISITION_UNIT_ID; sub_id++) {
 		acquisition_unit_configure(ID,
 			sub_id,
 			&(cfg->ctrl_unit_cfg[sub_id - ACQUISITION_UNIT0_ID].buffer_acquire[sub_id - ACQUISITION_UNIT0_ID]));
 	}
-	
+
 	// No DMA configuration needed. Ctrl_unit will fully control it.
-	
+
 	// Set controller units.
 	for (sub_id = CTRL_UNIT0_ID; sub_id < CTRL_UNIT0_ID + N_CTRL_UNIT_ID; sub_id++) {
 		ctrl_unit_configure(ID,
 			sub_id,
-			&(cfg->ctrl_unit_cfg[sub_id - CTRL_UNIT0_ID]));	
+			&(cfg->ctrl_unit_cfg[sub_id - CTRL_UNIT0_ID]));
 	}
-	
-	return; 
+
+	return;
 }
 
 static input_system_error_t configuration_to_registers(void)
 {
 	input_system_network_cfg_t input_system_network_cfg;
-	int i; 
+	int i;
 
 	assert(config.source_type_flags & INPUT_SYSTEM_CFG_FLAG_SET);
 
@@ -1228,27 +1226,27 @@ static input_system_error_t configuration_to_registers(void)
 			// the commit function.
 			for (i = MIPI_PORT0_ID; i < N_MIPI_PORT_ID; i++) {
 				if (config.csi_flags[i] & INPUT_SYSTEM_CFG_FLAG_SET) {
-				
+
 					switch (config.csi_value[i].buffering_mode) {
-		
+
 						case INPUT_SYSTEM_FIFO_CAPTURE:
 							config.multicast[i] = INPUT_SYSTEM_CSI_BACKEND;
 							break;
-					
+
 						case INPUT_SYSTEM_XMEM_CAPTURE:
 						case INPUT_SYSTEM_SRAM_BUFFERING:
 						case INPUT_SYSTEM_XMEM_BUFFERING:
 							config.multicast[i] = INPUT_SYSTEM_INPUT_BUFFER;
 							break;
-					
+
 						case INPUT_SYSTEM_FIFO_CAPTURE_WITH_COUNTING:
 							config.multicast[i] = INPUT_SYSTEM_MULTICAST;
 							break;
-					
+
 						case INPUT_SYSTEM_XMEM_ACQUIRE:
 							config.multicast[i] = INPUT_SYSTEM_DISCARD_ALL;
 							break;
-		
+
 						default:
 							config.multicast[i] = INPUT_SYSTEM_DISCARD_ALL;
 							return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
@@ -1260,16 +1258,16 @@ static input_system_error_t configuration_to_registers(void)
 
 				input_system_network_cfg.multicast_cfg[i] = config.multicast[i];
 
-			} // for 
+			} // for
 
 			input_system_network_cfg.mux_cfg = config.multiplexer;
-			
-			input_system_network_cfg.ctrl_unit_cfg[CTRL_UNIT0_ID - CTRL_UNIT0_ID].buffer_mipi[CAPTURE_UNIT0_ID] = config.csi_buffer[MIPI_PORT0_ID];	
-			input_system_network_cfg.ctrl_unit_cfg[CTRL_UNIT0_ID - CTRL_UNIT0_ID].buffer_mipi[CAPTURE_UNIT1_ID] = config.csi_buffer[MIPI_PORT1_ID];	
-			input_system_network_cfg.ctrl_unit_cfg[CTRL_UNIT0_ID - CTRL_UNIT0_ID].buffer_mipi[CAPTURE_UNIT2_ID] = config.csi_buffer[MIPI_PORT2_ID];	
+
+			input_system_network_cfg.ctrl_unit_cfg[CTRL_UNIT0_ID - CTRL_UNIT0_ID].buffer_mipi[CAPTURE_UNIT0_ID] = config.csi_buffer[MIPI_PORT0_ID];
+			input_system_network_cfg.ctrl_unit_cfg[CTRL_UNIT0_ID - CTRL_UNIT0_ID].buffer_mipi[CAPTURE_UNIT1_ID] = config.csi_buffer[MIPI_PORT1_ID];
+			input_system_network_cfg.ctrl_unit_cfg[CTRL_UNIT0_ID - CTRL_UNIT0_ID].buffer_mipi[CAPTURE_UNIT2_ID] = config.csi_buffer[MIPI_PORT2_ID];
 			input_system_network_cfg.ctrl_unit_cfg[CTRL_UNIT0_ID - CTRL_UNIT0_ID].buffer_acquire[ACQUISITION_UNIT0_ID - ACQUISITION_UNIT0_ID] =
-					config.acquisition_buffer_unique;	
-			
+					config.acquisition_buffer_unique;
+
 			// First set input network around CSI receiver.
 			input_system_network_configure(INPUT_SYSTEM0_ID, &input_system_network_cfg);
 
@@ -1282,7 +1280,7 @@ static input_system_error_t configuration_to_registers(void)
 			break;
 
 		case INPUT_SYSTEM_SOURCE_PRBS :
-			
+
 			break;
 
 		case INPUT_SYSTEM_SOURCE_FIFO :
@@ -1294,14 +1292,14 @@ static input_system_error_t configuration_to_registers(void)
 
 	} // end of switch (source_type)
 
-	// Set input selector. 
+	// Set input selector.
 	input_selector_cfg_for_sensor(INPUT_SYSTEM0_ID);
-	
-	// Set input switch. 
+
+	// Set input switch.
 	input_switch_cfg(INPUT_SYSTEM0_ID, &config.input_switch_cfg);
 
 	// Set input formatters.
-	// AM: IF are set dynamically. 
+	// AM: IF are set dynamically.
 	return INPUT_SYSTEM_ERR_NO_ERROR;
 }
 
@@ -1348,7 +1346,7 @@ input_system_error_t	input_system_csi_fifo_channel_cfg(
 	channel.source_cfg.csi_cfg.csi_buffer 			= IB_BUFFER_NULL;
 	channel.source_cfg.csi_cfg.acquisition_buffer	= IB_BUFFER_NULL;
 	channel.source_cfg.csi_cfg.nof_xmem_buffers	= 0;
-	
+
 	channel.target_cfg	= target;
 	return input_system_configure_channel(channel);
 }
@@ -1377,7 +1375,7 @@ input_system_error_t	input_system_csi_fifo_channel_with_counting_cfg(
 	channel.source_cfg.csi_cfg.csi_buffer.mem_reg_addr		= 0;
 	channel.source_cfg.csi_cfg.acquisition_buffer			= IB_BUFFER_NULL;
 	channel.source_cfg.csi_cfg.nof_xmem_buffers	= nof_frames;
-	
+
 	channel.target_cfg	= target;
 	return input_system_configure_channel(channel);
 }
@@ -1409,7 +1407,7 @@ input_system_error_t	input_system_csi_sram_channel_cfg(
 	channel.source_cfg.csi_cfg.csi_buffer.mem_reg_addr		= 0;
 	channel.source_cfg.csi_cfg.acquisition_buffer			= IB_BUFFER_NULL;
 	channel.source_cfg.csi_cfg.nof_xmem_buffers	= 0;
-	
+
 	channel.target_cfg	= target;
 	return input_system_configure_channel(channel);
 }
@@ -1445,7 +1443,7 @@ input_system_error_t	input_system_csi_xmem_channel_cfg(
 	channel.source_cfg.csi_cfg.acquisition_buffer.nof_mem_regs 	= acq_nof_mem_regs;
 	channel.source_cfg.csi_cfg.acquisition_buffer.mem_reg_addr	= 0;
 	channel.source_cfg.csi_cfg.nof_xmem_buffers	= nof_xmem_buffers;
-	
+
 	channel.target_cfg	= target;
 	return input_system_configure_channel(channel);
 }
@@ -1475,7 +1473,7 @@ input_system_error_t	input_system_csi_xmem_acquire_only_channel_cfg(
 	channel.source_cfg.csi_cfg.acquisition_buffer.nof_mem_regs 	= acq_nof_mem_regs;
 	channel.source_cfg.csi_cfg.acquisition_buffer.mem_reg_addr	= 0;
 	channel.source_cfg.csi_cfg.nof_xmem_buffers	= nof_frames;
-	
+
 	channel.target_cfg	= target;
 	return input_system_configure_channel(channel);
 }
@@ -1507,7 +1505,7 @@ input_system_error_t	input_system_csi_xmem_capture_only_channel_cfg(
 	channel.source_cfg.csi_cfg.acquisition_buffer.nof_mem_regs 	= acq_nof_mem_regs;
 	channel.source_cfg.csi_cfg.acquisition_buffer.mem_reg_addr	= 0;
 	channel.source_cfg.csi_cfg.nof_xmem_buffers	= nof_frames;
-	
+
 	channel.target_cfg	= target;
 	return input_system_configure_channel(channel);
 }
@@ -1539,7 +1537,7 @@ input_system_error_t	input_system_prbs_channel_cfg(
 	channel.source_cfg.prbs_cfg.sync_gen_cfg.height        	= sync_gen_height;
 	channel.source_cfg.prbs_cfg.sync_gen_cfg.hblank_cycles	= sync_gen_hblank_cycles;
 	channel.source_cfg.prbs_cfg.sync_gen_cfg.vblank_cycles 	= sync_gen_vblank_cycles;
-	
+
 	channel.target_cfg	= target;
 
 	return input_system_configure_channel(channel);
@@ -1570,7 +1568,7 @@ input_system_error_t	input_system_tpg_channel_cfg(
 	channel.source_type		= INPUT_SYSTEM_SOURCE_TPG;
 
 	channel.source_cfg.tpg_cfg.x_mask	= x_mask;
-	channel.source_cfg.tpg_cfg.y_mask	= y_mask; 	
+	channel.source_cfg.tpg_cfg.y_mask	= y_mask;
 	channel.source_cfg.tpg_cfg.x_delta	= x_delta;
 	channel.source_cfg.tpg_cfg.y_delta	= y_delta;
 	channel.source_cfg.tpg_cfg.xy_mask	= xy_mask;
@@ -1578,7 +1576,7 @@ input_system_error_t	input_system_tpg_channel_cfg(
 	channel.source_cfg.tpg_cfg.sync_gen_cfg.height        	= sync_gen_height;
 	channel.source_cfg.tpg_cfg.sync_gen_cfg.hblank_cycles	= sync_gen_hblank_cycles;
 	channel.source_cfg.tpg_cfg.sync_gen_cfg.vblank_cycles 	= sync_gen_vblank_cycles;
-	
+
 	channel.target_cfg	= target;
 	return input_system_configure_channel(channel);
 }
@@ -1595,7 +1593,7 @@ input_system_error_t	input_system_gpfifo_channel_cfg(
 
 	channel.ch_id 	= ch_id;
 	channel.source_type	= INPUT_SYSTEM_SOURCE_FIFO;
-	
+
 	channel.target_cfg	= target;
 	return input_system_configure_channel(channel);
 }
@@ -1603,7 +1601,7 @@ input_system_error_t	input_system_gpfifo_channel_cfg(
 ///////////////////////////////////////////////////////////////////////////
 //
 // Private specialized functions for channel setting.
-//    
+//
 ///////////////////////////////////////////////////////////////////////////
 
 // Fills the parameters to config.csi_value[port]
@@ -1627,63 +1625,63 @@ static input_system_error_t input_system_configure_channel_sensor(
 
 	status = set_csi_cfg(&(config.csi_value[port]), &channel.source_cfg.csi_cfg, &(config.csi_flags[port]));
 	if (status != INPUT_SYSTEM_ERR_NO_ERROR) return status;
-		
+
 
 	switch (channel.source_cfg.csi_cfg.buffering_mode){
 		case INPUT_SYSTEM_FIFO_CAPTURE:
-			
+
 			// Check for conflicts on mux.
 			mux = INPUT_SYSTEM_MIPI_PORT0 + port;
 			status = input_system_multiplexer_cfg(&config.multiplexer, mux, &config.multiplexer_flags);
 			if (status != INPUT_SYSTEM_ERR_NO_ERROR) return status;
 			config.multicast[port] = INPUT_SYSTEM_CSI_BACKEND;
-			
+
 			// Shared resource, so it should be blocked.
 			//config.mux_flags |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
 			//config.csi_buffer_flags[port] |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
 			//config.acquisition_buffer_unique_flags |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
-			
-			break;	
+
+			break;
 		case INPUT_SYSTEM_SRAM_BUFFERING :
-			
+
 			// Check for conflicts on mux.
 			mux = INPUT_SYSTEM_ACQUISITION_UNIT;
 			status = input_system_multiplexer_cfg(&config.multiplexer, mux, &config.multiplexer_flags);
 			if (status != INPUT_SYSTEM_ERR_NO_ERROR) return status;
 			config.multicast[port] = INPUT_SYSTEM_INPUT_BUFFER;
-			
+
 			// Shared resource, so it should be blocked.
 			//config.mux_flags |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
 			//config.csi_buffer_flags[port] |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
 			//config.acquisition_buffer_unique_flags |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
-			
-			break;	
+
+			break;
 		case INPUT_SYSTEM_XMEM_BUFFERING :
-		
+
 			// Check for conflicts on mux.
 			mux = INPUT_SYSTEM_ACQUISITION_UNIT;
 			status = input_system_multiplexer_cfg(&config.multiplexer, mux, &config.multiplexer_flags);
 			if (status != INPUT_SYSTEM_ERR_NO_ERROR) return status;
 			config.multicast[port] = INPUT_SYSTEM_INPUT_BUFFER;
-			
+
 			// Shared resource, so it should be blocked.
 			//config.mux_flags |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
 			//config.csi_buffer_flags[port] |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
 			//config.acquisition_buffer_unique_flags |= INPUT_SYSTEM_CFG_FLAG_BLOCKED;
-		
-			break;	
+
+			break;
 		case INPUT_SYSTEM_FIFO_CAPTURE_WITH_COUNTING :
 			return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
-			break;	
+			break;
 		case INPUT_SYSTEM_XMEM_CAPTURE :
 			return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
-			break;	
+			break;
 		case INPUT_SYSTEM_XMEM_ACQUIRE :
 			return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
-			break;	
-		default :	
+			break;
+		default :
 			return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
-			break;	
+			break;
 	}
 	return INPUT_SYSTEM_ERR_NO_ERROR;
 }
@@ -1700,7 +1698,7 @@ static input_system_error_t set_source_type(
 
 	if ((*flags) & INPUT_SYSTEM_CFG_FLAG_BLOCKED) {
 		*flags |= INPUT_SYSTEM_CFG_FLAG_CONFLICT;
-		return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;		
+		return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 	}
 
 	if ((*flags) & INPUT_SYSTEM_CFG_FLAG_SET) {
@@ -1713,14 +1711,14 @@ static input_system_error_t set_source_type(
 			return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 		}
 	}
-	// Check the value (individually). 
+	// Check the value (individually).
 	if (rhs >= N_INPUT_SYSTEM_SOURCE) {
 		*flags |= INPUT_SYSTEM_CFG_FLAG_CONFLICT;
 		return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 	}
-	// Set the value. 
+	// Set the value.
 	*lhs = rhs;
-	
+
 	*flags |= INPUT_SYSTEM_CFG_FLAG_SET;
 	return INPUT_SYSTEM_ERR_NO_ERROR;
 }
@@ -1740,7 +1738,7 @@ static input_system_error_t set_csi_cfg(
 
 	if ((*flags) & INPUT_SYSTEM_CFG_FLAG_BLOCKED) {
 		*flags |= INPUT_SYSTEM_CFG_FLAG_CONFLICT;
-		return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;		
+		return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 	}
 
 	if (*flags & INPUT_SYSTEM_CFG_FLAG_SET) {
@@ -1751,7 +1749,7 @@ static input_system_error_t set_csi_cfg(
 			&& lhs->csi_buffer.nof_mem_regs  == rhs->csi_buffer.nof_mem_regs
 			&& lhs->acquisition_buffer.mem_reg_size == rhs->acquisition_buffer.mem_reg_size
 			&& lhs->acquisition_buffer.nof_mem_regs  == rhs->acquisition_buffer.nof_mem_regs
-			&& lhs->nof_xmem_buffers  == rhs->nof_xmem_buffers  
+			&& lhs->nof_xmem_buffers  == rhs->nof_xmem_buffers
 			) {
 			return INPUT_SYSTEM_ERR_NO_ERROR;
 		}
@@ -1760,21 +1758,21 @@ static input_system_error_t set_csi_cfg(
 			return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 		}
 	}
-	// Check the value (individually). 
+	// Check the value (individually).
 	// no check for backend_ch
 	// no check for nof_xmem_buffers
 	memory_required = rhs->csi_buffer.mem_reg_size * rhs->csi_buffer.nof_mem_regs;
 	acq_memory_required = rhs->acquisition_buffer.mem_reg_size * rhs->acquisition_buffer.nof_mem_regs;
 	if (rhs->buffering_mode >= N_INPUT_SYSTEM_BUFFERING_MODE
-		|| 
+		||
 	// Check if required memory is available in input buffer (SRAM).
 		(memory_required + acq_memory_required )> config.unallocated_ib_mem_words
-		
+
 		) {
 		*flags |= INPUT_SYSTEM_CFG_FLAG_CONFLICT;
 		return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 	}
-	// Set the value. 
+	// Set the value.
 	//lhs[port]->backend_ch 		= rhs.backend_ch;
 	lhs->buffering_mode 	= rhs->buffering_mode;
 	lhs->nof_xmem_buffers = rhs->nof_xmem_buffers;
@@ -1783,11 +1781,11 @@ static input_system_error_t set_csi_cfg(
 	lhs->csi_buffer.nof_mem_regs  = rhs->csi_buffer.nof_mem_regs;
 	lhs->acquisition_buffer.mem_reg_size = rhs->acquisition_buffer.mem_reg_size;
 	lhs->acquisition_buffer.nof_mem_regs  = rhs->acquisition_buffer.nof_mem_regs;
-    // ALX: NB: Here we just set buffer parameters, but still not allocate it 
+    // ALX: NB: Here we just set buffer parameters, but still not allocate it
 	// (no addresses determined). That will be done during commit.
 
 	//  FIXIT:	acq_memory_required is not deducted, since it can be allocated multiple times.
-	config.unallocated_ib_mem_words -= memory_required; 
+	config.unallocated_ib_mem_words -= memory_required;
 //assert(config.unallocated_ib_mem_words >=0);
 	*flags |= INPUT_SYSTEM_CFG_FLAG_SET;
 	return INPUT_SYSTEM_ERR_NO_ERROR;
@@ -1805,7 +1803,7 @@ static input_system_error_t input_system_multiplexer_cfg(
 
 	if ((*flags) & INPUT_SYSTEM_CFG_FLAG_BLOCKED) {
 		*flags |= INPUT_SYSTEM_CFG_FLAG_CONFLICT;
-		return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;		
+		return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 	}
 
 	if ((*flags) & INPUT_SYSTEM_CFG_FLAG_SET) {
@@ -1818,14 +1816,15 @@ static input_system_error_t input_system_multiplexer_cfg(
 			return INPUT_SYSTEM_ERR_CONFLICT_ON_RESOURCE;
 		}
 	}
-	// Check the value (individually). 
+	// Check the value (individually).
 	if (rhs >= N_INPUT_SYSTEM_MULTIPLEX) {
 		*flags |= INPUT_SYSTEM_CFG_FLAG_CONFLICT;
 		return INPUT_SYSTEM_ERR_PARAMETER_NOT_SUPPORTED;
 	}
-	// Set the value. 
+	// Set the value.
 	*lhs = rhs;
-	
+
 	*flags |= INPUT_SYSTEM_CFG_FLAG_SET;
 	return INPUT_SYSTEM_ERR_NO_ERROR;
 }
+#endif

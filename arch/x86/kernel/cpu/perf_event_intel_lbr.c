@@ -4,6 +4,7 @@
 #include <asm/perf_event.h>
 #include <asm/msr.h>
 #include <asm/insn.h>
+#include <asm/processor.h>
 
 #include "perf_event.h"
 
@@ -118,6 +119,10 @@ static void __intel_pmu_lbr_enable(void)
 	u64 debugctl;
 	struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
 
+#ifdef CONFIG_LBR_DUMP_ON_EXCEPTION
+	lbr_dump_on_exception = 0;
+#endif
+
 	if (cpuc->lbr_sel)
 		wrmsrl(MSR_LBR_SELECT, cpuc->lbr_sel->config);
 
@@ -129,6 +134,10 @@ static void __intel_pmu_lbr_enable(void)
 static void __intel_pmu_lbr_disable(void)
 {
 	u64 debugctl;
+
+#ifdef CONFIG_LBR_DUMP_ON_EXCEPTION
+	lbr_dump_on_exception = 1;
+#endif
 
 	rdmsrl(MSR_IA32_DEBUGCTLMSR, debugctl);
 	debugctl &= ~(DEBUGCTLMSR_LBR | DEBUGCTLMSR_FREEZE_LBRS_ON_PMI);

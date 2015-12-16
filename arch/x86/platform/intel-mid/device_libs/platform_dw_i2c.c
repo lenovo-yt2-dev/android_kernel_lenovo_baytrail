@@ -31,7 +31,6 @@ enum {
 	BOARD_NONE = 0,
 	BOARD_VTB,
 	BOARD_SALTBAY,
-	BOARD_BAYTRAIL,
 };
 
 static struct i2c_pin_cfg dw_i2c_pin_cfgs[][10] = {
@@ -41,9 +40,6 @@ static struct i2c_pin_cfg dw_i2c_pin_cfgs[][10] = {
 	},
 	[BOARD_SALTBAY] =  {
 		[1] = {19, 1, 20, 1},
-	},
-	[BOARD_BAYTRAIL] =  {
-		[4] = {87, 1, 86, 1},
 	},
 };
 
@@ -61,14 +57,6 @@ int intel_mid_dw_i2c_abort(int busnum)
 		pins = &dw_i2c_pin_cfgs[BOARD_SALTBAY][busnum];
 		break;
 	default:
-	    switch (boot_cpu_data.x86_model) {
-        /*valleyview*/
-        case 0x37:
-            pins = &dw_i2c_pin_cfgs[BOARD_BAYTRAIL][busnum];
-            break;
-        default:
-            break;
-	    }
 		break;
 	}
 
@@ -150,7 +138,7 @@ fs_initcall(intel_mid_msgbus_init);
 
 #define PUNIT_DOORBELL_OPCODE	(0xE0)
 #define PUNIT_DOORBELL_REG	(0x0)
-#define PUNIT_SEMAPHORE		(0x7)
+#define PUNIT_SEMAPHORE		(platform_is(INTEL_ATOM_BYT) ? 0x7 : 0x10E)
 
 #define GET_SEM() (intel_mid_msgbus_read32(PUNIT_PORT, PUNIT_SEMAPHORE) & 0x1)
 
@@ -175,8 +163,9 @@ int intel_mid_dw_i2c_acquire_ownership(void)
 	unsigned long irq_flags;
 	u32 cmd;
 	u32 cmdext;
-	int timeout = 100;
+	int timeout = 500;
 
+	/* keep CPU at C0 state to prevent acquire semaphore */
 	pm_qos_update_request(&pm_qos, CSTATE_EXIT_LATENCY_C1 - 1);
 
 	/* host driver writes 0x2 to side band register 0x7 */
@@ -195,20 +184,20 @@ int intel_mid_dw_i2c_acquire_ownership(void)
 
 	/* host driver waits for bit 0 to be set in side band 0x7 */
 	while (GET_SEM() != 0x1) {
-		usleep_range(1000, 2000);
-		timeout--;
-		if (timeout <= 0) {
-			pr_err("Timeout: semaphore timed out, reset sem\n");
-			ret = -ETIMEDOUT;
-			reset_semaphore();
-			pr_err("PUNIT SEM: %d\n",
+		usleep_range(200, 400);
+		if (timeout-- <= 0) {
+			pr_err("Timeout: PUNIT SEM: %d, reset sem\n",
 					intel_mid_msgbus_read32(PUNIT_PORT,
 						PUNIT_SEMAPHORE));
+			ret = -ETIMEDOUT;
+			reset_semaphore();
 			WARN_ON(1);
 			return ret;
 		}
 	}
-	smp_mb();
+
+	/* allow PM QoS to C1 after acquire sem for saving power */
+	pm_qos_update_request(&pm_qos, CSTATE_EXIT_LATENCY_C6 - 1);
 
 	pr_devel("i2c-semaphore: acquired i2c\n");
 

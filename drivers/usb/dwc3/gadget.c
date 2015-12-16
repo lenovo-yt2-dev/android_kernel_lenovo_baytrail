@@ -273,10 +273,17 @@ void dwc3_gadget_giveback(struct dwc3_ep *dep, struct dwc3_request *req,
 
 	if (dwc->ep0_bounced && dep->number == 0)
 		dwc->ep0_bounced = false;
-	else if (!dep->ebc)
+	/*intel patch for 4G ram usb internet panic panic problem begin*/
+	//else if (!dep->ebc)
+	else if (!dep->ebc) {
+		if (req->roundup_size) {
+			req->request.length -= req->roundup_size;
+			req->roundup_size = 0;
+		}
 		usb_gadget_unmap_request(&dwc->gadget, &req->request,
 				req->direction);
-
+	}
+    /*intel patch for 4G ram usb internet panic problem end*/
 	dev_dbg(dwc->dev, "request %p from %s completed %d/%d ===> %d\n",
 			req, dep->name, req->request.actual,
 			req->request.length, status);
@@ -866,10 +873,6 @@ static void dwc3_prepare_one_trb(struct dwc3_ep *dep,
 			length, last ? " last" : "",
 			chain ? " chain" : "");
 
-	/* Skip the LINK-TRB on ISOC */
-	if (((dep->free_slot & DWC3_TRB_MASK) == DWC3_TRB_NUM - 1) &&
-			usb_endpoint_xfer_isoc(dep->endpoint.desc))
-		dep->free_slot++;
 
 	trb = &dep->trb_pool[dep->free_slot & DWC3_TRB_MASK];
 
@@ -881,6 +884,10 @@ static void dwc3_prepare_one_trb(struct dwc3_ep *dep,
 	}
 
 	dep->free_slot++;
+	/* Skip the LINK-TRB on ISOC */
+	if (((dep->free_slot & DWC3_TRB_MASK) == DWC3_TRB_NUM - 1) &&
+			usb_endpoint_xfer_isoc(dep->endpoint.desc))
+		dep->free_slot++;
 
 	trb->size = DWC3_TRB_SIZE_LENGTH(length);
 	trb->bpl = lower_32_bits(dma);
@@ -1016,9 +1023,15 @@ static void dwc3_prepare_trbs(struct dwc3_ep *dep, bool starting)
 
 				if (i == (request->num_mapped_sgs - 1) ||
 						sg_is_last(s)) {
-					if (list_is_last(&req->list,
-							&dep->request_list))
-						last_one = true;
+					/* FIXME: After the first TRB is made
+					 * the USB request is removed from
+					 * request_list: we can't check if the
+					 * request is the last, but we could
+					 * check if the list is empty afterward
+					 * This is critical to get an interrupt
+					 * after the sg list is sent.
+					 */
+					last_one = true;
 					chain = false;
 				}
 
@@ -1233,9 +1246,17 @@ static int __dwc3_gadget_kick_transfer(struct dwc3_ep *dep, u16 cmd_param,
 		 * here and stop, unmap, free and del each of the linked
 		 * requests instead of what we do now.
 		 */
-		if (!dep->ebc)
+		/*intel patch for 4G ram usb internet panic problem begin*/
+		//if (!dep->ebc)
+		if (!dep->ebc) {
+			if (req->roundup_size) {
+				req->request.length -= req->roundup_size;
+				req->roundup_size = 0;
+			}
 			usb_gadget_unmap_request(&dwc->gadget, &req->request,
 					req->direction);
+		}
+		/*intel patch for 4G ram usb internet panic problem end*/
 		list_del(&req->list);
 		return ret;
 	}
@@ -1302,8 +1323,15 @@ static void dwc3_gadget_start_isoc(struct dwc3 *dwc,
 
 static int __dwc3_gadget_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
 {
-	struct dwc3		*dwc = dep->dwc;
+    /*intel patch for 4G ram usb internet panic problem begin*/
+	//struct dwc3		*dwc = dep->dwc;
 	int			ret;
+	struct dwc3 	*dwc = dep->dwc;
+	struct usb_ep *ep = &dep->endpoint;
+	struct usb_request				*request = &req->request;
+
+	req->roundup_size = 0;
+    /*intel patch for 4G ram usb internet panic problem end*/
 
 	req->request.actual	= 0;
 	req->request.status	= -EINPROGRESS;
@@ -1349,6 +1377,23 @@ static int __dwc3_gadget_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
 			dep->direction);
 	if (ret)
 		return ret;
+	/* We cheat controller that our buffer aligned with wMaxPacketSize.
+	 * The controller will never touch the extended part due to gadget driver
+	 * know the exact data size will be received.
+	 */
+	/*intel patch for 4G ram usb internet panic problem begin*/
+	if (!IS_ALIGNED(request->length, ep->desc->wMaxPacketSize)
+			&& !(dep->number & 1) && (dep->number != DWC3_EP_EBC_OUT_NB)) {
+		unsigned len;
+		len = roundup(request->length,
+				(u32) ep->desc->wMaxPacketSize);
+		req->roundup_size = len - request->length;
+		request->length = len;
+		/* set flag for bulk-out short request */
+		if (usb_endpoint_is_bulk_out(dep->endpoint.desc))
+			req->short_packet = true;
+	}
+	/*intel patch for 4G ram usb internet panic problem end*/
 
 	list_add_tail(&req->list, &dep->request_list);
 
@@ -1432,18 +1477,18 @@ static int dwc3_gadget_ep_queue(struct usb_ep *ep, struct usb_request *request,
 	}
 	dev_vdbg(dwc->dev, "queing request %p to %s length %d\n",
 			request, ep->name, request->length);
-
+    /*intel patch for 4G ram usb internet panic problem begin*/
 	/* pad OUT endpoint buffer to MaxPacketSize per databook requirement*/
-	req->short_packet = false;
-	if (!IS_ALIGNED(request->length, ep->desc->wMaxPacketSize)
-		&& !(dep->number & 1) && (dep->number != DWC3_EP_EBC_OUT_NB)) {
-		request->length = roundup(request->length,
-					(u32) ep->desc->wMaxPacketSize);
-		/* set flag for bulk-out short request */
-		if (usb_endpoint_is_bulk_out(dep->endpoint.desc))
-			req->short_packet = true;
-	}
-
+	//req->short_packet = false;
+	//if (!IS_ALIGNED(request->length, ep->desc->wMaxPacketSize)
+	//	&& !(dep->number & 1) && (dep->number != DWC3_EP_EBC_OUT_NB)) {
+	//	request->length = roundup(request->length,
+	//				(u32) ep->desc->wMaxPacketSize);
+	//	/* set flag for bulk-out short request */
+	//	if (usb_endpoint_is_bulk_out(dep->endpoint.desc))
+	//		req->short_packet = true;
+	//}
+    /*intel patch for 4G ram usb internet panic problem end*/
 	ret = __dwc3_gadget_ep_queue(dep, req);
 	spin_unlock_irqrestore(&dwc->lock, flags);
 
@@ -1479,7 +1524,7 @@ static int dwc3_gadget_ep_dequeue(struct usb_ep *ep,
 			dwc3_stop_active_transfer(dwc, dep->number, 1);
 			goto out1;
 		}
-		dev_err(dwc->dev, "request %p was not queued to %s\n",
+		dev_info(dwc->dev, "request %p was not queued to %s\n",
 				request, ep->name);
 		ret = -EINVAL;
 		goto out0;
@@ -1757,7 +1802,7 @@ static int dwc3_gadget_run_stop(struct dwc3 *dwc, int is_on)
 		/* WORKAROUND: reset PHY via FUNC_CTRL before disconnect
 		 * to avoid PHY hang
 		 */
-		if (!dwc->utmi_phy) {
+		if (!dwc->utmi_phy && !dwc3_is_cht()) {
 			usb_phy = usb_get_phy(USB_PHY_TYPE_USB2);
 			if (usb_phy)
 				usb_phy_io_write(usb_phy,
@@ -2268,7 +2313,7 @@ static int dwc3_cleanup_done_reqs(struct dwc3 *dwc, struct dwc3_ep *dep,
 			break;
 	} while (1);
 
-	if (usb_endpoint_xfer_isoc(dep->endpoint.desc) &&
+	if (dep->endpoint.desc && usb_endpoint_xfer_isoc(dep->endpoint.desc) &&
 			list_empty(&dep->req_queued)) {
 		if (list_empty(&dep->request_list)) {
 			/*
@@ -2297,6 +2342,12 @@ static void dwc3_endpoint_transfer_complete(struct dwc3 *dwc,
 {
 	unsigned		status = 0;
 	int			clean_busy;
+
+	if (!(dep->flags & DWC3_EP_ENABLED)) {
+		dev_warn(dwc->dev, "%s: %s event on disabled ep\n", dep->name,
+			dwc3_ep_event_string(event->endpoint_event));
+		return;
+	}
 
 	if (event->status & DEPEVT_STATUS_BUSERR)
 		status = -ECONNRESET;
@@ -2838,7 +2889,7 @@ static void dwc3_gadget_linksts_change_interrupt(struct dwc3 *dwc,
 {
 	enum dwc3_link_state	next = evtinfo & DWC3_LINK_STATE_MASK;
 	unsigned int		pwropt;
-
+   
 	/*
 	 * WORKAROUND: DWC3 < 2.50a have an issue when configured without
 	 * Hibernation mode enabled which would show up when device detects
@@ -2913,7 +2964,7 @@ static void dwc3_gadget_linksts_change_interrupt(struct dwc3 *dwc,
 	}
 
 	dwc->link_state = next;
-
+        printk("yangyu dwc3_gadget_linksts_change_interrupt next %d\n",next);
 	if (next ==  DWC3_LINK_STATE_U3)
 		schedule_delayed_work(
 			&dwc->link_work, msecs_to_jiffies(1000));
@@ -3182,6 +3233,7 @@ int dwc3_gadget_init(struct dwc3 *dwc)
 	dwc->gadget.max_speed		= USB_SPEED_SUPER;
 	dwc->gadget.speed		= USB_SPEED_UNKNOWN;
 	dwc->gadget.sg_supported	= true;
+	dwc->gadget.quirk_ep_out_aligned_size = true;
 	dwc->gadget.name		= "dwc3-gadget";
 
 	INIT_DELAYED_WORK(&dwc->link_work, link_state_change_work);
@@ -3200,7 +3252,7 @@ int dwc3_gadget_init(struct dwc3 *dwc)
 	dwc3_writel(dwc->regs, DWC3_DCFG, reg);
 
 	/* Enable USB2 LPM and automatic phy suspend only on recent versions */
-	if (dwc->revision >= DWC3_REVISION_194A) {
+	if (!dwc3_is_cht() && dwc->revision >= DWC3_REVISION_194A) {
 		dwc3_gadget_usb2_phy_suspend(dwc, false);
 		dwc3_gadget_usb3_phy_suspend(dwc, false);
 	}
@@ -3462,6 +3514,7 @@ int dwc3_runtime_suspend(struct device *device)
 	unsigned long			flags;
 	u32				epnum;
 	struct dwc3_ep			*dep;
+	printk("yangyu dwc3_runtime_suspend\n");	
 
 	pdev = to_platform_device(device);
 	dwc = platform_get_drvdata(pdev);
@@ -3506,7 +3559,7 @@ int dwc3_runtime_suspend(struct device *device)
 	dwc->pm_state = PM_SUSPENDED;
 
 	spin_unlock_irqrestore(&dwc->lock, flags);
-
+    printk("yangyu dwc3_runtime_suspend\n");
 	schedule_delayed_work(&dwc->link_work, msecs_to_jiffies(1000));
 	dev_info(dwc->dev, "suspended\n");
 	dev_vdbg(dwc->dev, "<--- %s()\n", __func__);
@@ -3525,7 +3578,8 @@ int dwc3_runtime_resume(struct device *device)
 	u32				reg;
 	u8				link_state;
 	struct dwc3_ep			*dep;
-
+	printk("yangyu dwc3_runtime_resume\n");
+    
 	pdev = to_platform_device(device);
 	dwc = platform_get_drvdata(pdev);
 

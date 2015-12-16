@@ -22,8 +22,6 @@
 #ifndef __IA_CSS_YNR2_HOST_H
 #define __IA_CSS_YNR2_HOST_H
 
-#include "sh_css_params.h"
-
 #include "ia_css_ynr2_types.h"
 #include "ia_css_ynr2_param.h"
 
@@ -33,12 +31,14 @@ extern const struct ia_css_fc_config  default_fc_config;
 void
 ia_css_ynr_encode(
 	struct sh_css_isp_yee2_params *to,
-	const struct ia_css_ynr_config *from);
+	const struct ia_css_ynr_config *from,
+	unsigned size);
 
 void
 ia_css_fc_encode(
 	struct sh_css_isp_fc_params *to,
-	const struct ia_css_fc_config *from);
+	const struct ia_css_fc_config *from,
+	unsigned size);
 
 void
 ia_css_ynr_dump(

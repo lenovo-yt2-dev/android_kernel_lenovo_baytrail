@@ -40,6 +40,7 @@ obj-$(CONFIG_TOPSTAR_LAPTOP)	+= topstar-laptop.o
 obj-$(CONFIG_ACPI_TOSHIBA)	+= toshiba_acpi.o
 
 obj-$(CONFIG_TOSHIBA_BT_RFKILL)	+= toshiba_bluetooth.o
+obj-$(CONFIG_INTEL_PMC_IPC)	+= intel_pmc_ipc.o
 obj-$(CONFIG_INTEL_SCU_IPC)	+= intel_scu_ipc.o intel_scu_pmic.o intel_scu_mip.o intel_scu_fw_update.o
 obj-$(CONFIG_INTEL_SCU_IPC_UTIL) += intel_scu_ipcutil.o
 obj-$(CONFIG_INTEL_MODEM_NVRAM)	+= intel_modem_nvram.o
@@ -66,4 +67,7 @@ obj-$(CONFIG_INTEL_BYT_M_BTN)	+= intel_byt_buttons.o
 obj-$(CONFIG_INTEL_CRYSTALCOVE_PAGE0)	+= intel_crystalcove_page0.o
 obj-$(CONFIG_INTEL_BYTCR_BOOST_CNTL)	+= intel_bytcr_bcntl.o
 obj-$(CONFIG_ACPI) += intel_em_config.o
+obj-$(CONFIG_INTEL_FG_HELPER)	+= intel_fg_helper.o
 obj-$(CONFIG_INTEL_MID_PMIC)		+= dc_xpwr_pwrsrc.o
+obj-$(CONFIG_INTEL_MID_PMIC)		+= dc_ti_pwrsrc.o
+obj-$(CONFIG_INTEL_MID_PMIC)        += dc_ti_cc.o

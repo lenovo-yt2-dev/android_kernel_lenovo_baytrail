@@ -83,18 +83,18 @@ void memcpy32_toio(void *dst, const void *src, int count)
  * intel_sst_reset_dsp_medfield - Resetting SST DSP
  *
  * This resets DSP in case of Medfield platfroms
+ * All CSR operations should be in the context of
+ * sst_lock
  */
 int intel_sst_reset_dsp_mfld(void)
 {
 	union config_status_reg csr;
 
 	pr_debug("Resetting the DSP in medfield\n");
-	mutex_lock(&sst_drv_ctx->csr_lock);
 	csr.full = sst_shim_read(sst_drv_ctx->shim, SST_CSR);
 	csr.full |= 0x382;
 	csr.part.run_stall = 0x1;
 	sst_shim_write(sst_drv_ctx->shim, SST_CSR, csr.full);
-	mutex_unlock(&sst_drv_ctx->csr_lock);
 
 	return 0;
 }
@@ -108,7 +108,6 @@ int sst_start_mfld(void)
 {
 	union config_status_reg csr;
 
-	mutex_lock(&sst_drv_ctx->csr_lock);
 	csr.full = sst_shim_read(sst_drv_ctx->shim, SST_CSR);
 	csr.part.bypass = 0;
 	sst_shim_write(sst_drv_ctx->shim, SST_CSR, csr.full);
@@ -121,7 +120,6 @@ int sst_start_mfld(void)
 	pr_debug("Starting the DSP_medfld %x\n", csr.full);
 	sst_shim_write(sst_drv_ctx->shim, SST_CSR, csr.full);
 	pr_debug("Starting the DSP_medfld\n");
-	mutex_unlock(&sst_drv_ctx->csr_lock);
 
 	return 0;
 }
@@ -135,7 +133,6 @@ int intel_sst_reset_dsp_mrfld(void)
 	union config_status_reg_mrfld csr;
 
 	pr_debug("sst: Resetting the DSP in mrfld\n");
-	mutex_lock(&sst_drv_ctx->csr_lock);
 	csr.full = sst_shim_read64(sst_drv_ctx->shim, SST_CSR);
 
 	pr_debug("value:0x%llx\n", csr.full);
@@ -151,7 +148,6 @@ int intel_sst_reset_dsp_mrfld(void)
 
 	csr.full = sst_shim_read64(sst_drv_ctx->shim, SST_CSR);
 	pr_debug("value:0x%llx\n", csr.full);
-	mutex_unlock(&sst_drv_ctx->csr_lock);
 	return 0;
 }
 
@@ -165,7 +161,6 @@ int sst_start_mrfld(void)
 	union config_status_reg_mrfld csr;
 
 	pr_debug("sst: Starting the DSP in mrfld LALALALA\n");
-	mutex_lock(&sst_drv_ctx->csr_lock);
 	csr.full = sst_shim_read64(sst_drv_ctx->shim, SST_CSR);
 	pr_debug("value:0x%llx\n", csr.full);
 
@@ -181,7 +176,6 @@ int sst_start_mrfld(void)
 
 	csr.full = sst_shim_read64(sst_drv_ctx->shim, SST_CSR);
 	pr_debug("sst: Starting the DSP_merrifield:%llx\n", csr.full);
-	mutex_unlock(&sst_drv_ctx->csr_lock);
 	return 0;
 }
 
@@ -189,12 +183,12 @@ int sst_start_mrfld(void)
  * intel_sst_set_bypass - Sets/clears the bypass bits
  *
  * This sets/clears the bypass bits
+ * CSR register updates should be in context of sst_lock
  */
 void intel_sst_set_bypass_mfld(bool set)
 {
 	union config_status_reg csr;
 
-	mutex_lock(&sst_drv_ctx->csr_lock);
 	csr.full = sst_shim_read(sst_drv_ctx->shim, SST_CSR);
 	if (set == true)
 		csr.full |= 0x380;
@@ -202,7 +196,6 @@ void intel_sst_set_bypass_mfld(bool set)
 		csr.part.bypass = 0;
 	pr_debug("SetupByPass set %d Val 0x%x\n", set, csr.full);
 	sst_shim_write(sst_drv_ctx->shim, SST_CSR, csr.full);
-	mutex_unlock(&sst_drv_ctx->csr_lock);
 
 }
 #define SST_CALC_DMA_DSTN(lpe_viewpt_rqd, ia_viewpt_addr, elf_paddr, \
@@ -479,7 +472,6 @@ sst_init_dma_sg_list(struct intel_sst_drv *sst, unsigned int len,
 	sg_init_table(sg_dst, len);
 	*src = sg_src;
 	*dstn = sg_dst;
-
 	return 0;
 }
 
@@ -598,6 +590,13 @@ static int sst_dma_firmware(struct sst_dma *dma, struct sst_sg_list *sg_list)
 		sst_shim_write(sst_drv_ctx->shim, SST_PIMR, 0xFFFF0034);
 
 	if (sst_drv_ctx->use_lli) {
+#if 1
+		if (!dma_map_sg(dma->dev, sg_src_list, length, DMA_MEM_TO_MEM)) {
+			pr_err("dma map src scatterlist failed\n");
+			return -EFAULT;
+		}
+#endif
+
 		sst_drv_ctx->desc = dma->ch->device->device_prep_dma_sg(dma->ch,
 					sg_dst_list, length,
 					sg_src_list, length, flag);
@@ -606,6 +605,9 @@ static int sst_dma_firmware(struct sst_dma *dma, struct sst_sg_list *sg_list)
 		retval = sst_dma_wait_for_completion(sst_drv_ctx);
 		if (retval)
 			pr_err("sst_dma_firmware..timeout!\n");
+#if 1
+		dma_unmap_sg(dma->dev, sg_src_list, length, DMA_MEM_TO_MEM);
+#endif
 	} else {
 		struct scatterlist *sg;
 		dma_addr_t src_addr, dstn_addr;
@@ -804,10 +806,11 @@ static int sst_parse_module_dma(struct intel_sst_drv *sst_ctx,
 	block = (void *)module + sizeof(*module);
 
 	for (count = 0; count < module->blocks; count++) {
-		sg_len += (block->size) / sst_drv_ctx->info.dma_max_len;
-
-		if (block->size % sst_drv_ctx->info.dma_max_len)
-			sg_len = sg_len + 1;
+		if (block->type != SST_CUSTOM_INFO) {
+			sg_len += (block->size) / sst_drv_ctx->info.dma_max_len;
+			if (block->size % sst_drv_ctx->info.dma_max_len)
+				sg_len = sg_len + 1;
+		}
 		block = (void *)block + sizeof(*block) + block->size;
 	}
 
@@ -835,6 +838,12 @@ static int sst_parse_module_dma(struct intel_sst_drv *sst_ctx,
 		case SST_DRAM:
 			ram = sst_ctx->dram_base;
 			break;
+		case SST_DDR:
+			ram = sst_drv_ctx->ddr_base;
+			break;
+		case SST_CUSTOM_INFO:
+			block = (void *)block + sizeof(*block) + block->size;
+			continue;
 		default:
 			pr_err("wrong ram type0x%x in block0x%x\n",
 					block->type, count);
@@ -1059,6 +1068,12 @@ static int sst_parse_module_memcpy(struct fw_module_header *module,
 		case SST_DRAM:
 			ram_iomem = sst_drv_ctx->dram;
 			break;
+		case SST_DDR:
+			ram_iomem = sst_drv_ctx->ddr;
+			break;
+		case SST_CUSTOM_INFO:
+			block = (void *)block + sizeof(*block) + block->size;
+			continue;
 		default:
 			pr_err("wrong ram type0x%x in block0x%x\n",
 					block->type, count);
@@ -1170,12 +1185,14 @@ void sst_firmware_load_cb(const struct firmware *fw, void *context)
 
 	if (fw == NULL) {
 		pr_err("request fw failed\n");
-		goto out;
+		return;
 	}
 
-	if (sst_drv_ctx->sst_state != SST_UN_INIT ||
+	mutex_lock(&sst_drv_ctx->sst_lock);
+
+	if (sst_drv_ctx->sst_state != SST_RESET ||
 			ctx->fw_in_mem != NULL)
-		goto exit;
+		goto out;
 
 	pr_debug("Request Fw completed\n");
 	trace_sst_fw_download("End of FW request", ctx->sst_state);
@@ -1220,7 +1237,6 @@ void sst_firmware_load_cb(const struct firmware *fw, void *context)
 		ctx->fw_in_mem = NULL;
 		goto out;
 	}
-
 	/* If static module download(download at boot time) is supported,
 	 * set the flag to indicate lib download is to be done
 	 */
@@ -1228,11 +1244,8 @@ void sst_firmware_load_cb(const struct firmware *fw, void *context)
 		if (ctx->pdata->lib_info->mod_ddr_dnld)
 			ctx->lib_dwnld_reqd = true;
 
-	sst_set_fw_state_locked(sst_drv_ctx, SST_FW_LIB_LOAD);
-	goto exit;
 out:
-	sst_set_fw_state_locked(sst_drv_ctx, SST_UN_INIT);
-exit:
+	mutex_unlock(&sst_drv_ctx->sst_lock);
 	if (fw != NULL)
 		release_firmware(fw);
 }
@@ -1390,8 +1403,8 @@ static int sst_download_library(const struct firmware *fw_lib,
 
 	/* downloading on success */
 	mutex_lock(&sst_drv_ctx->sst_lock);
-	sst_drv_ctx->sst_state = SST_FW_LOADED;
-	mutex_lock(&sst_drv_ctx->csr_lock);
+
+	sst_drv_ctx->sst_state = SST_FW_LOADING;
 	csr.full = readl(sst_drv_ctx->shim + SST_CSR);
 	csr.part.run_stall = 1;
 	sst_shim_write(sst_drv_ctx->shim, SST_CSR, csr.full);
@@ -1399,7 +1412,6 @@ static int sst_download_library(const struct firmware *fw_lib,
 	csr.full = sst_shim_read(sst_drv_ctx->shim, SST_CSR);
 	csr.part.bypass = 0x7;
 	sst_shim_write(sst_drv_ctx->shim, SST_CSR, csr.full);
-	mutex_unlock(&sst_drv_ctx->csr_lock);
 
 	if (sst_drv_ctx->use_dma) {
 		ret_val = sst_do_dma(&sst_drv_ctx->library_list);
@@ -1410,7 +1422,6 @@ static int sst_download_library(const struct firmware *fw_lib,
 	} else
 		sst_do_memcpy(&sst_drv_ctx->libmemcpy_list);
 	/* set the FW to running again */
-	mutex_lock(&sst_drv_ctx->csr_lock);
 	csr.full = sst_shim_read(sst_drv_ctx->shim, SST_CSR);
 	csr.part.bypass = 0x0;
 	sst_shim_write(sst_drv_ctx->shim, SST_CSR, csr.full);
@@ -1418,7 +1429,6 @@ static int sst_download_library(const struct firmware *fw_lib,
 	csr.full = sst_shim_read(sst_drv_ctx->shim, SST_CSR);
 	csr.part.run_stall = 0;
 	sst_shim_write(sst_drv_ctx->shim, SST_CSR, csr.full);
-	mutex_unlock(&sst_drv_ctx->csr_lock);
 send_ipc:
 	/* send download complete and wait */
 	if (sst_create_ipc_msg(&msg, true)) {
@@ -1516,20 +1526,6 @@ void sst_post_download_byt(struct intel_sst_drv *ctx)
 	}
 }
 
-static void sst_init_lib_mem_mgr(struct intel_sst_drv *ctx)
-{
-	struct sst_mem_mgr *mgr = &ctx->lib_mem_mgr;
-	const struct sst_lib_dnld_info *lib_info = ctx->pdata->lib_info;
-
-	memset(mgr, 0, sizeof(*mgr));
-	mgr->current_base = lib_info->mod_base + lib_info->mod_table_offset
-						+ lib_info->mod_table_size;
-	mgr->avail = lib_info->mod_end - mgr->current_base + 1;
-
-	pr_debug("current base = 0x%lx , avail = 0x%x\n",
-		(unsigned long)mgr->current_base, mgr->avail);
-}
-
 /**
  * sst_load_fw - function to load FW into DSP
  *
@@ -1543,24 +1539,17 @@ int sst_load_fw(void)
 
 	pr_debug("sst_load_fw\n");
 
-	if ((sst_drv_ctx->sst_state !=  SST_START_INIT &&
-			sst_drv_ctx->sst_state !=  SST_FW_LIB_LOAD) ||
+	if (sst_drv_ctx->sst_state !=  SST_RESET ||
 			sst_drv_ctx->sst_state == SST_SHUTDOWN)
 		return -EAGAIN;
 
 	if (!sst_drv_ctx->fw_in_mem) {
-		if (sst_drv_ctx->sst_state != SST_START_INIT) {
-			/* even wake*/
-			pr_err("sst : wait for FW to be downloaded\n");
-			return -EBUSY;
-		} else {
-			trace_sst_fw_download("Req FW sent in check device",
-						sst_drv_ctx->sst_state);
-			pr_debug("sst: FW not in memory retry to download\n");
-			ret_val = sst_request_fw(sst_drv_ctx);
-			if (ret_val)
-				return ret_val;
-		}
+		trace_sst_fw_download("Req FW sent in check device",
+					sst_drv_ctx->sst_state);
+		pr_debug("sst: FW not in memory retry to download\n");
+		ret_val = sst_request_fw(sst_drv_ctx);
+		if (ret_val)
+			return ret_val;
 	}
 
 	BUG_ON(!sst_drv_ctx->fw_in_mem);
@@ -1570,6 +1559,8 @@ int sst_load_fw(void)
 
 	/* Prevent C-states beyond C6 */
 	pm_qos_update_request(sst_drv_ctx->qos, CSTATE_EXIT_LATENCY_S0i1 - 1);
+
+	sst_drv_ctx->sst_state = SST_FW_LOADING;
 
 	ret_val = sst_drv_ctx->ops->reset();
 	if (ret_val)
@@ -1593,7 +1584,6 @@ int sst_load_fw(void)
 		sst_drv_ctx->ops->post_download(sst_drv_ctx);
 	trace_sst_fw_download("Post download for Lib end",
 			sst_drv_ctx->sst_state);
-	sst_drv_ctx->sst_state = SST_FW_LOADED;
 
 	/* bring sst out of reset */
 	ret_val = sst_drv_ctx->ops->start();
@@ -1948,8 +1938,6 @@ int sst_load_all_modules_elf(struct intel_sst_drv *ctx, struct sst_module_info *
 	unsigned long lib_base;
 
 	pr_debug("In %s", __func__);
-
-	sst_init_lib_mem_mgr(ctx);
 
 	for (i = 0; i < num_modules; i++) {
 		mod = &mod_table[i];

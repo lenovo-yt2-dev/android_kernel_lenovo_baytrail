@@ -24,10 +24,12 @@
 /* Slave Address for all regulators */
 #define V2P85SCNT_ADDR	0x065
 #define V2P85SXCNT_ADDR	0x066
-#define V3P3SCNT_ADDR	0x069
+#define V3P3SXCNT_ADDR	0x069
 #define V1P8SCNT_ADDR	0x05c
 #define V1P8SXCNT_ADDR	0x05d
 #define VSYS_SCNT_ADDR	0x06c
+#define V1P0ACNT_ADDR	0x055
+#define V1P8ACNT_ADDR	0x05a
 
 #define CRYSTAL_COVE_REGULATOR_ID_START 1000
 
@@ -36,9 +38,11 @@ struct regulator_init_data;
 enum intel_regulator_id {
 	V2P85S = CRYSTAL_COVE_REGULATOR_ID_START,
 	V2P85SX,
-	V3P3S,
+	V3P3SX,
 	V1P8S,
 	V1P8SX,
+	V1P0A,
+	V1P8A,
 	VSYS_S,
 };
 
@@ -48,28 +52,36 @@ struct regulator_info {
 };
 
 /* Voltage tables for Regulators */
-static const u16 V2P85S_VSEL_TABLE[] = {
-	2565, 2700, 2850, 2900, 2950, 3000, 3135, 3300,
+static const unsigned int V2P85S_VSEL_TABLE[] = {
+	2565000, 2700000, 2850000, 2900000, 2950000, 3000000, 3135000, 3300000,
 };
 
-static const u16 V2P85SX_VSEL_TABLE[] = {
-	2900,
+static const unsigned int V2P85SX_VSEL_TABLE[] = {
+	2900000,
 };
 
-static const u16 V3P3S_VSEL_TABLE[] = {
-	3332,
+static const unsigned int V3P3SX_VSEL_TABLE[] = {
+	3332000,
 };
 
-static const u16 V1P8S_VSEL_TABLE[] = {
-	1817,
+static const unsigned int  V1P8S_VSEL_TABLE[] = {
+	1817000,
 };
 
-static const u16 V1P8SX_VSEL_TABLE[] = {
-	1817,
+static const unsigned int  V1P8SX_VSEL_TABLE[] = {
+	1817000,
 };
 
-static const u16 VSYS_S_VSEL_TABLE[] = {
-	4200,
+static const unsigned int  VSYS_S_VSEL_TABLE[] = {
+	4200000,
+};
+
+static const unsigned V1P0A_VSEL_TABLE[] = {
+	900000, 950000, 1000000, 1020000, 1030000, 1050000, 1100000,
+};
+
+static const unsigned V1P8A_VSEL_TABLE[] = {
+	1620000, 1710000, 1800000, 1836000, 1854000, 1890000, 1980000,
 };
 
 struct pmic_regulator_gpio_en {

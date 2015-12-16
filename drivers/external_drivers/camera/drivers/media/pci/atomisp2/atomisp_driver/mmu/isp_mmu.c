@@ -35,9 +35,24 @@
 #include <linux/moduleparam.h>
 #include <linux/string.h>
 #include <linux/errno.h>
+#include <linux/sizes.h>
 
 #include "atomisp_internal.h"
 #include "mmu/isp_mmu.h"
+
+/*
+ * 64-bit x86 processor physical address layout:
+ * 0		- 0x7fffffff		DDR RAM	(2GB)
+ * 0x80000000	- 0xffffffff		MMIO	(2GB)
+ * 0x100000000	- 0x3fffffffffff	DDR RAM	(64TB)
+ * So if the system has more than 2GB DDR memory, the lower 2GB occupies the
+ * physical address 0 - 0x7fffffff and the rest will start from 0x100000000.
+ * We have to make sure memory is allocated from the lower 2GB for devices
+ * that are only 32-bit capable(e.g. the ISP MMU).
+ *
+ * For any confusion, contact bin.gao@intel.com.
+ */
+#define NR_PAGES_2GB	(SZ_2G / PAGE_SIZE)
 
 static void free_mmu_map(struct isp_mmu *mmu, unsigned int start_isp_virt,
 				unsigned int end_isp_virt);
@@ -81,11 +96,20 @@ static phys_addr_t alloc_page_table(struct isp_mmu *mmu)
 {
 	int i;
 	phys_addr_t page;
+	void *virt;
+
 	/*page table lock may needed here*/
+	/*
+	 * The slab allocator(kmem_cache and kmalloc family) doesn't handle
+	 * GFP_DMA32 flag, so we have to use buddy allocator.
+	 */
 #ifdef USE_KMEM_CACHE
-	void *virt = kmem_cache_zalloc(mmu->tbl_cache, GFP_KERNEL);
+	if (totalram_pages > (unsigned long)NR_PAGES_2GB)
+		virt = (void *)__get_free_page(GFP_KERNEL | GFP_DMA32);
+	else
+		virt = kmem_cache_zalloc(mmu->tbl_cache, GFP_KERNEL);
 #else
-	void *virt = (void *)__get_free_page(GFP_KERNEL);
+	virt = (void *)__get_free_page(GFP_KERNEL | GFP_DMA32);
 #endif
 	if (!virt)
 		return (phys_addr_t)NULL_PAGE;
@@ -526,10 +550,6 @@ int isp_mmu_init(struct isp_mmu *mmu, struct isp_mmu_client *driver)
 	mmu->l1_pte = driver->null_pte;
 
 	mutex_init(&mmu->pt_mutex);
-
-#ifndef CSS20
-	isp_mmu_flush_tlb(mmu);
-#endif /* CSS20 */
 
 #ifdef USE_KMEM_CACHE
 	mmu->tbl_cache = kmem_cache_create("iopte_cache", ISP_PAGE_SIZE,

@@ -1462,6 +1462,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 261500,
 
 	},
 	{
@@ -1481,6 +1482,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 261500,
 	},
 	{
 		.desc = "WIDE_PREVIEW_30fps",
@@ -1499,6 +1501,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 174500,
 	},
 	{
 		.desc = "STILL_720p_30fps",
@@ -1517,6 +1520,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 261500,
 	},
 	{
 		.desc = "STILL_2M_30fps",
@@ -1535,6 +1539,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 	{
 		.desc = "1080p_strong_dvs_30fps",
@@ -1553,6 +1558,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 292500,
 	},
 	{
 		.desc = "STILL_3M_30fps",
@@ -1571,6 +1577,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 	{
 		.desc = "STILL_5M_30fps",
@@ -1589,6 +1596,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 	{
 		.desc = "STILL_6M_30fps",
@@ -1607,6 +1615,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 	{
 		.desc = "STILL_8M_30fps",
@@ -1625,6 +1634,7 @@ struct imx_resolution imx175_res_preview[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 };
 
@@ -1646,6 +1656,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 261000,
 	},
 	{
 		.desc = "VGA_strong_dvs_15fps",
@@ -1664,6 +1675,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 261500,
 	},
 	{
 		.desc = "imx_STILL_720p_15fps",
@@ -1682,6 +1694,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 261500,
 	},
 	{
 		.desc = "STILL_2M_15fps",
@@ -1700,6 +1713,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 	{
 		.desc = "1080p_strong_dvs_15fps",
@@ -1718,6 +1732,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 292500,
 	},
 	{
 		.desc = "STILL_3M_15fps",
@@ -1736,6 +1751,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 	{
 		.desc = "STILL_5M_15fps",
@@ -1757,6 +1773,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 	{
 		.desc = "STILL_6M_15fps",
@@ -1775,6 +1792,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 	{
 		.desc = "STILL_8M_15fps",
@@ -1793,6 +1811,7 @@ struct imx_resolution imx175_res_still[] = {
 			{
 			}
 		},
+		.mipi_freq = 320000,
 	},
 };
 
@@ -1814,6 +1833,7 @@ struct imx_resolution imx175_res_video[] = {
 			{
 			}
 		},
+		.mipi_freq = 174500,
 	},
 	{
 		.desc =	"QVGA_strong_dvs_30fps",
@@ -1832,6 +1852,7 @@ struct imx_resolution imx175_res_video[] = {
 			{
 			}
 		},
+		.mipi_freq = 174500,
 	},
 	{
 		.desc = "VGA_strong_dvs_30fps",
@@ -1850,6 +1871,7 @@ struct imx_resolution imx175_res_video[] = {
 			{
 			}
 		},
+		.mipi_freq = 261500,
 	},
 	{
 		.desc = "720p_strong_dvs_30fps",
@@ -1873,6 +1895,7 @@ struct imx_resolution imx175_res_video[] = {
 			{
 			}
 		},
+		.mipi_freq = 292500,
 	},
 	{
 		.desc = "480p_strong_dvs_30fps",
@@ -1891,6 +1914,7 @@ struct imx_resolution imx175_res_video[] = {
 			{
 			}
 		},
+		.mipi_freq = 292500,
 	},
 	{
 		.desc = "WVGA_strong_dvs_30fps",
@@ -1909,6 +1933,7 @@ struct imx_resolution imx175_res_video[] = {
 			{
 			}
 		},
+		.mipi_freq = 292500,
 	},
 	{
 		.desc = "1080p_strong_dvs_30fps",
@@ -1927,6 +1952,7 @@ struct imx_resolution imx175_res_video[] = {
 			{
 			}
 		},
+		.mipi_freq = 292500,
 	},
 };
 

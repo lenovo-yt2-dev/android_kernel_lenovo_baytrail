@@ -29,9 +29,7 @@
 
 #include <ia_css_frame_public.h>
 
-struct ia_css_ref_configuration {
-	const struct ia_css_frame_info *info;
-};
+
 
 #endif /* __IA_CSS_REF_TYPES_H */
 

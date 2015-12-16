@@ -32,12 +32,14 @@ extern const struct ia_css_xnr_config default_xnr_config;
 void
 ia_css_xnr_table_vamem_encode(
 	struct sh_css_isp_xnr_vamem_params *to,
-	const struct ia_css_xnr_table *from);
+	const struct ia_css_xnr_table *from,
+	unsigned size);
 
 void
 ia_css_xnr_encode(
 	struct sh_css_isp_xnr_params *to,
-	const struct ia_css_xnr_config *from);
+	const struct ia_css_xnr_config *from,
+	unsigned size);
 
 void
 ia_css_xnr_table_debug_dtrace(

@@ -94,6 +94,7 @@ enum hmm_page_type {
 #define	HMM_BO_BINDED		0x4
 #define	HMM_BO_MMAPED		0x8
 #define	HMM_BO_VMAPED		0x10
+#define	HMM_BO_VMAPED_CACHED	0x20
 #define	HMM_BO_ACTIVE		0x1000
 #define	HMM_BO_MEM_TYPE_USER     0x1
 #define	HMM_BO_MEM_TYPE_PFN      0x2
@@ -291,7 +292,14 @@ int hmm_bo_binded(struct hmm_buffer_object *bo);
  * vmap buffer object's pages to contiguous kernel virtual address.
  * if the buffer has been vmaped, return the virtual address directly.
  */
-void *hmm_bo_vmap(struct hmm_buffer_object *bo);
+void *hmm_bo_vmap(struct hmm_buffer_object *bo, bool cached);
+
+/*
+ * flush the cache for the vmapped buffer object's pages,
+ * if the buffer has not been vmapped, return directly.
+ */
+void hmm_bo_flush_vmap(struct hmm_buffer_object *bo);
+
 /*
  * vunmap buffer object's kernel virtual address.
  */

@@ -74,6 +74,7 @@
 #include "ipil_hdcp_api.h"
 #include "psb_powermgmt.h"
 #include "ipil_hdmi.h"
+#include "hdcp_api.h"
 
 #define OTM_HDCP_DEBUG_MODULE
 
@@ -154,6 +155,8 @@ struct hdcp_context_t {
 	unsigned int hdcp_delay;
 			/*!< time delay (msec) to wait for TMDS to be ready */
 	bool hdmi; /* HDMI or DVI*/
+
+	uint8_t bksv[HDCP_KSV_SIZE];
 };
 
 /* Global instance of local context */
@@ -590,6 +593,7 @@ static void hdcp_reset(void)
 	hdcp_context->is_phase2_enabled = false;
 	hdcp_context->is_phase3_valid   = false;
 	hdcp_context->prev_ri_frm_cnt_status = 0;
+	memset(hdcp_context->bksv, 0, HDCP_KSV_SIZE);
 }
 
 /**
@@ -693,7 +697,7 @@ static bool hdcp_stage1_authentication(bool *is_repeater)
 	/* Wait (up to 2s) for HDMI sink to be in HDMI mode */
 	retry = 40;
 	if (hdcp_context->hdmi) {
-		while (retry--) {
+		while (--retry) {
 			if (hdcp_read_bstatus(&bstatus.value) == false) {
 				pr_err("hdcp: failed to read bstatus\n");
 				return false;
@@ -717,6 +721,8 @@ static bool hdcp_stage1_authentication(bool *is_repeater)
 	}
 	pr_debug("hdcp: bksv: %02x%02x%02x%02x%02x\n",
 		bksv[0], bksv[1], bksv[2], bksv[3], bksv[4]);
+
+	memcpy(hdcp_context->bksv, bksv, HDCP_KSV_SIZE);
 
 	/* Read An */
 	if (ipil_hdcp_get_an(an, HDCP_AN_SIZE) == false) {
@@ -1128,6 +1134,12 @@ static void hdcp_task_event_handler(struct work_struct *work)
 	if (hdcp_context == NULL || hwq == NULL)
 		goto EXIT_HDCP_HANDLER;
 
+	if (!ospm_power_using_hw_begin(OSPM_DISPLAY_ISLAND,
+				OSPM_UHB_FORCE_POWER_ON)) {
+		pr_err("Unable to power on display island!");
+		goto EXIT_HDCP_HANDLER;
+	}
+
 	switch (msg) {
 	case HDCP_ENABLE:
 #ifndef OTM_HDMI_HDCP_ALWAYS_ENC
@@ -1255,6 +1267,7 @@ static void hdcp_task_event_handler(struct work_struct *work)
 				ctx->is_phase1_enabled, ctx->hpd);
 	}
 
+	ospm_power_using_hw_end(OSPM_DISPLAY_ISLAND);
 EXIT_HDCP_HANDLER:
 	if (msg_data != NULL)
 		kfree(msg_data);
@@ -1509,7 +1522,6 @@ bool otm_hdmi_hdcp_enable(hdmi_context_t *hdmi_context,
 				 3 * hdcp_context->video_refresh_interval;
 
 	hdcp_context->hdmi = otm_hdmi_is_monitor_hdmi(hdmi_context);
-
 	pr_debug("hdcp: schedule HDCP enable\n");
 
 #ifdef OTM_HDMI_HDCP_ALWAYS_ENC
@@ -1569,6 +1581,26 @@ bool otm_hdmi_hdcp_disable(hdmi_context_t *hdmi_context)
 
 	return true;
 }
+
+/**
+ * Description: copy BKSV to the buffer
+ *
+ * @bksv: buffer to receive bksv
+ * @size: length of buffer
+ *
+ * Returns:	true on success
+ *		false on failure
+ */
+
+bool otm_hdmi_hdcp_get_bksv(uint8_t *bksv, int size)
+{
+	if (!hdcp_context || !bksv || size < HDCP_KSV_SIZE)
+		return false;
+
+	memcpy(bksv, hdcp_context->bksv, HDCP_KSV_SIZE);
+	return true;
+}
+
 
 /**
  * Description: hdcp init function
@@ -1650,6 +1682,8 @@ bool otm_hdmi_hdcp_init(hdmi_context_t *hdmi_context,
 	hdcp_context->hdcp_delay = (rc == OTM_HDMI_SUCCESS) ?
 			hdmi_attr.content._uint.value :
 			200;
+
+	memset(hdcp_context->bksv, 0, HDCP_KSV_SIZE);
 
 	/* perform any hardware initializations */
 	if (ipil_hdcp_init() == true) {

@@ -24,6 +24,9 @@
 
 #define IS_INPUT_SYSTEM_VERSION_VERSION_2401
 
+/* CSI reveiver has 3 ports. */
+#define		N_CSI_PORTS (3)
+
 #include "isys_dma.h"		/*	isys2401_dma_channel,
 				 *	isys2401_dma_cfg_t
 				 */
@@ -39,6 +42,10 @@
 				 *	csi_rx_backend_lut_entry_t
 				 */
 #include "pixelgen.h"
+
+
+#define INPUT_SYSTEM_N_STREAM_ID  6	/* maximum number of simultaneous
+					virtual channels supported*/
 
 typedef enum {
 	INPUT_SYSTEM_ERR_NO_ERROR = 0,
@@ -93,6 +100,11 @@ struct input_system_input_port_s {
 	} csi_rx;
 
 	struct {
+		csi_mipi_packet_type_t		packet_type;
+		csi_rx_backend_lut_entry_t	backend_lut_entry;
+	} metadata;
+
+	struct {
 		pixelgen_ID_t			pixelgen_id;
 	} pixelgen;
 };
@@ -102,6 +114,7 @@ struct input_system_input_port_cfg_s {
 	struct {
 		csi_rx_frontend_cfg_t	frontend_cfg;
 		csi_rx_backend_cfg_t	backend_cfg;
+		csi_rx_backend_cfg_t	md_backend_cfg;
 	} csi_rx_cfg;
 
 	struct {
@@ -114,14 +127,19 @@ typedef struct input_system_cfg_s input_system_cfg_t;
 struct input_system_cfg_s {
 	input_system_input_port_ID_t	input_port_id;
 
-	/*input_system_source_type_t	input_port_type;*/
 	input_system_source_type_t	mode;
 
-	struct {
-		int32_t	active_lanes;
+	bool online;
+	bool raw_packed;
+	int8_t linked_isys_stream_id;
 
+	struct {
+		bool	comp_enable;
+		int32_t	active_lanes;
 		int32_t	fmt_type;
 		int32_t	ch_id;
+		int32_t comp_predictor;
+		int32_t comp_scheme;
 	} csi_port_attr;
 
 	pixelgen_tpg_cfg_t	tpg_port_attr;
@@ -129,22 +147,55 @@ struct input_system_cfg_s {
 	pixelgen_prbs_cfg_t prbs_port_attr;
 
 	struct {
-		int32_t	bits_per_pixel;
+		int32_t align_req_in_bytes;
+		int32_t bits_per_pixel;
 		int32_t pixels_per_line;
 		int32_t lines_per_frame;
 	} input_port_resolution;
+
+	struct {
+		int32_t left_padding;
+		int32_t max_isp_input_width;
+	} output_port_attr;
+
+	struct {
+		bool    enable;
+		int32_t fmt_type;
+		int32_t align_req_in_bytes;
+		int32_t bits_per_pixel;
+		int32_t pixels_per_line;
+		int32_t lines_per_frame;
+	} metadata;
 };
 
-typedef struct virtual_input_system_s virtual_input_system_t;
-struct virtual_input_system_s {
+typedef struct virtual_input_system_stream_s virtual_input_system_stream_t;
+struct virtual_input_system_stream_s {
+	uint32_t id;				/*Used when multiple MIPI data types and/or virtual channels are used.
+								Must be unique within one CSI RX
+								and lower than SH_CSS_MAX_ISYS_CHANNEL_NODES */
+	uint8_t enable_metadata;
 	input_system_input_port_t	input_port;
 	input_system_channel_t		channel;
+	input_system_channel_t		md_channel; /* metadata channel */
+	uint8_t online;
+	int8_t linked_isys_stream_id;
+	uint8_t valid;
 };
 
-typedef struct virtual_input_system_cfg_s virtual_input_system_cfg_t;
-struct virtual_input_system_cfg_s {
+typedef struct virtual_input_system_stream_cfg_s virtual_input_system_stream_cfg_t;
+struct virtual_input_system_stream_cfg_s {
+	uint8_t enable_metadata;
 	input_system_input_port_cfg_t	input_port_cfg;
 	input_system_channel_cfg_t	channel_cfg;
+	input_system_channel_cfg_t	md_channel_cfg;
+	uint8_t valid;
 };
+
+#define ISP_INPUT_BUF_START_ADDR	0
+#define NUM_OF_INPUT_BUF		2
+#define NUM_OF_LINES_PER_BUF		2
+#define LINES_OF_ISP_INPUT_BUF		(NUM_OF_INPUT_BUF * NUM_OF_LINES_PER_BUF)
+#define ISP_INPUT_BUF_STRIDE		SH_CSS_MAX_SENSOR_WIDTH
+
 
 #endif /* __INPUT_SYSTEM_GLOBAL_H_INCLUDED__ */

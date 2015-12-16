@@ -190,6 +190,12 @@ struct intel_link_m_n {
 	uint32_t	link_n;
 };
 
+struct intel_dsi_mnp {
+	uint32_t m;
+	uint32_t n;
+	uint32_t p;
+};
+
 void intel_link_compute_m_n(int bpp, int nlanes,
 			    int pixel_clock, int link_clock,
 			    struct intel_link_m_n *m_n);
@@ -448,6 +454,7 @@ struct i915_pm {
 	func(is_crestline) sep \
 	func(is_ivybridge) sep \
 	func(is_valleyview) sep \
+	func(is_valleyview_c0) sep \
 	func(is_haswell) sep \
 	func(has_force_wake) sep \
 	func(has_fbc) sep \
@@ -672,6 +679,31 @@ enum no_psr_reason {
 	PSR_HSW_NOT_DDIA,
 };
 
+enum drrs_support_type {
+	DRRS_NOT_SUPPORTED = 0,
+	STATIC_DRRS_SUPPORT = 1,
+	SEAMLESS_DRRS_SUPPORT = 2,
+	SEAMLESS_DRRS_SUPPORT_SW = 3,
+};
+
+/*
+ * HIGH_RR is the highest panel refresh rate
+ * LOW_RR is the lowest panel refresh rate
+ */
+enum drrs_refresh_rate_type {
+	DRRS_HIGH_RR,
+	DRRS_LOW_RR,
+	DRRS_MEDIA_RR,
+	DRRS_MAX_RR, /* RR count */
+};
+
+struct drrs_info {
+	enum drrs_support_type type;
+	enum drrs_refresh_rate_type refresh_rate_type;
+	enum drrs_refresh_rate_type target_rr_type;
+	struct mutex mutex;
+};
+
 struct i915_drrs {
 	struct intel_connector *connector;
 	bool is_clone;
@@ -680,6 +712,13 @@ struct i915_drrs {
 		struct drm_crtc *crtc;
 		int interval;
 	} *drrs_work;
+	struct intel_mipi_drrs_work {
+		struct delayed_work work;
+		struct intel_encoder *intel_encoder;
+		enum drrs_refresh_rate_type target_rr_type;
+		struct drm_display_mode *target_mode;
+		atomic_t abort_wait_loop;
+	} *mipi_drrs_work;
 };
 
 enum intel_pch {
@@ -1170,12 +1209,6 @@ enum modeset_restore {
 	MODESET_SUSPENDED,
 };
 
-enum drrs_support_type {
-	DRRS_NOT_SUPPORTED = 0,
-	STATIC_DRRS_SUPPORT = 1,
-	SEAMLESS_DRRS_SUPPORT = 2
-};
-
 struct intel_vbt_target_res {
 	int xres;
 	int yres;
@@ -1202,6 +1235,7 @@ struct intel_vbt_data {
 	 * These values correspond to the VBT values for drrs mode.
 	 */
 	enum drrs_support_type drrs_type;
+	unsigned int drrs_min_vrefresh;
 
 	/* eDP */
 	int edp_rate;
@@ -1210,6 +1244,7 @@ struct intel_vbt_data {
 	int edp_vswing;
 	bool edp_initialized;
 	bool edp_support;
+	bool is_180_rotation_enabled;
 	int edp_bpp;
 	struct edp_power_seq edp_pps;
 
@@ -1332,12 +1367,6 @@ struct i915_plane_stat {
 	bool sprite_c;
 	bool sprite_d;
 };
-#define DL_PRIMARY_MASK 0x000000ff
-#define DL_SPRITEA_MASK 0x0000ff00
-#define DL_SPRITEB_MASK 0x00ff0000
-#define BPP_CHANGED_PRIMARY (1 << 24)
-#define BPP_CHANGED_SPRITEA (1 << 25)
-#define BPP_CHANGED_SPRITEB (1 << 26)
 
 typedef struct drm_i915_private {
 	struct drm_device *dev;
@@ -1392,7 +1421,7 @@ typedef struct drm_i915_private {
 	/** Cached value of IMR to avoid reads in updating the bitfield */
 	u32 irq_mask;
 	u32 hotplugstat;
-	struct regulator *v3p3s_reg;
+	u32 pfit_pipe;
 	bool s0ixstat;
 	bool audio_suspended;
 	bool late_resume;
@@ -1403,9 +1432,22 @@ typedef struct drm_i915_private {
 	bool clockbend;
 	bool unplug;
 	bool maxfifo_enabled;
-	bool is_tiled;
+	bool atomic_update;
+	bool pri_update;
+	bool wait_vbl;
 	u32 gt_irq_mask;
 	u32 pm_irq_mask;
+	u32 dspcntr;
+	u32 vblcount;
+
+	/* For HDCP, we disable port immediately after detecting hdmi hot unplug
+	 * event. This bool is set to supress hw/ sw tracking warnings as we
+	 * disable port immediately after hot un plug whereas the planes/ pipe
+	 * will get disabled as part of mode set from HWC. Once the HWC call is
+	 * completed, this bool will be unset.
+	 */
+
+	bool port_disabled_on_unplug;
 
 	struct work_struct hotplug_work;
 	bool enable_hotplug_processing;
@@ -1420,11 +1462,13 @@ typedef struct drm_i915_private {
 	} hpd_stats[HPD_NUM_PINS];
 	u32 hpd_event_bits;
 	struct timer_list hotplug_reenable_timer;
+	u32 hotplug_status;
 
 	int num_plane;
 
 	struct i915_fbc fbc;
 	struct i915_drrs drrs;
+	struct drrs_info drrs_state;
 	struct intel_opregion opregion;
 	struct intel_vbt_data vbt;
 	/* Mismatch in required mode and panel native mode
@@ -1479,6 +1523,7 @@ typedef struct drm_i915_private {
 	} dpst;
 
 	struct delayed_work bkl_delay_enable_work;
+    struct delayed_work bkl_delay_enable_wd_work;
 	/* PCH chipset type */
 	enum intel_pch pch_type;
 	unsigned short pch_id;
@@ -1527,7 +1572,6 @@ typedef struct drm_i915_private {
 		atomic_t down_threshold;
 	} turbodebug;
 
-	struct mipi_info mipi;
 	/* gen6+ rps state */
 	struct intel_gen6_power_mgmt rps;
 
@@ -1570,6 +1614,7 @@ typedef struct drm_i915_private {
 	struct drm_property *force_audio_property;
 	struct drm_property *force_pfit_property;
 	struct drm_property *scaling_src_size_property;
+	struct drm_property *drrs_capability_property;
 
 	bool hw_contexts_disabled;
 	uint32_t hw_context_size;
@@ -1622,8 +1667,8 @@ typedef struct drm_i915_private {
 
 	int planeid_gamma;
 	int planeid_csc;
-	bool gamma_enabled;
-	bool csc_enabled;
+	bool gamma_enabled[I915_MAX_PIPES];
+	bool csc_enabled[I915_MAX_PIPES];
 	bool is_hdmi;
 	bool is_mipi_from_vbt;
 	u16 is_mipi;
@@ -1650,8 +1695,6 @@ typedef struct drm_i915_private {
 
 	struct i915_perfmon perfmon;
 	struct i915_plane_stat plane_stat;
-
-	uint32_t pf_change_status[2];
 } drm_i915_private_t;
 
 static inline struct drm_i915_private *to_i915(const struct drm_device *dev)
@@ -1990,6 +2033,8 @@ struct drm_i915_cmd_table {
 				 (dev)->pci_device == 0x0106 ||	\
 				 (dev)->pci_device == 0x010A)
 #define IS_VALLEYVIEW(dev)	(INTEL_INFO(dev)->is_valleyview)
+#define IS_VALLEYVIEW_C0(dev)	(INTEL_INFO(dev)->is_valleyview_c0)
+#define IS_CHERRYVIEW(dev)     (INTEL_INFO(dev)->is_valleyview && IS_GEN8(dev))
 #define IS_VALLEYVIEWP_M(dev)	((dev)->pci_device == 0x0F31)
 #define IS_HASWELL(dev)	(INTEL_INFO(dev)->is_haswell)
 #define IS_MOBILE(dev)		(INTEL_INFO(dev)->is_mobile)
@@ -2104,8 +2149,8 @@ extern int i915_lvds_channel_mode __read_mostly;
 extern int i915_panel_use_ssc __read_mostly;
 extern int i915_vbt_sdvo_panel_type __read_mostly;
 extern int i915_mipi_panel_id __read_mostly;
+extern int i915_enable_dummy_dsi __read_mostly;
 extern int i915_enable_rc6 __read_mostly;
-extern int i915_rotation __read_mostly;
 extern int i915_enable_fbc __read_mostly;
 extern bool i915_enable_hangcheck __read_mostly;
 extern unsigned int i915_hangcheck_period __read_mostly;
@@ -2131,6 +2176,7 @@ extern int i915_suspend(struct drm_device *dev, pm_message_t state);
 extern int i915_resume(struct drm_device *dev);
 extern int i915_master_create(struct drm_device *dev, struct drm_master *master);
 extern void i915_master_destroy(struct drm_device *dev, struct drm_master *master);
+extern void i9xx_get_pfit_mode(struct drm_crtc *crtc, uint32_t src_w, uint32_t src_h);
 
 				/* i915_dma.c */
 void i915_update_dri1_breadcrumb(struct drm_device *dev);
@@ -2262,6 +2308,9 @@ void i915_gem_release_mmap(struct drm_i915_gem_object *obj);
 void i915_gem_lastclose(struct drm_device *dev);
 int __must_check i915_gem_object_unbind(struct drm_i915_gem_object *obj);
 
+int i915_gem_obj_prepare_shmem_read(struct drm_i915_gem_object *obj,
+				    int *needs_clflush);
+
 int __must_check i915_gem_object_get_pages(struct drm_i915_gem_object *obj);
 static inline struct page *i915_gem_object_get_page(struct drm_i915_gem_object *obj, int n)
 {
@@ -2285,7 +2334,7 @@ static inline void i915_gem_object_unpin_pages(struct drm_i915_gem_object *obj)
 
 int __must_check i915_mutex_lock_interruptible(struct drm_device *dev);
 int i915_gem_object_sync(struct drm_i915_gem_object *obj,
-			 struct intel_ring_buffer *to, bool add_request);
+			 struct intel_ring_buffer *to, bool add_request, bool readonly);
 void i915_gem_object_move_to_active(struct drm_i915_gem_object *obj,
 				    struct intel_ring_buffer *ring);
 
@@ -2512,6 +2561,7 @@ int i915_gem_context_create_ioctl(struct drm_device *dev, void *data,
 int i915_gem_context_destroy_ioctl(struct drm_device *dev, void *data,
 				   struct drm_file *file);
 
+u32 intel_panel_get_max_backlight(struct drm_device *dev);
 void intel_panel_actually_set_backlight(struct drm_device *dev, u32 level);
 void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level);
 
@@ -2676,8 +2726,8 @@ int i915_dpst_context(struct drm_device *dev, void *data,
 u32 i915_dpst_get_brightness(struct drm_device *dev);
 u32 i915_dpst_compute_brightness(struct drm_device *dev, u32 brightness_val);
 void i915_dpst_irq_handler(struct drm_device *dev);
-int i915_dpst_disable_hist_interrupt(struct drm_device *dev);
-int i915_dpst_enable_hist_interrupt(struct drm_device *dev);
+int i915_dpst_disable_hist_interrupt(struct drm_device *dev, bool reset_adjustment);
+int i915_dpst_enable_hist_interrupt(struct drm_device *dev, bool reset_adjustment);
 int i915_dpst_set_default_luma(struct drm_device *dev);
 
 /* intel_acpi.c */

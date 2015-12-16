@@ -25,11 +25,7 @@
 #include <linux/atomisp.h>
 #include "atomisp_internal.h"
 
-#ifdef CSS20
 #include "ia_css_types.h"
-#else /* CSS20 */
-#include "sh_css_types.h"
-#endif /* CSS20 */
 
 /*
  * Interface functions for AtomISP driver acceleration API implementation.
@@ -102,10 +98,10 @@ int atomisp_acc_wait(struct atomisp_sub_device *asd,
 		     unsigned int *handle);
 
 /*
- * Used by ISR to notify ACC pipeline finished.
+ * Used by ISR to notify ACC stage finished.
  * This is internally used and does not export as IOCTL.
  */
-void atomisp_acc_done(struct atomisp_device *isp);
+void atomisp_acc_done(struct atomisp_sub_device *asd, unsigned int handle);
 
 /*
  * Appends the loaded acceleration binary extensions to the
@@ -118,5 +114,17 @@ int atomisp_acc_load_extensions(struct atomisp_sub_device *asd);
  * unloads any loaded acceleration extensions.
  */
 void atomisp_acc_unload_extensions(struct atomisp_sub_device *asd);
+
+/*
+ * Set acceleration firmware flags.
+ */
+int atomisp_acc_set_state(struct atomisp_sub_device *asd,
+			  struct atomisp_acc_state *arg);
+
+/*
+ * Get acceleration firmware flags.
+ */
+int atomisp_acc_get_state(struct atomisp_sub_device *asd,
+			  struct atomisp_acc_state *arg);
 
 #endif /* __ATOMISP_ACC_H__ */

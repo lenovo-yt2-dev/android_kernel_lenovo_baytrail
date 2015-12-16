@@ -73,6 +73,7 @@
 #define SFI_SIG_DEVS		"DEVS"
 #define SFI_SIG_GPIO		"GPIO"
 #define SFI_SIG_OEMB		"OEMB"
+#define SFI_SIG_OEMR		"OEMR"
 
 #define SFI_SIGNATURE_SIZE	4
 #define SFI_OEM_ID_SIZE		6
@@ -159,6 +160,7 @@ struct sfi_device_table_entry {
 #define SFI_DEV_TYPE_IPC	4
 #define SFI_DEV_TYPE_SD		5
 #define SFI_DEV_TYPE_MDM	6
+#define SFI_DEV_TYPE_USB	7
 
 	u8	host_num;	/* attached to host 0, 1...*/
 	u16	addr;
@@ -172,6 +174,35 @@ struct sfi_gpio_table_entry {
 	u16	pin_no;
 	char	pin_name[SFI_NAME_LEN];
 } __packed;
+
+#ifdef CONFIG_PF450CL
+struct sfi_oemr_table_entry {
+	u8      RC_VERSION;
+	u8      SIM_id;
+	u8      EMMC_id;
+	u8      DDR_id;
+	u8      Modem_id;
+	u8  hardware_id;
+	u8  project_id;
+	u8  touch_id;
+	u8  FCAM_id; /* sub camera */
+	u8  RCAM_id; /* main camera */
+	u8  lcd_id;
+} __packed;
+
+#else
+struct sfi_oemr_table_entry {
+	u8	RC_VERSION;
+	u8  hardware_id;
+	u8  project_id;
+	u8  lcd_id;
+	u8  touch_id;
+	u8  Camera_1_2M;
+	u8  Camera_3M;
+	u8  Camera_1_2M_Lense;
+} __packed;
+
+#endif /* CONFIG_PF450CL */
 
 typedef int (*sfi_table_handler) (struct sfi_table_header *table);
 

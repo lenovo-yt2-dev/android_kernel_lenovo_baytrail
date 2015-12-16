@@ -34,8 +34,8 @@
  * 05/20/13 YC		 1. Move up timer initial function to avoid fatal error.
  *                   2. Correct the polling condition in initial.
  *                   3. Move up reset action to fix the always reset error.
- *                   Change to v1.03. 
- * 06/06/13 YC		 Add functions for set delay of HAL.  
+ *                   Change to v1.03.
+ * 06/06/13 YC		 Add functions for set delay of HAL.
  */
 
 #include "al3320.h"
@@ -98,12 +98,12 @@ static int al3320_get_mode(struct i2c_client *client)
 static int al3320_set_mode(struct i2c_client *client, int mode)
 {
   struct al3320_data *data = i2c_get_clientdata(client);
-  
+
   if (mode != al3320_get_mode(client))
   {
     __al3320_write_reg(client, AL3320_MODE_COMMAND,
 				  AL3320_MODE_MASK, AL3320_MODE_SHIFT, mode);
-	
+
   	if (als_polling)
   	{
   		/* Enable/Disable ALS */
@@ -122,7 +122,7 @@ static int al3320_set_mode(struct i2c_client *client, int mode)
 /* waiting time */
 #if 0
 static int al3320_get_waiting_time(struct i2c_client *client)
-{ 
+{
 	return __al3320_read_reg(client, AL3320_WAITING_TIME,
 		AL3320_WAITING_MASK, AL3320_WAITING_SHIFT);
 }
@@ -139,7 +139,7 @@ static int al3320_set_waiting_time(struct i2c_client *client, int wait_time)
 /* INT enable */
 #if 0
 static int al3320_get_int_enable(struct i2c_client *client)
-{ 
+{
 	return __al3320_read_reg(client, AL3320_INT_ENABLE,
 		AL3320_INT_ENABLE_MASK, AL3320_INT_ENABLE_SHIFT);
 }
@@ -156,7 +156,7 @@ static int al3320_set_int_enable(struct i2c_client *client, int flag)
 /* suspend enable */
 #if 0
 static int al3320_get_sus_enable(struct i2c_client *client)
-{ 
+{
 	return __al3320_read_reg(client, AL3320_INT_ENABLE,
 		AL3320_SUS_ENABLE_MASK, AL3320_SUS_ENABLE_SHIFT);
 }
@@ -174,13 +174,13 @@ static int al3320_set_sus_enable(struct i2c_client *client, int flag)
 static long al3320_get_range(struct i2c_client *client)
 {
 	u8 idx, exgain;
-  
+
 	exgain = __al3320_read_reg(client, AL3320_RAN_COMMAND,
-		AL3320_EXGAIN_MASK, AL3320_EXGAIN_SHIFT); 
-    
+		AL3320_EXGAIN_MASK, AL3320_EXGAIN_SHIFT);
+
 	idx = __al3320_read_reg(client, AL3320_RAN_COMMAND,
 		AL3320_RAN_MASK, AL3320_RAN_SHIFT);
-     
+
 	return (exgain ? al3320_range[idx] : al3320_range[idx+4]);
 }
 
@@ -196,7 +196,7 @@ static int al3320_set_range(struct i2c_client *client, int range)
 		case ALS_RAN_3:	adummy = ALS_ADUMMY_3; break;
 		default: adummy = 0;
 	}
-	
+
 	ret = al3320_set_adummy(client, adummy);
 
 	if (ret)
@@ -210,7 +210,7 @@ static int al3320_set_range(struct i2c_client *client, int range)
 static int al3320_get_exgain(struct i2c_client *client)
 {
 	u8 exgain = __al3320_read_reg(client, AL3320_RAN_COMMAND,
-		AL3320_EXGAIN_MASK, AL3320_EXGAIN_SHIFT); 
+		AL3320_EXGAIN_MASK, AL3320_EXGAIN_SHIFT);
 
 	return exgain;
 }
@@ -226,7 +226,7 @@ static int al3320_set_exgain(struct i2c_client *client, int exgain)
 static int al3320_get_persist(struct i2c_client *client)
 {
 	return __al3320_read_reg(client, AL3320_ALS_PERSIST,
-		AL3320_PERSIST_MASK, AL3320_PERSIST_SHIFT); 
+		AL3320_PERSIST_MASK, AL3320_PERSIST_SHIFT);
 }
 #endif
 
@@ -241,7 +241,7 @@ static int al3320_set_persist(struct i2c_client *client, int persist)
 static int al3320_get_meantime(struct i2c_client *client)
 {
 	return __al3320_read_reg(client, AL3320_ALS_MEANTIME,
-		AL3320_MEANTIME_MASK, AL3320_MEANTIME_SHIFT); 
+		AL3320_MEANTIME_MASK, AL3320_MEANTIME_SHIFT);
 }
 #endif
 
@@ -256,7 +256,7 @@ static int al3320_set_meantime(struct i2c_client *client, int meantime)
 static int al3320_get_adummy(struct i2c_client *client)
 {
 	return __al3320_read_reg(client, AL3320_ALS_ADUMMY,
-		AL3320_ADUMMY_MASK, AL3320_ADUMMY_SHIFT); 
+		AL3320_ADUMMY_MASK, AL3320_ADUMMY_SHIFT);
 }
 #endif
 
@@ -280,7 +280,7 @@ static int al3320_get_althres(struct i2c_client *client)
 static int al3320_set_althres(struct i2c_client *client, int val)
 {
 	int lsb, msb, err;
-	
+
 	msb = val >> 8;
 	lsb = val & AL3320_ALS_LTHL_MASK;
 
@@ -309,10 +309,10 @@ static int al3320_get_ahthres(struct i2c_client *client)
 static int al3320_set_ahthres(struct i2c_client *client, int val)
 {
 	int lsb, msb, err;
-	
+
 	msb = val >> 8;
 	lsb = val & AL3320_ALS_HTHL_MASK;
-	
+
 	err = __al3320_write_reg(client, AL3320_ALS_HTHL,
 		AL3320_ALS_HTHL_MASK, AL3320_ALS_HTHL_SHIFT, lsb);
 	if (err)
@@ -355,7 +355,7 @@ static int al3320_get_adc_value(struct i2c_client *client, int lock)
 static int al3320_clean_int(struct i2c_client *client)
 {
   int err;
-	
+
 	err = __al3320_write_reg(client, AL3320_INT_COMMAND,
 		AL3320_INT_MASK, AL3320_INT_SHIFT, 0);
 
@@ -365,7 +365,7 @@ static int al3320_clean_int(struct i2c_client *client)
 /*
  * sysfs layer
  */
- 
+
 /* als_poll_delay */
 static ssize_t al3320_show_als_poll_delay(struct device *dev,
 				  struct device_attribute *attr, char *buf)
@@ -383,11 +383,11 @@ static ssize_t al3320_store_als_poll_delay(struct device *dev,
 	struct al3320_data *data = input_get_drvdata(input);
 	unsigned long val;
 
-	if (strict_strtoul(buf, 10, &val) < 0) 
+	if (strict_strtoul(buf, 10, &val) < 0)
 		return -EINVAL;
-    
+
     	data->light_poll_delay = ns_to_ktime(val*1000);
-	
+
 	return count;
 }
 
@@ -477,7 +477,7 @@ static ssize_t al3320_store_mode(struct device *dev,
 		return -EINVAL;
 
 	ret = al3320_set_mode(data->client, val);
-	
+
 	if (ret < 0)
 		return ret;
 	return count;
@@ -493,18 +493,18 @@ static ssize_t al3320_show_lux(struct device *dev,
 {
 	struct input_dev *input = to_input_dev(dev);
 	struct al3320_data *data = input_get_drvdata(input);
-	
-	
+
+
 
 	/* No LUX data if power down */
 	if (al3320_get_mode(data->client) == 0x00){
-		
+
 		wake_lock_timeout(&al3320b_wl, 10*HZ);
 
 		return sprintf((char*) buf, "%s\n", "Please power up first!");
 	}
-	
-	
+
+
 	return sprintf(buf, "%d\n", al3320_get_adc_value(data->client,0));
 }
 
@@ -587,7 +587,7 @@ static ssize_t al3320_store_calibration_state(struct device *dev,
 {
 	struct input_dev *input = to_input_dev(dev);
 	struct al3320_data *data = input_get_drvdata(input);
-	int stdls, lux; 
+	int stdls, lux;
 	char tmp[10];
 
 	/* No LUX data if not operational */
@@ -597,7 +597,11 @@ static ssize_t al3320_store_calibration_state(struct device *dev,
 		return -EINVAL;
 	}
 
+#if defined(BLADE2_8) || defined(BLADE2_10)
+	cali = 660;
+#elif defined(BLADE2_13)
 	cali = 100;
+#endif
 	sscanf(buf, "%d %s", &stdls, tmp);
 
 	if (!strncmp(tmp, "-setcv", 6))
@@ -632,7 +636,7 @@ static ssize_t al3320_em_read(struct device *dev,
 	struct al3320_data *data = i2c_get_clientdata(client);
 	int i;
 	u8 tmp;
-	
+
 	for (i = 0; i < AL3320_NUM_CACHABLE_REGS; i++)
 	{
 		mutex_lock(&data->lock);
@@ -729,7 +733,7 @@ static int al3320_init_client(struct i2c_client *client)
 	// interrupt, suspend settings
 	al3320_set_sus_enable(client, DISABLE);
 	mdelay(1);
-	
+
 	if (als_polling)
 		al3320_set_int_enable(client, DISABLE);
 	else
@@ -741,9 +745,9 @@ static int al3320_init_client(struct i2c_client *client)
 		// ALS persist
 		al3320_set_persist(client, als_persist);
 	}
-	
+
 	mdelay(1);
-	
+
 	return 0;
 }
 
@@ -753,12 +757,12 @@ static void al3320_work_func_light(struct work_struct *work)
 	int Aval;
 
 	mutex_lock(&data->lock);
-  
+
 	Aval = al3320_get_adc_value(data->client,1);
 //	printk("ALS lux value: %u\n", Aval);
-	
+
 	mutex_unlock(&data->lock);
-	
+
 	input_report_abs(data->light_input_dev, ABS_MISC, Aval);
 	input_sync(data->light_input_dev);
 }
@@ -819,7 +823,7 @@ err_light_reg:
     input_free_device(input_dev);
 err_light_all:
 
-    return (-1);   
+    return (-1);
 }
 
 static void al3320_input_fini(struct al3320_data *data)
@@ -837,7 +841,7 @@ static void al3320_input_fini(struct al3320_data *data)
 static irqreturn_t al3320_irq(int irq, void *data_)
 {
 	struct al3320_data *data = data_;
- 
+
 	mutex_lock(&data->lock);
 
 	// ALS int
@@ -845,7 +849,7 @@ static irqreturn_t al3320_irq(int irq, void *data_)
 
 	// clean interrupt flag
 	al3320_clean_int(data->client);
-  
+
 	mutex_unlock(&data->lock);
 
 	return IRQ_HANDLED;
@@ -859,7 +863,7 @@ static void al3320_early_suspend(struct early_suspend *h)
 
 	if ((al3320_get_mode(data->client) & ALS_ACTIVE))
         suspend_mode = ALS_ACTIVE;
-    
+
 	al3320_set_mode(data->client, ALS_DEACTIVE);
 }
 
@@ -884,7 +888,7 @@ static int  al3320_probe(struct i2c_client *client,
 	int err = 0;
 
 	wake_lock_init(&al3320b_wl, WAKE_LOCK_SUSPEND, "al3320b");
-	
+
 	dev_dbg(&client->dev, "%s\n", __func__);
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE))
@@ -897,7 +901,7 @@ static int  al3320_probe(struct i2c_client *client,
 	data->client = client;
 	i2c_set_clientdata(client, data);
 	mutex_init(&data->lock);
-    
+
     	al3320_timer_init(data);
 
 	/* initialize the AL3320 chip */
@@ -915,7 +919,7 @@ static int  al3320_probe(struct i2c_client *client,
 		err = request_threaded_irq(client->irq, NULL, al3320_irq,
                                IRQF_TRIGGER_FALLING,
                                "al3320", data);
-                               
+
 		if (err) {
 			dev_err(&client->dev, "ret: %d, could not get IRQ %d\n",err,client->irq);
 				goto exit_irq;
@@ -923,7 +927,7 @@ static int  al3320_probe(struct i2c_client *client,
 	}
 
 	INIT_WORK(&data->work_light, al3320_work_func_light);
-  
+
 	data->wq = create_singlethread_workqueue("al3320_wq");
 	if (!data->wq) {
 		LDBG("could not create workqueue\n");
@@ -943,7 +947,7 @@ exit_work:
 
 exit_irq:
 	al3320_input_fini(data);
-	
+
 exit_kfree:
 	mutex_destroy(&data->lock);
 	kfree(data);
@@ -953,7 +957,7 @@ exit_kfree:
 static int al3320_remove(struct i2c_client *client)
 {
 	struct al3320_data *data = i2c_get_clientdata(client);
-	
+
 	if (!als_polling)
 		free_irq(data->irq, data);
 	sysfs_remove_group(&data->light_input_dev->dev.kobj, &al3320_als_attr_group);
@@ -968,7 +972,7 @@ static int al3320_remove(struct i2c_client *client)
 	mutex_destroy(&data->lock);
 	unregister_early_suspend(&data->early_suspend);
 	kfree(data);
-	
+
 	return 0;
 }
 
@@ -1000,7 +1004,7 @@ static int __init al3320_init(void)
 
     i2c_info.addr = 0x1C;
     i2c_info.irq = 102+15;
-    
+
     pr_info("I2C bus = %d, name = %16.16s, irq = 0x%2x, addr = 0x%x\n",
                 i2c_busnum,
                 i2c_info.type,
@@ -1009,7 +1013,7 @@ static int __init al3320_init(void)
 
     i2c_add_driver(&al3320_driver);
 
-    return i2c_register_board_info(i2c_busnum, &i2c_info, 1); 
+    return i2c_register_board_info(i2c_busnum, &i2c_info, 1);
 }
 
 static void __exit al3320_exit(void)
@@ -1022,6 +1026,6 @@ MODULE_DESCRIPTION("AL3320 driver");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(DRIVER_VERSION);
 
-module_init(al3320_init);
+fs_initcall(al3320_init);
 module_exit(al3320_exit);
 

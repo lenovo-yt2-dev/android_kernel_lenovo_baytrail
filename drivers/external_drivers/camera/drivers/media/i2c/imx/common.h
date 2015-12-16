@@ -37,6 +37,7 @@ struct imx_fps_setting {
 	int fps;
 	unsigned short pixels_per_line;
 	unsigned short lines_per_frame;
+	int mipi_freq;			/* MIPI lane frequency in kHz */
 	const struct imx_reg *regs; /* regs that the fps setting needs */
 };
 
@@ -50,6 +51,7 @@ struct imx_resolution {
 	int fps;
 	unsigned short pixels_per_line;
 	unsigned short lines_per_frame;
+	int mipi_freq;			/* MIPI lane frequency in kHz */
 	unsigned short skip_frames;
 	u8 bin_factor_x;
 	u8 bin_factor_y;

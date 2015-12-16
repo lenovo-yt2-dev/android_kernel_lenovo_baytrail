@@ -41,7 +41,6 @@
 #include "intel_scu_watchdog_evo.h"
 
 /* Adjustment flags */
-#define CONFIG_INTEL_SCU_SOFT_LOCKUP
 #define CONFIG_DEBUG_WATCHDOG
 
 /* Defines */
@@ -49,8 +48,6 @@
 #define STRING_COLD_OFF             "COLD_OFF"
 #define STRING_COLD_RESET           "COLD_RESET"
 #define STRING_COLD_BOOT            "COLD_BOOT"
-
-#define EXT_TIMER0_MSI 15
 
 #define IPC_WATCHDOG 0xF8
 
@@ -122,6 +119,7 @@ MODULE_PARM_DESC(timeout,
 		"This is the time for all keep alives to arrive");
 
 static bool reset_on_release = true;
+static struct rpmsg_instance *watchdog_instance;
 
 #ifdef CONFIG_INTEL_SCU_SOFT_LOCKUP
 /*
@@ -145,8 +143,6 @@ static u64 beattime;
 #define SOFT_LOCK_TIME 10
 static void dump_softlock_debug(unsigned long data);
 DEFINE_TIMER(softlock_timer, dump_softlock_debug, 0, 0);
-
-static struct rpmsg_instance *watchdog_instance;
 
 /* time is about to run out and the scu will reset soon.  quickly
  * dump debug data to logbuffer and emmc via calling panic before lights
@@ -426,7 +422,7 @@ static long intel_scu_ioctl(struct file *file, unsigned int cmd,
 		watchdog_keepalive();
 		return 0;
 	case WDIOC_SETPRETIMEOUT:
-		pr_warn("%s: SetPreTimeout ioctl\n", __func__);
+		pr_warn("%s: SetPreTimeout ioctl is deprecated\n", __func__);
 
 		if (watchdog_device.started)
 			return -EBUSY;
@@ -440,13 +436,19 @@ static long intel_scu_ioctl(struct file *file, unsigned int cmd,
 	case WDIOC_SETTIMEOUT:
 		pr_warn("%s: SetTimeout ioctl\n", __func__);
 
-		if (watchdog_device.started)
-			return -EBUSY;
-
 		if (get_user(val, p))
 			return -EFAULT;
 
 		timeout = val;
+
+		if (check_timeouts(pre_timeout, timeout)) {
+			pr_warn("%s: Invalid thresholds\n",
+				__func__);
+			return -EINVAL;
+		}
+		if (watchdog_config_and_start(timeout, pre_timeout))
+			return -EINVAL;
+
 		return 0;
 	case WDIOC_GETTIMEOUT:
 		return put_user(timeout, p);
@@ -740,8 +742,8 @@ static int create_debugfs_entries(void)
 		goto error;
 	}
 
-	/* /sys/kernel/debug/watchdog/security_watchdog */
-	dev->dfs_secwd = debugfs_create_dir("security_watchdog", dev->dfs_wd);
+	/* /sys/kernel/debug/watchdog/sc_watchdog */
+	dev->dfs_secwd = debugfs_create_dir("sc_watchdog", dev->dfs_wd);
 	if (!dev->dfs_secwd) {
 		pr_err("%s: Error, cannot create sec dir\n", __func__);
 		goto error;
@@ -1166,27 +1168,6 @@ int remove_watchdog_sysfs_files(void)
 	return 0;
 }
 
-static int handle_mrfl_dev_ioapic(int irq)
-{
-	int ret = 0;
-	int ioapic;
-	struct io_apic_irq_attr irq_attr;
-
-	ioapic = mp_find_ioapic(irq);
-	if (ioapic >= 0) {
-		irq_attr.ioapic = ioapic;
-		irq_attr.ioapic_pin = irq;
-		irq_attr.trigger = 1;
-		irq_attr.polarity = 0; /* Active high */
-		io_apic_set_pci_routing(NULL, irq, &irq_attr);
-	} else {
-		pr_warn("can not find interrupt %d in ioapic\n", irq);
-		ret = -EINVAL;
-	}
-
-	return ret;
-}
-
 /* tasklet for configuring watchdog timers on panic */
 static void watchdog_panic_tasklet_body(unsigned long data)
 {
@@ -1223,6 +1204,7 @@ static struct notifier_block watchdog_panic_notifier = {
 static int intel_scu_watchdog_init(void)
 {
 	int ret = 0;
+	unsigned int watchdog_irq;
 
 	watchdog_device.normal_wd_action   = SCU_COLD_RESET_ON_TIMEOUT;
 	watchdog_device.reboot_wd_action   = SCU_COLD_RESET_ON_TIMEOUT;
@@ -1271,15 +1253,20 @@ static int intel_scu_watchdog_init(void)
 		}
 	}
 
-	/* MSI #15 handler to dump registers */
-	handle_mrfl_dev_ioapic(EXT_TIMER0_MSI);
-	ret = request_irq((unsigned int)EXT_TIMER0_MSI,
+	/* MSI handler to dump registers */
+	watchdog_irq = sfi_get_watchdog_irq();
+	if (watchdog_irq == 0xff) {
+		pr_err("error: sfi_get_watchdog_irq returned %d\n", watchdog_irq);
+		goto error_misc_register;
+	}
+
+	ret = request_irq(watchdog_irq,
 		watchdog_warning_interrupt,
 		IRQF_SHARED|IRQF_NO_SUSPEND, "watchdog",
 		&watchdog_device);
 	if (ret) {
 		pr_err("error requesting warning irq %d\n",
-		       EXT_TIMER0_MSI);
+		       watchdog_irq);
 		pr_err("error value returned is %d\n", ret);
 		goto error_misc_register;
 	}

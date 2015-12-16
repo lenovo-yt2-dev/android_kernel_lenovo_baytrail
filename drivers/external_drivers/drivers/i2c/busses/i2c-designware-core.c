@@ -42,7 +42,6 @@
 #include <linux/acpi.h>
 #include "i2c-designware-core.h"
 #include <linux/intel_mid_pm.h>
-#include <linux/gpio.h>
 
 
 int i2c_dw_init(struct dw_i2c_dev *dev);
@@ -54,6 +53,7 @@ irqreturn_t i2c_dw_isr(int this_irq, void *dev_id);
 void i2c_dw_disable_int(struct dw_i2c_dev *dev);
 void i2c_dw_clear_int(struct dw_i2c_dev *dev);
 static void dw_i2c_acpi_setup(struct device *pdev, struct dw_i2c_dev *dev);
+u32 i2c_dw_read_comp_param(struct dw_i2c_dev *dev);
 
 static char *abort_sources[] = {
 	[ABRT_7B_ADDR_NOACK] =
@@ -177,6 +177,29 @@ static int mfld_i2c_scl_cfg(struct dw_i2c_dev *dev)
 	return 0;
 }
 
+static int vlv2_i2c_scl_cfg_bus4(struct dw_i2c_dev *dev)
+{
+        dw_writel(dev, VLV2_SS_SCLK_HCNT, DW_IC_SS_SCL_HCNT);
+        dw_writel(dev, VLV2_SS_SCLK_LCNT, DW_IC_SS_SCL_LCNT);
+
+        if (dev->fast_plus) {
+                dw_writel(dev, VLV2_FS_P_SCLK_HCNT, DW_IC_FS_SCL_HCNT);
+                dw_writel(dev, VLV2_FS_P_SCLK_LCNT, DW_IC_FS_SCL_LCNT);
+        } else {
+               unsigned int count = (VLV2_FS_SCLK_HCNT << 8) | VLV2_FS_SCLK_LCNT;
+
+               count = (count * 35) / 40;
+               dw_writel(dev, (count >> 8), DW_IC_FS_SCL_HCNT);
+               dw_writel(dev, (count & 0xff), DW_IC_FS_SCL_LCNT);
+        }
+
+        dw_writel(dev, VLV2_HS_SCLK_HCNT, DW_IC_HS_SCL_HCNT);
+        dw_writel(dev, VLV2_HS_SCLK_LCNT, DW_IC_HS_SCL_LCNT);
+
+        return 0;
+}
+
+
 static int ctp_i2c_scl_cfg(struct dw_i2c_dev *dev)
 {
 	dw_writel(dev, CLV_SS_SCLK_HCNT, DW_IC_SS_SCL_HCNT);
@@ -221,28 +244,21 @@ static int vlv2_i2c_scl_cfg(struct dw_i2c_dev *dev)
 	return 0;
 }
 
-static int vlv2_i2c_scl_cfg_bus4(struct dw_i2c_dev *dev)
+static int chv_i2c_scl_cfg(struct dw_i2c_dev *dev)
 {
-        dw_writel(dev, VLV2_SS_SCLK_HCNT, DW_IC_SS_SCL_HCNT);
-        dw_writel(dev, VLV2_SS_SCLK_LCNT, DW_IC_SS_SCL_LCNT);
+	dw_writel(dev, CHV_SS_SCLK_HCNT, DW_IC_SS_SCL_HCNT);
+	dw_writel(dev, CHV_SS_SCLK_LCNT, DW_IC_SS_SCL_LCNT);
 
-        if (dev->fast_plus) {
-                dw_writel(dev, VLV2_FS_P_SCLK_HCNT, DW_IC_FS_SCL_HCNT);
-                dw_writel(dev, VLV2_FS_P_SCLK_LCNT, DW_IC_FS_SCL_LCNT);
-        } else {
-		unsigned int count = (VLV2_FS_SCLK_HCNT << 8) | VLV2_FS_SCLK_LCNT;
+	if (dev->fast_plus) {
+		dw_writel(dev, CHV_FS_P_SCLK_HCNT, DW_IC_FS_SCL_HCNT);
+		dw_writel(dev, CHV_FS_P_SCLK_LCNT, DW_IC_FS_SCL_LCNT);
+	} else {
+		dw_writel(dev, CHV_FS_SCLK_HCNT, DW_IC_FS_SCL_HCNT);
+		dw_writel(dev, CHV_FS_SCLK_LCNT, DW_IC_FS_SCL_LCNT);
+	}
 
-		count = (count * 35) / 40;
-		dw_writel(dev, (count >> 8), DW_IC_FS_SCL_HCNT);
-		dw_writel(dev, (count & 0xff), DW_IC_FS_SCL_LCNT);
-        }
-
-        dw_writel(dev, VLV2_HS_SCLK_HCNT, DW_IC_HS_SCL_HCNT);
-        dw_writel(dev, VLV2_HS_SCLK_LCNT, DW_IC_HS_SCL_LCNT);
-
-        return 0;
+	return 0;
 }
-
 
 static struct  dw_controller  dw_controllers[] = {
 	[moorestown_0] = {
@@ -423,8 +439,6 @@ static struct  dw_controller  dw_controllers[] = {
 	[valleyview_1] = {
 		.bus_num     = 1,
 		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
-		.tx_fifo_depth = 64,
-		.rx_fifo_depth = 64,
 		.enable_stop = 1,
 		.scl_cfg = vlv2_i2c_scl_cfg,
 		.reset = vlv2_reset,
@@ -434,8 +448,6 @@ static struct  dw_controller  dw_controllers[] = {
 	[valleyview_2] = {
 		.bus_num     = 2,
 		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
-		.tx_fifo_depth = 64,
-		.rx_fifo_depth = 64,
 		.enable_stop = 1,
 		.scl_cfg = vlv2_i2c_scl_cfg,
 		.reset = vlv2_reset,
@@ -444,9 +456,11 @@ static struct  dw_controller  dw_controllers[] = {
 	},
 	[valleyview_3] = {
 		.bus_num     = 3,
+#ifndef CONFIG_DLP
 		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
-		.tx_fifo_depth = 64,
-		.rx_fifo_depth = 64,
+#else
+        .bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_STD,
+#endif
 		.enable_stop = 1,
 		.scl_cfg = vlv2_i2c_scl_cfg,
 		.reset = vlv2_reset,
@@ -456,8 +470,6 @@ static struct  dw_controller  dw_controllers[] = {
 	[valleyview_4] = {
 		.bus_num     = 4,
 		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
-		.tx_fifo_depth = 64,
-		.rx_fifo_depth = 64,
 		.enable_stop = 1,
 		.scl_cfg = vlv2_i2c_scl_cfg_bus4,
 		.reset = vlv2_reset,
@@ -467,8 +479,6 @@ static struct  dw_controller  dw_controllers[] = {
 	[valleyview_5] = {
 		.bus_num     = 5,
 		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
-		.tx_fifo_depth = 64,
-		.rx_fifo_depth = 64,
 		.enable_stop = 1,
 		.scl_cfg = vlv2_i2c_scl_cfg,
 		.reset = vlv2_reset,
@@ -478,8 +488,6 @@ static struct  dw_controller  dw_controllers[] = {
 	[valleyview_6] = {
 		.bus_num     = 6,
 		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
-		.tx_fifo_depth = 64,
-		.rx_fifo_depth = 64,
 		.enable_stop = 1,
 		.scl_cfg = vlv2_i2c_scl_cfg,
 		.reset = vlv2_reset,
@@ -489,13 +497,67 @@ static struct  dw_controller  dw_controllers[] = {
 	[valleyview_7] = {
 		.bus_num     = 7,
 		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
-		.tx_fifo_depth = 64,
-		.rx_fifo_depth = 64,
 		.enable_stop = 1,
 		.scl_cfg = vlv2_i2c_scl_cfg,
 		.reset = vlv2_reset,
 		.share_irq = 1,
 		.acpi_name = "\\_SB.I2C7"
+	},
+	[cherryview_1] = {
+		.bus_num     = 1,
+		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
+		.enable_stop = 1,
+		.scl_cfg = chv_i2c_scl_cfg,
+		.reset = vlv2_reset,
+		.share_irq = 1,
+	},
+	[cherryview_2] = {
+		.bus_num     = 2,
+		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
+		.enable_stop = 1,
+		.scl_cfg = chv_i2c_scl_cfg,
+		.reset = vlv2_reset,
+		.share_irq = 1,
+	},
+	[cherryview_3] = {
+		.bus_num     = 3,
+		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
+		.enable_stop = 1,
+		.scl_cfg = chv_i2c_scl_cfg,
+		.reset = vlv2_reset,
+		.share_irq = 1,
+	},
+	[cherryview_4] = {
+		.bus_num     = 4,
+		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
+		.enable_stop = 1,
+		.scl_cfg = chv_i2c_scl_cfg,
+		.reset = vlv2_reset,
+		.share_irq = 1,
+	},
+	[cherryview_5] = {
+		.bus_num     = 5,
+		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
+		.enable_stop = 1,
+		.scl_cfg = chv_i2c_scl_cfg,
+		.reset = vlv2_reset,
+		.share_irq = 1,
+	},
+	[cherryview_6] = {
+		.bus_num     = 6,
+		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
+		.enable_stop = 1,
+		.scl_cfg = chv_i2c_scl_cfg,
+		.reset = vlv2_reset,
+		.share_irq = 1,
+	},
+	[cherryview_7] = {
+		.bus_num     = 7,
+		.bus_cfg   = INTEL_MID_STD_CFG | DW_IC_CON_SPEED_FAST,
+		.enable_stop = 1,
+		.scl_cfg = chv_i2c_scl_cfg,
+		.reset = vlv2_reset,
+		.share_irq = 1,
 	}
 };
 
@@ -676,6 +738,7 @@ struct dw_i2c_dev *i2c_dw_setup(struct device *pdev, int bus_idx,
 	struct  dw_controller *controller;
 	int r;
 	void *handle_save = ACPI_HANDLE(pdev);
+	u32 param1;
 
 	if (bus_idx >= ARRAY_SIZE(dw_controllers)) {
 		dev_err(pdev, "invalid bus index %d\n",
@@ -728,6 +791,12 @@ struct dw_i2c_dev *i2c_dw_setup(struct device *pdev, int bus_idx,
 	dev->fast_plus = controller->fast_plus;
 	dev_set_drvdata(pdev, dev);
 	dw_i2c_acpi_setup(pdev, dev);
+
+	if (!dev->tx_fifo_depth || !dev->rx_fifo_depth) {
+		param1 = i2c_dw_read_comp_param(dev);
+		dev->tx_fifo_depth = ((param1 >> 16) & 0xff) + 1;
+		dev->rx_fifo_depth = ((param1 >> 8)  & 0xff) + 1;
+	}
 
 	r = i2c_dw_init(dev);
 	if (r)
@@ -826,8 +895,6 @@ static acpi_status acpi_i2c_find_device_speed(acpi_handle handle, u32 level,
 	struct dw_i2c_dev *i2c = data;
 	struct list_head resource_list;
 	struct acpi_device *adev;
-	acpi_status status;
-	unsigned long long sta = 0;
 	int ret;
 
 	if (acpi_bus_get_device(handle, &adev))
@@ -1030,7 +1097,13 @@ int i2c_dw_init(struct dw_i2c_dev *dev)
 		dw_writel(dev, lcnt, DW_IC_FS_SCL_LCNT);
 		dev_dbg(dev->dev, "Fast-mode HCNT:LCNT = %d:%d\n", hcnt, lcnt);
 	}
-
+#ifdef CONFIG_DLP
+		//printk("%s 1 AXS SDA Delay = %d\n", __func__, dw_readl(dev, 0x7c));  //liulc1
+		dw_writel(dev, 0x50, 0x7c);
+		
+		//printk("%s 2 AXS SDA Delay = %d\n", __func__, dw_readl(dev, 0x7c));  //liulc1
+		dev_dbg(dev->dev, "Fast-mode HCNT:LCNT = %d:%d\n", hcnt, lcnt);
+#endif
 	/* Configure Tx/Rx FIFO threshold levels */
 	dw_writel(dev, dev->tx_fifo_depth/2, DW_IC_TX_TL);
 	dw_writel(dev, dev->rx_fifo_depth/2, DW_IC_RX_TL);
@@ -1048,14 +1121,10 @@ EXPORT_SYMBOL(i2c_dw_init);
 static int i2c_dw_wait_bus_not_busy(struct dw_i2c_dev *dev)
 {
 	int timeout = TIMEOUT;
-	struct i2c_adapter *adap = &dev->adapter;
 
 	while (dw_readl(dev, DW_IC_STATUS) & DW_IC_STATUS_ACTIVITY) {
 		if (timeout <= 0) {
 			dev_warn(dev->dev, "timeout waiting for bus ready\n");
-			if (dev->abort)
-			    dev->abort(adap->nr);
-			i2c_dw_init(dev);
 			return -ETIMEDOUT;
 		}
 		timeout--;
@@ -1108,6 +1177,7 @@ i2c_dw_xfer_msg(struct dw_i2c_dev *dev)
 	u32 buf_len = dev->tx_buf_len;
 	u8 *buf = dev->tx_buf;
 	unsigned long flags;
+	bool need_restart = false;
 
 	intr_mask = DW_IC_INTR_DEFAULT_MASK;
 
@@ -1146,6 +1216,14 @@ i2c_dw_xfer_msg(struct dw_i2c_dev *dev)
 			/* new i2c_msg */
 			buf = msgs[dev->msg_write_idx].buf;
 			buf_len = msgs[dev->msg_write_idx].len;
+
+			/* If both IC_EMPTYFIFO_HOLD_MASTER_EN and
+			 * IC_RESTART_EN are set, we must manually
+			 * set restart bit between messages.
+			 */
+			if ((dev->master_cfg & DW_IC_CON_RESTART_EN) &&
+					(dev->msg_write_idx > 0))
+				need_restart = true;
 		}
 
 		tx_limit = dev->tx_fifo_depth - dw_readl(dev, DW_IC_TXFLR);
@@ -1155,6 +1233,12 @@ i2c_dw_xfer_msg(struct dw_i2c_dev *dev)
 			cmd = (dev->enable_stop && buf_len == 1
 				&& dev->msg_write_idx == dev->msgs_num - 1) ?
 				DW_IC_CMD_STOP : 0;
+
+			if (need_restart) {
+				cmd |= BIT(10);
+				need_restart = false;
+			}
+
 			if (msgs[dev->msg_write_idx].flags & I2C_M_RD) {
 				dw_writel(dev, cmd | 0x100, DW_IC_DATA_CMD);
 				rx_limit--;
@@ -1247,14 +1331,6 @@ static int i2c_dw_handle_tx_abort(struct dw_i2c_dev *dev)
 		return -EIO;
 }
 
-
-/*workaround for blade2 */
-void reset_sar(void)
-{
-	gpio_direction_output(120,1);
-	msleep(5);
-	gpio_direction_output(120,0);
-}
 /*
  * Prepare controller for a transaction and call i2c_dw_xfer_msg
  */
@@ -1297,14 +1373,13 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	i2c_dw_xfer_init(dev);
 
 	/* wait for tx to complete */
-	timeout = wait_for_completion_timeout(&dev->cmd_complete, 1*HZ);
+	timeout = wait_for_completion_timeout(&dev->cmd_complete, 3*HZ);
 	if (timeout == 0) {
 		dev_WARN(dev->dev, "controller timed out\n");
 		i2c_dw_dump(dev);
-		trigger_all_cpu_backtrace();
+		dump_stack();
 		if (dev->abort)
 			dev->abort(adap->nr);
-		reset_sar(); //reset cap sensor
 		i2c_dw_init(dev);
 		ret = -ETIMEDOUT;
 		goto done;
@@ -1327,10 +1402,6 @@ i2c_dw_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	/* We have an error */
 	if (dev->cmd_err == DW_IC_ERR_TX_ABRT) {
 		ret = i2c_dw_handle_tx_abort(dev);
-		if (ret == (-EAGAIN)) {
-            i2c_dw_dump(dev);
-            trigger_all_cpu_backtrace();
-		}
 		goto done;
 	}
 	ret = -EIO;

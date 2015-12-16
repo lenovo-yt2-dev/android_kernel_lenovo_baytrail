@@ -356,12 +356,12 @@ static ssize_t pmic_show_error(struct kobject *kobj,
 	return snprintf(buf, PAGE_SIZE, "%d\n", pmic_dbg_error);
 }
 
-static KOBJ_PMIC_ATTR(addr, S_IRUGO|S_IWUSR, pmic_addr_show, pmic_addr_store);
-static KOBJ_PMIC_ATTR(bits, S_IRUGO|S_IWUSR, pmic_bits_show, pmic_bits_store);
-static KOBJ_PMIC_ATTR(data, S_IRUGO|S_IWUSR, pmic_data_show, pmic_data_store);
-static KOBJ_PMIC_ATTR(mask, S_IRUGO|S_IWUSR, pmic_mask_show, pmic_mask_store);
+static KOBJ_PMIC_ATTR(addr, S_IRUSR|S_IWUSR, pmic_addr_show, pmic_addr_store);
+static KOBJ_PMIC_ATTR(bits, S_IRUSR|S_IWUSR, pmic_bits_show, pmic_bits_store);
+static KOBJ_PMIC_ATTR(data, S_IRUSR|S_IWUSR, pmic_data_show, pmic_data_store);
+static KOBJ_PMIC_ATTR(mask, S_IRUSR|S_IWUSR, pmic_mask_show, pmic_mask_store);
 static KOBJ_PMIC_ATTR(ops, S_IWUSR, NULL, pmic_ops_store);
-static KOBJ_PMIC_ATTR(error, S_IRUGO, pmic_show_error, NULL);
+static KOBJ_PMIC_ATTR(error, S_IRUSR, pmic_show_error, NULL);
 
 static struct attribute *pmic_attrs[] = {
 	&addr_attr.attr,

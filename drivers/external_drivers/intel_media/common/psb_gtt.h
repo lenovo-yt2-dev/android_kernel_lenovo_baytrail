@@ -33,6 +33,7 @@ struct psb_gtt {
 	uint32_t rar_start;
 	uint32_t gtt_start;
 	uint32_t gtt_phys_start;
+	uint32_t reserved_gtt_start;
 	unsigned gtt_pages;
 	unsigned gatt_pages;
 	uint32_t stolen_base;

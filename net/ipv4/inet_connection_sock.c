@@ -417,7 +417,7 @@ struct dst_entry *inet_csk_route_req(struct sock *sk,
 	struct net *net = sock_net(sk);
 	int flags = inet_sk_flowi_flags(sk);
 
-	flowi4_init_output(fl4, sk->sk_bound_dev_if, sk->sk_mark,
+	flowi4_init_output(fl4, sk->sk_bound_dev_if, inet_rsk(req)->ir_mark,
 			   RT_CONN_FLAGS(sk), RT_SCOPE_UNIVERSE,
 			   sk->sk_protocol,
 			   flags,
@@ -687,6 +687,8 @@ struct sock *inet_csk_clone_lock(const struct sock *sk,
 		inet_sk(newsk)->inet_num = ntohs(inet_rsk(req)->loc_port);
 		inet_sk(newsk)->inet_sport = inet_rsk(req)->loc_port;
 		newsk->sk_write_space = sk_stream_write_space;
+
+		newsk->sk_mark = inet_rsk(req)->ir_mark;
 
 		newicsk->icsk_retransmits = 0;
 		newicsk->icsk_backoff	  = 0;

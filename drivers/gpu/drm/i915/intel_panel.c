@@ -36,11 +36,17 @@
 #include <linux/pwm.h>
 #include <linux/platform_data/lp855x.h>
 #include <asm/spid.h>
-#include "intel_dsi.h"
 #include <linux/gpio.h>
-
+#include "intel_dsi.h"
+#include <linux/tablet_config.h>
 #define PCI_LBPC 0xf4 /* legacy/combination backlight modes */
-#define GPIO_BOARD_ID 210
+
+
+
+
+//GPIO1P2
+//#define GPIO_BOARD_ID 210
+#define GPIO_BOARD_ID 378
 #define PMIC_GPIO1P0_BASE_ADDRESS 0x3b
 #define PMIC_GPIO1P2_OFFSET 0x2
 #define PMIC_GPIO1P2_ADDRESS PMIC_GPIO1P0_BASE_ADDRESS+PMIC_GPIO1P2_OFFSET
@@ -75,8 +81,35 @@ static unsigned char backlight_buf[]={
 };
 
 static bool backlight_level0 = false;
-/*static bool power_on_init = true;*/
+static bool power_on_init = true;
 extern struct intel_dsi_device *intel_dsi_dev;
+//GPIO1P7
+//#define GPIO_BOARD_ID_4 215
+#define GPIO_BOARD_ID_4 383
+#define PMIC_GPIO1P0_BASE_ADDRESS 0x3b
+#define PMIC_GPIO1P7_OFFSET 0x7
+#define PMIC_GPIO1P7_ADDRESS PMIC_GPIO1P0_BASE_ADDRESS+PMIC_GPIO1P7_OFFSET
+#define GPIO_INPUT_NO_DRV 0x0
+/*
+
+
+
+//GPIO0P2
+#define GPIO_BOARD_ID_1 202
+#define PMIC_GPIO0P0_BASE_ADDRESS 0x2b
+#define PMIC_GPIO0P2_OFFSET 0x2
+#define PMIC_GPIO0P2_ADDRESS PMIC_GPIO0P0_BASE_ADDRESS+PMIC_GPIO0P2_OFFSET
+//#define GPIO_INPUT_NO_DRV 0x0
+
+
+//GPIO0P6
+#define GPIO_BOARD_ID_2 206
+//#define PMIC_GPIO0P0_BASE_ADDRESS 0x2b
+#define PMIC_GPIO0P6_OFFSET 0x6
+#define PMIC_GPIO0P6_ADDRESS PMIC_GPIO0P0_BASE_ADDRESS+PMIC_GPIO0P6_OFFSET
+//#define GPIO_INPUT_NO_DRV 0x0
+
+*/
 void
 intel_fixed_panel_mode(struct drm_display_mode *fixed_mode,
 		       struct drm_display_mode *adjusted_mode)
@@ -227,16 +260,26 @@ void intel_gmch_panel_fitting(struct intel_crtc *intel_crtc,
 	struct drm_device *dev = intel_crtc->base.dev;
 	u32 pfit_control = 0, pfit_pgm_ratios = 0, border = 0;
 	struct drm_display_mode *mode, *adjusted_mode;
+	uint32_t scaling_src_w, scaling_src_h = 0;
 
 	intel_crtc->base.panning_en = false;
 
 	mode = &pipe_config->requested_mode;
 	adjusted_mode = &pipe_config->adjusted_mode;
-	//DRM_ERROR("fitting mode:%d\n",fitting_mode);
+
 	if (IS_VALLEYVIEW(dev)) {
+		scaling_src_w = ((intel_crtc->scaling_src_size >>
+				SCALING_SRCSIZE_SHIFT) &
+				SCALING_SRCSIZE_MASK) + 1;
+		scaling_src_h = (intel_crtc->scaling_src_size &
+				SCALING_SRCSIZE_MASK) + 1;
+#ifdef BLADE2_13		
+            //2015-1-20 for BLADETL-58 recovery mode is no display specail on blade2-13 by fuzr1"   
+            if(adjusted_mode->vdisplay >PFIT_SIZE_LIMIT || adjusted_mode->hdisplay >PFIT_SIZE_LIMIT)goto out;
+#endif			
 		/* The input src size should be < 2kx2k */
-		if ((adjusted_mode->hdisplay > PFIT_SIZE_LIMIT) ||
-			(adjusted_mode->vdisplay > PFIT_SIZE_LIMIT)) {
+		if ((scaling_src_w > PFIT_SIZE_LIMIT) ||
+			(scaling_src_h > PFIT_SIZE_LIMIT)) {
 			DRM_ERROR("Wrong panel fitter input src conf");
 			goto out;
 		}
@@ -248,9 +291,9 @@ void intel_gmch_panel_fitting(struct intel_crtc *intel_crtc,
 		else if (fitting_mode == LETTERBOX)
 			pfit_control = PFIT_SCALING_LETTER;
 		else {
-			pfit_control = 0;
+			pipe_config->gmch_pfit.control &= ~PFIT_ENABLE;
 			intel_crtc->base.panning_en = false;
-			goto out;
+			goto out1;
 		}
 		pfit_control |= (PFIT_ENABLE | (intel_crtc->pipe
 					<< PFIT_PIPE_SHIFT));
@@ -377,6 +420,7 @@ out:
 		pfit_control |= PANEL_8TO6_DITHER_ENABLE;
 
 	pipe_config->gmch_pfit.control = pfit_control;
+out1:
 	pipe_config->gmch_pfit.pgm_ratios = pfit_pgm_ratios;
 	pipe_config->gmch_pfit.lvds_border_bits = border;
 }
@@ -416,6 +460,11 @@ static u32 i915_read_blc_pwm_ctl(struct drm_device *dev)
 		}
 	} else {
 		val = I915_READ(BLC_PWM_CTL);
+#ifndef BLADE2_13
+              val=0x01000100; //set max level to 255
+              I915_WRITE(BLC_PWM_CTL,val);
+#endif
+
 		if (dev_priv->regfile.saveBLC_PWM_CTL == 0) {
 			dev_priv->regfile.saveBLC_PWM_CTL = val;
 			if (INTEL_INFO(dev)->gen >= 4)
@@ -433,7 +482,7 @@ static u32 i915_read_blc_pwm_ctl(struct drm_device *dev)
 	return val;
 }
 
-static u32 intel_panel_get_max_backlight(struct drm_device *dev)
+u32 intel_panel_get_max_backlight(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 max;
@@ -501,7 +550,11 @@ static u32 intel_panel_get_backlight(struct drm_device *dev)
 	 */
 	if (IS_VALLEYVIEW(dev) && dev_priv->is_mipi) {
 #ifdef CONFIG_CRYSTAL_COVE
-		val = intel_mid_pmic_readb(0x4E);
+		if (BYT_CR_CONFIG) {
+			val = lpio_bl_read(0, LPIO_PWM_CTRL);
+			val &= 0xff;
+		} else
+			val = intel_mid_pmic_readb(0x4E);
 #else
 		DRM_ERROR("Backlight not supported yet\n");
 #endif
@@ -580,8 +633,8 @@ void intel_panel_actually_set_backlight(struct drm_device *dev, u32 level)
 
 void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level)
 {
-#ifdef CONFIG_CRYSTAL_COVE
 	struct drm_i915_private *dev_priv = dev->dev_private;
+#ifdef CONFIG_CRYSTAL_COVE
 	int panelid = dev_priv->mipi_panel_id;
 
 	if(!dev_priv)
@@ -625,8 +678,8 @@ void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level)
                 lp855x_ext_write_byte(0x10, 0x84);
 				if(intel_dsi_dev->dev_ops->set_backlight_level!= NULL)
 					intel_dsi_dev->dev_ops->set_backlight_level(intel_dsi_dev,backlight_buf[level]);
-				mdelay(10);
-				lp855x_ext_write_byte(0x00, 0x01);
+				mdelay(100);
+                lp855x_ext_write_byte(0x00, 0x01);
 			}else{
 				if(intel_dsi_dev->dev_ops->set_backlight_level!= NULL && !backlight_level0)
 					intel_dsi_dev->dev_ops->set_backlight_level(intel_dsi_dev,backlight_buf[level]);
@@ -640,11 +693,36 @@ void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level)
 				lp855x_ext_write_byte(0x04, level);
 			intel_mid_pmic_writeb(0x4E, level);
 #endif
-		}else
+		}
+                else
 		{
 			/*printk("[LCD] backlight level:%d\n",level);*/
+                        //2015-03-04 fuzr1 modify for bladetl-850 when set the backlight level to 0 to poweroff backlight ic
 			printk("[LCD] backlight level =%d actual level:%d\n",level,backlight_buf[level]);
+
+                        if(level == 0){
+                                if(!backlight_level0)
+                                {
+                                        lp855x_ext_write_byte(0x00, 0x00);
+                                        backlight_level0 = true;
+                                }
+                        }else if(level != 0 && backlight_level0){
+                                backlight_level0 = false;
+                                /*mdelay(110);*/
+                                /*if(intel_dsi_dev->dev_ops->late_operations!= NULL)*/
+                                        /*intel_dsi_dev->dev_ops->late_operations(intel_dsi_dev);*/
+                                /*mdelay(10);*/
+                         lp855x_ext_write_byte(0x00, 0x00);
+                         lp855x_ext_write_byte(0x10, 0x84);
+			   intel_mid_pmic_writeb(0x4E, backlight_buf[level]);
+                           mdelay(100);
+                         lp855x_ext_write_byte(0x00, 0x01);
+                        }
+                        else
+                        {
 			intel_mid_pmic_writeb(0x4E, backlight_buf[level]);
+                        }
+
 		}
 	}
 #else
@@ -671,7 +749,6 @@ void intel_panel_set_backlight(struct drm_device *dev, u32 level, u32 max)
 	/* scale to hardware */
 	level = level * freq / max;
 
-	/*printk("[LCD]%s: @@@@@@ level=%d\n",__func__,level);*/
 	dev_priv->backlight.level = level;
 	if (dev_priv->backlight.device)
 		dev_priv->backlight.device->props.brightness = level;
@@ -701,7 +778,7 @@ void intel_panel_disable_backlight(struct drm_device *dev)
 		intel_panel_actually_set_mipi_backlight(dev, 0);
 
 #ifdef CONFIG_CRYSTAL_COVE
-		if (BYT_CR_CONFIG) {
+		if (dev_priv->vbt.dsi.config->pmic_soc_blc) {
 			/* cancel any delayed work scheduled */
 			cancel_delayed_work_sync(&dev_priv->bkl_delay_enable_work);
 
@@ -728,6 +805,8 @@ void intel_panel_disable_backlight(struct drm_device *dev)
 #endif
 	}
 
+    /*printk("==jinjt==%s cancel work\n",__func__);*/
+    cancel_delayed_work_sync(&dev_priv->bkl_delay_enable_wd_work);
 	spin_lock_irqsave(&dev_priv->backlight.lock, flags);
 
 	dev_priv->backlight.enabled = false;
@@ -779,6 +858,15 @@ static void scheduled_led_chip_programming(struct work_struct *work)
 			LP8556_5LEDSTR);
 }
 #endif
+static void scheduled_bkl_enable_wd_programming(struct work_struct *work)
+{
+    struct delayed_work *delayed_work = to_delayed_work(work);
+    struct drm_i915_private *dev_priv = container_of(delayed_work, struct drm_i915_private, bkl_delay_enable_wd_work);
+    struct drm_device *dev = dev_priv->dev;
+    /*printk("==jinjt==%s work\n",__func__);*/
+    intel_panel_actually_set_mipi_backlight(dev, dev_priv->backlight.level);
+    return;
+}
 
 static uint32_t compute_pwm_base(uint16_t freq)
 {
@@ -816,13 +904,15 @@ void intel_panel_enable_backlight(struct drm_device *dev,
     int panelid = dev_priv->mipi_panel_id;
 	enum transcoder cpu_transcoder =
 		intel_pipe_to_cpu_transcoder(dev_priv, pipe);
-	unsigned long flags;
+	unsigned long flags = 0;
 	uint32_t pwm_base;
-	extern int i915_boot_mode;
+      extern int i915_boot_mode;
+
 	if (IS_VALLEYVIEW(dev) && dev_priv->is_mipi) {
 #ifdef CONFIG_CRYSTAL_COVE
 		uint32_t val;
-		if (BYT_CR_CONFIG) {
+		/* For BYT-CR */
+		if (dev_priv->vbt.dsi.config->pmic_soc_blc) {
 			/* GPIOC_94 config to PWM0 function */
 			val = vlv_gps_core_read(dev_priv, 0x40A0);
 			vlv_gps_core_write(dev_priv, 0x40A0, 0x2000CC01);
@@ -846,10 +936,14 @@ void intel_panel_enable_backlight(struct drm_device *dev,
 
 			if (lpdata)
 				schedule_delayed_work(&dev_priv->bkl_delay_enable_work,
-								msecs_to_jiffies(30));
+						msecs_to_jiffies(30));
+
 		} else {
 			intel_mid_pmic_writeb(0x4B, 0x81);
 			intel_mid_pmic_writeb(0x51, 0x01);
+            /*printk("==jinjt==%s schedule work\n",__func__);*/
+            schedule_delayed_work(&dev_priv->bkl_delay_enable_wd_work,
+                msecs_to_jiffies(250));
 
 			/* Control Backlight Slope programming for LP8556 IC*/
 			if (lpdata && (spid.hardware_id == BYT_TABLET_BLK_8PR1)) {
@@ -944,9 +1038,6 @@ set_level:
 	 * BLC_PWM_CPU_CTL may be cleared to zero automatically when these
 	 * registers are set.
 	 */
-	 if(i915_boot_mode){
-    		DRM_INFO("%s: android mode\n", __func__);
-     }
 	dev_priv->backlight.enabled = true;
 	if (!dev_priv->is_mipi)
 		intel_panel_actually_set_backlight(dev,
@@ -958,12 +1049,15 @@ set_level:
             /*|| panelid == MIPI_DSI_BOE_NT51021_PANEL_ID))*/
         /*lp855x_ext_write_byte(0x10, 0x84);*/
 //del by lenovo jinjt for resume backlight flicker 
+     if(!i915_boot_mode){
+         mdelay(50);
+         DRM_INFO("%s: ==jinjt== line=%d\n", __func__,__LINE__);
+     }
 #if 1
-//	if (IS_VALLEYVIEW(dev) && dev_priv->is_mipi && power_on_init){
-	if (IS_VALLEYVIEW(dev) && dev_priv->is_mipi && (!i915_boot_mode)){
+	if ((IS_VALLEYVIEW(dev) && dev_priv->is_mipi && (!i915_boot_mode))||power_on_init){
 		intel_panel_actually_set_mipi_backlight(dev,
 					dev_priv->backlight.level);
-//		power_on_init = false;
+        power_on_init = false;
 	}
 #endif
 }
@@ -972,13 +1066,30 @@ static void intel_panel_init_backlight(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
+#ifdef BLADE2_13
+       u32 val;
+       DRM_INFO("====> is_mipi_from_vbt %d, is_mipi %d\n", dev_priv->is_mipi_from_vbt, dev_priv->is_mipi);
+       /* FIXME: use if instead of #ifdef */
+       //if (!dev_priv->is_mipi_from_vbt) {
+               DRM_INFO("i915_read_blc_pwm_ctl() set max level to 255\n");
+               val = 0x00ff00ff; //set max level to 255
+               I915_WRITE(BLC_PWM_CTL,val);
+       //}
+#endif
+
+
 	dev_priv->backlight.level = intel_panel_get_backlight(dev);
 	dev_priv->backlight.enabled = dev_priv->backlight.level != 0;
+
 #ifdef CONFIG_CRYSTAL_COVE
 	if (BYT_CR_CONFIG)
 		INIT_DELAYED_WORK(&dev_priv->bkl_delay_enable_work,
 				scheduled_led_chip_programming);
 #endif
+    /*printk("==jinjt==%s init work\n",__func__);*/
+    INIT_DELAYED_WORK(&dev_priv->bkl_delay_enable_wd_work,
+        scheduled_bkl_enable_wd_programming);
+
 }
 
 enum drm_connector_status
@@ -1093,6 +1204,42 @@ int intel_panel_init(struct intel_panel *panel,
 }
 
 /*
+ * intel_dsi_calc_panel_downclock - calculate the reduced downclock for DSI
+ * @dev: drm device
+ * @fixed_mode : panel native mode
+ * @connector: DSI connector
+ *
+ * Return downclock_avail
+ * Calculate the reduced downclock for DSI.
+ */
+
+struct drm_display_mode *
+intel_dsi_calc_panel_downclock(struct drm_device *dev,
+			struct drm_display_mode *fixed_mode,
+			struct drm_connector *connector)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_display_mode *downclock_mode = NULL;
+
+	if (dev_priv->vbt.drrs_min_vrefresh == 0)
+		return downclock_mode;
+
+	/* Allocate */
+	downclock_mode = drm_mode_duplicate(dev, fixed_mode);
+	if (!downclock_mode) {
+		DRM_DEBUG_KMS("%s: No memory\n", __func__);
+		return NULL;
+	}
+
+	downclock_mode->vrefresh = dev_priv->vbt.drrs_min_vrefresh;
+	DRM_DEBUG("drrs_min_vrefresh = %u\n", downclock_mode->vrefresh);
+	downclock_mode->clock =  downclock_mode->vrefresh *
+		downclock_mode->vtotal * downclock_mode->htotal / 1000;
+
+	return downclock_mode;
+}
+
+/*
  * intel_find_panel_downclock - find the reduced downclock for LVDS in EDID
  * @dev: drm device
  * @fixed_mode : panel native mode
@@ -1109,7 +1256,10 @@ intel_find_panel_downclock(struct drm_device *dev,
 {
 	struct drm_display_mode *scan, *tmp_mode;
 	int temp_downclock;
-
+	if (!fixed_mode) {
+		DRM_ERROR("Mode can't be NULL\n");
+		return NULL;
+	}
 	temp_downclock = fixed_mode->clock;
 	tmp_mode = NULL;
 
@@ -1158,6 +1308,8 @@ void intel_panel_fini(struct intel_panel *panel)
 		drm_mode_destroy(intel_connector->base.dev,
 				panel->downclock_mode);
 }
+
+
 #define MANCONV0	0x72
 #define MANCONV1	0x73
 #define BPTEMP1_RSLTH	0x7c
@@ -1165,23 +1317,105 @@ void intel_panel_fini(struct intel_panel *panel)
 #define THERM_ENABLE    0x90
 #define ADCIRQ0		0x08
 #define ADCIRQ1		0x09
+
 int board_id3 = 0;
+int board_id1 = 0;
+int board_id2 = 0;
+int board_id4 = 0;
+
 char *board_id_8_inch = "8inch";
 char *board_id_10_inch = "10inch";
+char *board_id_13_inch = "13inch";
 static struct kobject *blade2_board_kobj;
 
+
+static ssize_t board_id_store(struct kobject *kobj,
+			    struct kobj_attribute *attr,
+			    const char *buf, size_t count)
+{
+	
+#if 1
+	
+	int ret =0;
+	ret = gpio_direction_input(GPIO_BOARD_ID);
+	if(ret< 0)
+		printk("[LCD]: Failed to config gpio 210\n");
+#if 0
+	ret = gpio_request(GPIO_BOARD_ID_1, "board_id1");
+	if (ret < 0)
+		printk("[LCD]: Failed to request gpio 202\n");
+	ret = gpio_direction_input(GPIO_BOARD_ID_1);
+	if(ret< 0)
+		printk("[LCD]: Failed to config gpio 202\n");
+
+    ret = gpio_request(GPIO_BOARD_ID_2, "board_id2");
+	if (ret < 0)
+		printk("[LCD]: Failed to request gpio 202\n");
+	ret = gpio_direction_input(GPIO_BOARD_ID_2);
+	if(ret< 0)
+		printk("[LCD]: Failed to config gpio 206\n");
+#endif 
+    ret = gpio_direction_input(GPIO_BOARD_ID_4);
+	if(ret< 0)
+		printk("[LCD]: Failed to config gpio 215\n");
+
+#if 1
+	//set gpio1p2 function state
+	intel_mid_pmic_writeb(PMIC_GPIO1P2_ADDRESS, GPIO_INPUT_NO_DRV);
+	intel_mid_pmic_writeb(PMIC_GPIO1P7_ADDRESS, GPIO_INPUT_NO_DRV);
+   //intel_mid_pmic_writeb(PMIC_GPIO0P2_ADDRESS, GPIO_INPUT_NO_DRV);
+   //intel_mid_pmic_writeb(PMIC_GPIO0P6_ADDRESS, GPIO_INPUT_NO_DRV);
+
+	board_id3 = gpio_get_value_cansleep(GPIO_BOARD_ID);
+//	board_id1 = gpio_get_value_cansleep(GPIO_BOARD_ID_1);
+//	board_id2 = gpio_get_value_cansleep(GPIO_BOARD_ID_2);
+	board_id4 = gpio_get_value_cansleep(GPIO_BOARD_ID_4);
+#endif 
+	printk("[LCD]:%s,gpio0P2 value: 0x%x\n",__func__,board_id1);
+	printk("[LCD]:%s,gpio0P6 value: 0x%x\n",__func__,board_id2);
+	printk("[LCD]:%s,gpio1P2 value: 0x%x\n",__func__,board_id3);
+	printk("[LCD]:%s,gpio1P2 value: 0x%x\n",__func__,board_id4);		
+#endif 	
+	return 1;
+}
 static ssize_t board_id_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	if(board_id3== 1)
+
+	
+	int ret =0;
+	ret = gpio_direction_input(GPIO_BOARD_ID);
+	if(ret< 0)
+		printk("[LCD]: Failed to config gpio GPIO1P2\n");
+
+    ret = gpio_direction_input(GPIO_BOARD_ID_4);
+	if(ret< 0)
+		printk("[LCD]: Failed to config gpio GPIO1P7\n");
+
+	//set gpio1p2 function state
+	intel_mid_pmic_writeb(PMIC_GPIO1P2_ADDRESS, GPIO_INPUT_NO_DRV);
+	intel_mid_pmic_writeb(PMIC_GPIO1P7_ADDRESS, GPIO_INPUT_NO_DRV);
+
+	board_id3 = gpio_get_value_cansleep(GPIO_BOARD_ID);
+	board_id4 = gpio_get_value_cansleep(GPIO_BOARD_ID_4);
+	printk("[LCD]:%s,gpio0P2 value: 0x%x\n",__func__,board_id1);
+	printk("[LCD]:%s,gpio0P6 value: 0x%x\n",__func__,board_id2);
+	printk("[LCD]:%s,gpio1P2 value: 0x%x\n",__func__,board_id3);
+	printk("[LCD]:%s,gpio1P2 value: 0x%x\n",__func__,board_id4);		
+	if(board_id4 == 1)
+		return sprintf(buf, "%s\n", board_id_13_inch);
+	else if (board_id3 == 1)
 		return sprintf(buf, "%s\n", board_id_10_inch);
-	else
+    else 
 		return sprintf(buf, "%s\n", board_id_8_inch);
+
+	return 1;
+
 }
 
 static struct kobj_attribute blade2_board_id_attr = {
 	.attr = {"id", 0660},
 	.show = board_id_show,
-	.store = NULL,
+	.store = board_id_store,
 };
 static struct kobj_attribute blade2_board_id1_attr = {
 	.attr = {"id1", 0660},
@@ -1199,6 +1433,44 @@ static struct attribute_group blade2_attr_group = {
 	.attrs = blade2_board_attr,
 };
 
+
+int intel_read_board_id(void)
+{
+    int ret =0;
+	ret = gpio_request(GPIO_BOARD_ID, "board_id3");
+	if (ret < 0)
+		printk("[LCD]: Failed to request gpio GPIO1P2\n");
+	ret = gpio_direction_input(GPIO_BOARD_ID);
+	if(ret< 0)
+		printk("[LCD]: Failed to config gpio GPIO1P2\n");
+
+     ret = gpio_request(GPIO_BOARD_ID_4, "board_id4");
+	if (ret < 0)
+		printk("[LCD]: Failed to request gpio GPIO1P7\n");
+	ret = gpio_direction_input(GPIO_BOARD_ID_4);
+	if(ret< 0)
+		printk("[LCD]: Failed to config gpio GPIO1P7\n");
+
+	//set gpio1p2 function state
+	intel_mid_pmic_writeb(PMIC_GPIO1P2_ADDRESS, GPIO_INPUT_NO_DRV);
+	intel_mid_pmic_writeb(PMIC_GPIO1P7_ADDRESS, GPIO_INPUT_NO_DRV);
+
+	board_id3 = gpio_get_value_cansleep(GPIO_BOARD_ID);
+	board_id4 = gpio_get_value_cansleep(GPIO_BOARD_ID_4);
+	printk("[LCD]:%s,gpio0P2 value: 0x%x\n",__func__,board_id1);
+	printk("[LCD]:%s,gpio0P6 value: 0x%x\n",__func__,board_id2);
+	printk("[LCD]:%s,gpio1P2 value: 0x%x\n",__func__,board_id3);
+	printk("[LCD]:%s,gpio1P2 value: 0x%x\n",__func__,board_id4);		
+	blade2_board_kobj = kobject_create_and_add("mainboard", NULL);
+	if(blade2_board_kobj)
+		ret = sysfs_create_group( blade2_board_kobj, &blade2_attr_group);
+	if (ret)
+		kobject_put(blade2_board_kobj);
+	return ret;
+}
+
+
+
 /*
 	8inch Innolux adc 0x9
 	8inch BOE adc 0x60
@@ -1207,7 +1479,8 @@ static struct attribute_group blade2_attr_group = {
 unsigned int panel_id_adc_array[]={0,0x60,0x400}; //max adc value is 0x3ff
 int intel_adc_read_panelid(unsigned int *res)
 {
-	int ret =0;
+	
+        int ret =0;
 	int mask_bak = 0; //panel id use bit4
 	unsigned int val;
 	int i = 0;
@@ -1245,22 +1518,23 @@ int intel_adc_read_panelid(unsigned int *res)
 
 	ret = gpio_request(GPIO_BOARD_ID, "board_id3");
 	if (ret < 0)
-		printk("[LCD]: Failed to request gpio 210\n");
+		printk("[LCD]: Failed to request gpio 378\n");
 	ret = gpio_direction_input(GPIO_BOARD_ID);
 	if(ret< 0)
-		printk("[LCD]: Failed to config gpio 210\n");
+		printk("[LCD]: Failed to config gpio 378\n");
 
 	//set gpio1p2 function state
 	intel_mid_pmic_writeb(PMIC_GPIO1P2_ADDRESS, GPIO_INPUT_NO_DRV);
 
 	board_id3 = gpio_get_value_cansleep(GPIO_BOARD_ID);
 	printk("[LCD]:%s,gpio1P2 value: 0x%x\n",__func__,board_id3);
-
+#if 0
 	blade2_board_kobj = kobject_create_and_add("mainboard", NULL);
 	if(blade2_board_kobj)
 		ret = sysfs_create_group( blade2_board_kobj, &blade2_attr_group);
 	if (ret)
 		kobject_put(blade2_board_kobj);
+#endif 
 
 	if(board_id3 == 0x1)
 	{
@@ -1291,6 +1565,8 @@ int intel_adc_read_panelid(unsigned int *res)
 		}
 
 	}
+
+    
 	*res = panel_id;
 	return ret;
 }

@@ -47,6 +47,7 @@ extern int power_supply_register_charger(struct power_supply *psy);
 extern int power_supply_unregister_charger(struct power_supply *psy);
 extern int psy_charger_throttle_charger(struct power_supply *psy,
 					unsigned long state);
+extern bool power_supply_is_cable_connected(void);
 
 #else
 
@@ -59,5 +60,7 @@ static inline int power_supply_unregister_charger(struct power_supply *psy)
 static inline int psy_charger_throttle_charger(struct power_supply *psy,
 					unsigned long state)
 { return 0; }
+static bool power_supply_is_cable_connected(void)
+{ return false; }
 
 #endif

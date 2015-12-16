@@ -20,7 +20,6 @@
  *
  * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  */
-
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/init.h>
@@ -30,7 +29,8 @@
 #include <linux/device.h>
 #include <linux/gpio.h>
 #include <linux/slab.h>
-#include <linux/vlv2_plat_clock.h>
+//#include <linux/vlv2_plat_clock.h> //don't use this in Lollipop, use pmc
+#include <asm/intel_soc_pmc.h>
 #include <linux/acpi_gpio.h>
 #include <linux/extcon-mid.h>
 #include <linux/pm_runtime.h>
@@ -41,7 +41,9 @@
 #include <sound/jack.h>
 #include <linux/mfd/arizona/registers.h>
 #include <linux/lnw_gpio.h>
+#include <linux/delay.h>
 #include "../../codecs/wm5102.h"
+#include <linux/tablet_config.h>
 
 #ifdef CONFIG_SND_SOC_COMMS_SSP
 #include "byt_bl_rt5642.h"
@@ -57,6 +59,10 @@
 #define PLAT_CLK_FORCE_OFF	2
 
 #define EXT_SPEAKER_ENABLE_PIN 302    // GPIO3
+
+#ifdef BLADE2_13  //13A subspeaker control PIN
+static int sub_woofer_pa_enable_pin = 377;
+#endif
 
 struct byt_mc_private {
 #ifdef CONFIG_SND_SOC_COMMS_SSP
@@ -129,11 +135,43 @@ static int byt_ext_speaker_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
+#ifdef BLADE2_13
+static int Sub_woofer_control(struct snd_soc_dapm_widget *w,
+		struct snd_kcontrol *k, int  event)
+{
+	if (SND_SOC_DAPM_EVENT_ON(event)) {
+		gpio_set_value_cansleep(sub_woofer_pa_enable_pin,1);
+		udelay(3);
+		gpio_set_value_cansleep(sub_woofer_pa_enable_pin,0);
+		udelay(3);
+		gpio_set_value_cansleep(sub_woofer_pa_enable_pin,1);
+		udelay(3);
+		gpio_set_value_cansleep(sub_woofer_pa_enable_pin,0);
+		udelay(3);
+		gpio_set_value_cansleep(sub_woofer_pa_enable_pin,1);
+		pr_info("Platform sub woofer turned ON\n");
+	}
+
+	else {
+		gpio_set_value_cansleep(sub_woofer_pa_enable_pin,0);
+		pr_info("Platform sub woofer turned OFF\n");
+	}
+
+	return 0;
+}
+#endif
+
 static const struct snd_soc_dapm_widget byt_dapm_widgets[] = {
 	SND_SOC_DAPM_HP("Headphone", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("Int Mic", NULL),
 	SND_SOC_DAPM_SPK("Ext Spk", byt_ext_speaker_event),
+#ifdef BLADE2_13
+	SND_SOC_DAPM_SPK("Sub Spk", NULL),
+	SND_SOC_DAPM_SUPPLY("Sub woofer", SND_SOC_NOPM, 0, 0,
+			Sub_woofer_control, SND_SOC_DAPM_PRE_PMU|
+			SND_SOC_DAPM_POST_PMD),
+#endif
 };
 
 static const struct snd_soc_dapm_route byt_audio_map[] = {
@@ -143,12 +181,29 @@ static const struct snd_soc_dapm_route byt_audio_map[] = {
 	{"Ext Spk", NULL, "SPKOUTLN"},
 	{"Ext Spk", NULL, "SPKOUTRP"},
 	{"Ext Spk", NULL, "SPKOUTRN"},
+#ifdef BLADE2_13
+	{"Sub Spk", NULL, "HPOUT2L"},
+	{"Sub Spk", NULL, "HPOUT2R"},
+#endif
 	{"Headset Mic", NULL, "MICBIAS1"},
 	{"Headset Mic", NULL, "MICBIAS2"},
 	{"IN1L", NULL, "Headset Mic"},
 	{"Int Mic", NULL, "MICBIAS3"},
 	{"IN3L", NULL, "Int Mic"},
+#ifdef BLADE2_13
+	{"Sub Spk", NULL, "Sub woofer"},
+#endif        
 };
+
+#ifdef BLADE2_13
+static const struct snd_kcontrol_new byt_mc_controls[] = {
+	SOC_DAPM_PIN_SWITCH("Headphone"),
+	SOC_DAPM_PIN_SWITCH("Headset Mic"),
+	SOC_DAPM_PIN_SWITCH("Int Mic"),
+	SOC_DAPM_PIN_SWITCH("Ext Spk"),
+	SOC_DAPM_PIN_SWITCH("Sub Spk"),
+};
+#endif
 
 static int open_aif_clk=0;
 struct mutex reg_fll_lock;
@@ -167,7 +222,7 @@ static int byt_config_5102_clks(struct snd_soc_codec *wm5102_codec, int sr)
     mutex_unlock(&reg_fll_lock);
 
 	/*Open MCLK before Set Codec CLK*/
-    vlv2_plat_configure_clock(VLV2_PLAT_CLK_AUDIO, PLAT_CLK_FORCE_ON);
+    pmc_pc_configure(VLV2_PLAT_CLK_AUDIO, PLAT_CLK_FORCE_ON);
 	/*reset FLL1*/
 	snd_soc_codec_set_pll(wm5102_codec, WM5102_FLL1_REFCLK,
 				ARIZONA_FLL_SRC_NONE, 0, 0);
@@ -211,7 +266,8 @@ static int byt_free_5102_clks(struct snd_soc_codec *codec)
     pr_info("%s: open_aif_clk: %d\n", __func__, open_aif_clk);
 
     mutex_lock(&reg_fll_lock);
-    open_aif_clk--;
+    if (open_aif_clk > 0)
+        open_aif_clk--;
     if (open_aif_clk > 0) {
         mutex_unlock(&reg_fll_lock);
         return 0;
@@ -225,7 +281,7 @@ static int byt_free_5102_clks(struct snd_soc_codec *codec)
         ARIZONA_FLL_SRC_NONE, 0, 0);
 
 	/*Open MCLK before Set Codec CLK*/
-    vlv2_plat_configure_clock(VLV2_PLAT_CLK_AUDIO, PLAT_CLK_FORCE_OFF);
+    pmc_pc_configure(VLV2_PLAT_CLK_AUDIO, PLAT_CLK_FORCE_OFF);
     return 0;
 }
 
@@ -515,7 +571,7 @@ static int byt_init(struct snd_soc_pcm_runtime *runtime)
 	byt_set_bias_level(card, dapm, SND_SOC_BIAS_OFF);
 	card->dapm.idle_bias_off = true;
 
-#if 0
+#ifdef BLADE2_13
 	ret = snd_soc_add_card_controls(card, byt_mc_controls,
 					ARRAY_SIZE(byt_mc_controls));
 	if (ret) {
@@ -552,16 +608,24 @@ static int byt_init(struct snd_soc_pcm_runtime *runtime)
 	snd_soc_dapm_ignore_suspend(dapm, "SPKOUTRP");
 	snd_soc_dapm_ignore_suspend(dapm, "SPKOUTRN");
 
-    snd_soc_dapm_ignore_suspend(dapm, "AIF2 Playback");
-    snd_soc_dapm_ignore_suspend(dapm, "AIF2 Capture");
-    snd_soc_dapm_ignore_suspend(&card->dapm, "Ext Spk");
+	snd_soc_dapm_ignore_suspend(dapm, "AIF2 Playback");
+	snd_soc_dapm_ignore_suspend(dapm, "AIF2 Capture");
+	snd_soc_dapm_ignore_suspend(&card->dapm, "Ext Spk");
 
-    snd_soc_dapm_ignore_suspend(&card->dapm, "Headset Mic");
-    snd_soc_dapm_ignore_suspend(&card->dapm, "Headphone");
-    snd_soc_dapm_ignore_suspend(&card->dapm, "Int Mic");
+	snd_soc_dapm_ignore_suspend(&card->dapm, "Headset Mic");
+	snd_soc_dapm_ignore_suspend(&card->dapm, "Headphone");
+	snd_soc_dapm_ignore_suspend(&card->dapm, "Int Mic");
+#ifdef BLADE2_13
+	snd_soc_dapm_ignore_suspend(dapm, "Sub Spk");
+	snd_soc_dapm_enable_pin(dapm, "Headset Mic");
+	snd_soc_dapm_enable_pin(dapm, "Headphone");
+	snd_soc_dapm_enable_pin(dapm, "Ext Spk");
+	snd_soc_dapm_enable_pin(dapm, "Sub Spk");
+	snd_soc_dapm_enable_pin(dapm, "Int Mic");
+#endif
 
 	snd_soc_dapm_sync(dapm);
-    pr_info("exit %s\n", __func__);
+	pr_info("exit %s\n", __func__);
 
 	return ret;
 }
@@ -582,6 +646,25 @@ static int byt_aif1_startup(struct snd_pcm_substream *substream)
 			&constraints_48000);
 }
 
+static int byt_aif2_startup(struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *codec_dai = rtd->codec_dai;
+
+	printk("byt_aif2_startup()\n");
+	snd_soc_dai_set_tristate(codec_dai, 0);
+	return 0;
+}
+
+static void byt_aif2_shutdown(struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *codec_dai = rtd->codec_dai;
+
+	printk("byt_aif2_shutdown()\n");
+	snd_soc_dai_set_tristate(codec_dai, 1);
+}
+
 static struct snd_soc_ops byt_aif1_ops = {
 	.startup = byt_aif1_startup,
 	.hw_params = byt_aif1_hw_params,
@@ -589,8 +672,10 @@ static struct snd_soc_ops byt_aif1_ops = {
 };
 
 static struct snd_soc_ops byt_aif2_ops = {
+	.startup = byt_aif2_startup,
 	.hw_params = byt_aif2_hw_params,
 	.hw_free = byt_aif2_free,
+	.shutdown = byt_aif2_shutdown,
 };
 
 static struct snd_soc_compr_ops byt_compr_ops = {
@@ -721,6 +806,7 @@ static int snd_byt_mc_late_probe(struct snd_soc_card *card)
 		ARIZONA_SAMPLE_RATE_1_MASK, 0x03);
 	snd_soc_update_bits(card->rtd[0].codec, ARIZONA_ASYNC_SAMPLE_RATE_1,
 		ARIZONA_ASYNC_SAMPLE_RATE_MASK, 0x03);
+	snd_soc_update_bits(card->rtd[0].codec, ARIZONA_AIF2_RATE_CTRL, ARIZONA_AIF2_TRI, ARIZONA_AIF2_TRI);
 
 	return 0;
 }
@@ -743,16 +829,25 @@ static int snd_byt_mc_probe(struct platform_device *pdev)
 	int ret_val = 0;
 	struct byt_mc_private *drv;
 	pr_info("Entry %s\n", __func__);
-    mutex_init(&reg_fll_lock);
 
+	mutex_init(&reg_fll_lock);
+	lnw_gpio_set_alt(136, LNW_ALT_1);
 	drv = devm_kzalloc(&pdev->dev, sizeof(*drv), GFP_ATOMIC);
-	vlv2_plat_configure_clock(VLV2_PLAT_CLK_AUDIO, PLAT_CLK_FORCE_OFF); //force off the MCLK1
+	pmc_pc_configure(VLV2_PLAT_CLK_AUDIO, PLAT_CLK_FORCE_OFF); //force off the MCLK1
 
-    ret_val = devm_gpio_request_one(&pdev->dev, EXT_SPEAKER_ENABLE_PIN, GPIOF_DIR_OUT|GPIOF_INIT_LOW, "SPK POWER");
-    if (ret_val) {
-        pr_err("snd_byt_mc_probe() spk power gpio config failed %d\n", ret_val);
+	ret_val = devm_gpio_request_one(&pdev->dev, EXT_SPEAKER_ENABLE_PIN, GPIOF_DIR_OUT|GPIOF_INIT_LOW, "SPK POWER");
+	if (ret_val) {
+		pr_err("snd_byt_mc_probe() spk power gpio config failed %d\n", ret_val);
 		return -EINVAL;
-    }
+	}
+#ifdef BLADE2_13
+	ret_val = gpio_request_one(sub_woofer_pa_enable_pin,GPIOF_DIR_OUT| GPIOF_INIT_LOW, "Sub-woofer");
+	if(ret_val!=0)
+	{
+		pr_err("snd_soc_register_card sub woofer request %d\n", ret_val);
+		return -EPROBE_DEFER;
+	}
+#endif  
 
 	/* register the soc card */
 	snd_soc_card_byt.dev = &pdev->dev;

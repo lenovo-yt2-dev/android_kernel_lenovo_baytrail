@@ -79,7 +79,7 @@ struct hmm_buffer_object *hmm_bo_create(struct hmm_bo_device *bdev, int pgnr)
 	struct hmm_buffer_object *bo;
 	int ret;
 
-	bo = kzalloc(sizeof(*bo), GFP_KERNEL);
+	bo = kmalloc(sizeof(*bo), GFP_KERNEL);
 	if (!bo) {
 		dev_err(atomisp_dev, "out of memory for bo\n");
 		return NULL;
@@ -199,7 +199,7 @@ static void hmm_bo_release(struct hmm_buffer_object *bo)
 			     "the vm is still not freed, free vm first...\n");
 		hmm_bo_free_vm(bo);
 	}
-	if (bo->status & HMM_BO_VMAPED) {
+	if (bo->status & HMM_BO_VMAPED || bo->status & HMM_BO_VMAPED_CACHED) {
 		dev_warn(atomisp_dev, "the vunmap is not done, do it...\n");
 		hmm_bo_vunmap(bo);
 	}
@@ -318,9 +318,11 @@ static void free_private_bo_pages(struct hmm_buffer_object *bo,
 		switch (bo->page_obj[i].type) {
 		case HMM_PAGE_TYPE_RESERVED:
 			if (repool->pops
-			    && repool->pops->pool_free_pages)
+			    && repool->pops->pool_free_pages) {
 				repool->pops->pool_free_pages(repool->pool_info,
 							&bo->page_obj[i]);
+				hmm_mem_stat.res_cnt--;
+			}
 			break;
 		/*
 		 * HMM_PAGE_TYPE_GENERAL indicates that pages are from system
@@ -349,6 +351,7 @@ static void free_private_bo_pages(struct hmm_buffer_object *bo,
 				dev_err(atomisp_dev,
 						"set page to WB err ...\n");
 			__free_pages(bo->page_obj[i].page, 0);
+			hmm_mem_stat.sys_size--;
 			break;
 		}
 	}
@@ -392,6 +395,8 @@ static int alloc_private_pages(struct hmm_buffer_object *bo, int from_highmem,
 		alloc_pgnr = dypool->pops->pool_alloc_pages(dypool->pool_info,
 							bo->page_obj, pgnr,
 							cached);
+		hmm_mem_stat.dyc_size -= alloc_pgnr;
+
 		if (alloc_pgnr == pgnr)
 			return 0;
 	}
@@ -406,6 +411,7 @@ static int alloc_private_pages(struct hmm_buffer_object *bo, int from_highmem,
 		alloc_pgnr = repool->pops->pool_alloc_pages(repool->pool_info,
 							&bo->page_obj[i], pgnr,
 							cached);
+		hmm_mem_stat.res_cnt += alloc_pgnr;
 		if (alloc_pgnr == pgnr)
 			return 0;
 	}
@@ -489,6 +495,7 @@ retry:
 			}
 
 			pgnr -= blk_pgnr;
+			hmm_mem_stat.sys_size += blk_pgnr;
 
 			/*
 			 * if order is not reduced this time, clear
@@ -594,7 +601,7 @@ static int __get_pfnmap_pages(struct task_struct *tsk, struct mm_struct *mm,
 				return i ? i : PTR_ERR(page);
 			if (pages) {
 				pages[i] = page;
-
+				get_page(page);
 				flush_anon_page(vma, page, start);
 				flush_dcache_page(page);
 			}
@@ -753,15 +760,14 @@ static int alloc_user_pages(struct hmm_buffer_object *bo,
 		bo->page_obj[i].page = pages[i];
 		bo->page_obj[i].type = HMM_PAGE_TYPE_GENERAL;
 	}
-
+	hmm_mem_stat.usr_size += bo->pgnr;
 	atomisp_kernel_free(pages);
 
 	return 0;
 
 out_of_mem:
-	if (bo->mem_type == HMM_BO_MEM_TYPE_USER)
-		for (i = 0; i < page_nr; i++)
-			put_page(pages[i]);
+	for (i = 0; i < page_nr; i++)
+		put_page(pages[i]);
 	atomisp_kernel_free(pages);
 	atomisp_kernel_free(bo->page_obj);
 
@@ -779,9 +785,9 @@ static void free_user_pages(struct hmm_buffer_object *bo)
 {
 	int i;
 
-	if (bo->mem_type == HMM_BO_MEM_TYPE_USER)
-		for (i = 0; i < bo->pgnr; i++)
-			put_page(bo->page_obj[i].page);
+	for (i = 0; i < bo->pgnr; i++)
+		put_page(bo->page_obj[i].page);
+	hmm_mem_stat.usr_size -= bo->pgnr;
 
 	atomisp_kernel_free(bo->page_obj);
 }
@@ -972,9 +978,7 @@ int hmm_bo_bind(struct hmm_buffer_object *bo)
 	 * meaning updating 1 PTE, but the MMU fetches 4 PTE at one time,
 	 * so the additional 3 PTEs are invalid.
 	 */
-#ifdef CSS20
 	if (bo->vm_node->start != 0x0)
-#endif /* CSS20 */
 		isp_mmu_flush_tlb_range(&bdev->mmu, bo->vm_node->start,
 						(bo->pgnr << PAGE_SHIFT));
 
@@ -1069,7 +1073,7 @@ int hmm_bo_binded(struct hmm_buffer_object *bo)
 	return ret;
 }
 
-void *hmm_bo_vmap(struct hmm_buffer_object *bo)
+void *hmm_bo_vmap(struct hmm_buffer_object *bo, bool cached)
 {
 	struct page **pages;
 	int i;
@@ -1077,9 +1081,17 @@ void *hmm_bo_vmap(struct hmm_buffer_object *bo)
 	check_bo_null_return(bo, NULL);
 
 	mutex_lock(&bo->mutex);
-	if (bo->status & HMM_BO_VMAPED) {
+	if (((bo->status & HMM_BO_VMAPED) && !cached) ||
+	    ((bo->status & HMM_BO_VMAPED_CACHED) && cached)) {
 		mutex_unlock(&bo->mutex);
 		return bo->vmap_addr;
+	}
+
+	/* cached status need to be changed, so vunmap first */
+	if (bo->status & HMM_BO_VMAPED || bo->status & HMM_BO_VMAPED_CACHED) {
+		vunmap(bo->vmap_addr);
+		bo->vmap_addr = NULL;
+		bo->status &= ~(HMM_BO_VMAPED | HMM_BO_VMAPED_CACHED);
 	}
 
 	pages = atomisp_kernel_malloc(sizeof(*pages) * bo->pgnr);
@@ -1092,13 +1104,13 @@ void *hmm_bo_vmap(struct hmm_buffer_object *bo)
 	for (i = 0; i < bo->pgnr; i++)
 		pages[i] = bo->page_obj[i].page;
 
-	bo->vmap_addr = vmap(pages, bo->pgnr, VM_MAP, PAGE_KERNEL_NOCACHE);
+	bo->vmap_addr = vmap(pages, bo->pgnr, VM_MAP, cached ? PAGE_KERNEL : PAGE_KERNEL_NOCACHE);
 	if (unlikely(!bo->vmap_addr)) {
 		mutex_unlock(&bo->mutex);
 		dev_err(atomisp_dev, "vmap failed...\n");
 		return NULL;
 	}
-	bo->status |= HMM_BO_VMAPED;
+	bo->status |= (cached ? HMM_BO_VMAPED_CACHED : HMM_BO_VMAPED);
 
 	atomisp_kernel_free(pages);
 
@@ -1106,15 +1118,29 @@ void *hmm_bo_vmap(struct hmm_buffer_object *bo)
 	return bo->vmap_addr;
 }
 
+void hmm_bo_flush_vmap(struct hmm_buffer_object *bo)
+{
+	check_bo_null_return_void(bo);
+
+	mutex_lock(&bo->mutex);
+	if (!(bo->status & HMM_BO_VMAPED_CACHED) || !bo->vmap_addr) {
+		mutex_unlock(&bo->mutex);
+		return;
+	}
+
+	clflush_cache_range(bo->vmap_addr, bo->pgnr * PAGE_SIZE);
+	mutex_unlock(&bo->mutex);
+}
+
 void hmm_bo_vunmap(struct hmm_buffer_object *bo)
 {
 	check_bo_null_return_void(bo);
 
 	mutex_lock(&bo->mutex);
-	if (bo->status & HMM_BO_VMAPED) {
+	if (bo->status & HMM_BO_VMAPED || bo->status & HMM_BO_VMAPED_CACHED) {
 		vunmap(bo->vmap_addr);
 		bo->vmap_addr = NULL;
-		bo->status &= ~HMM_BO_VMAPED;
+		bo->status &= ~(HMM_BO_VMAPED | HMM_BO_VMAPED_CACHED);
 	}
 
 	mutex_unlock(&bo->mutex);

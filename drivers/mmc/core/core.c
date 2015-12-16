@@ -36,7 +36,7 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/sd.h>
-
+#include <linux/tablet_config.h>
 #include "core.h"
 #include "bus.h"
 #include "host.h"
@@ -1055,10 +1055,19 @@ void mmc_set_chip_select(struct mmc_host *host, int mode)
 static void __mmc_set_clock(struct mmc_host *host, unsigned int hz)
 {
 	WARN_ON(hz < host->f_min);
+	if (hz < host->f_min)
+		hz = host->f_min;
 
 	if (hz > host->f_max)
 		hz = host->f_max;
-
+    #ifdef BLADE2_13
+	if(!strcmp("mmc2",mmc_hostname(host))){
+		if(hz == HIGH_SPEED_MAX_DTR){
+			hz = HIGH_SPEED_MAX_DTR / 2;
+			pr_info("mmc2 set mmc clk to %d\n", hz);
+		}
+	}
+	#endif
 	host->ios.clock = hz;
 	mmc_set_ios(host);
 }
@@ -1486,9 +1495,12 @@ int mmc_set_signal_voltage(struct mmc_host *host, int signal_voltage)
 
 power_cycle:
 	if (err) {
+		int ocr;
 		pr_debug("%s: Signal voltage switch failed, "
 			"power cycling card\n", mmc_hostname(host));
+		ocr = host->ocr;
 		mmc_power_cycle(host);
+		host->ocr = mmc_select_voltage(host, ocr);
 	}
 
 	mmc_host_clk_release(host);
@@ -1564,8 +1576,14 @@ static void mmc_power_up(struct mmc_host *host)
 	/*
 	 * This delay should be sufficient to allow the power supply
 	 * to reach the minimum voltage.
+	 * Different device may have different supply power up time.
+	 * The max value should be 35ms per spec. If there is tPRU,
+	 * use it to wait for supply power up stable.
 	 */
-	usleep_range(10000, 11000);
+	if (host->tpru)
+		usleep_range(host->tpru * 1000, host->tpru * 1000 + 100);
+	else
+		usleep_range(10000, 11000);
 
 	host->ios.clock = host->f_init;
 
@@ -1575,8 +1593,13 @@ static void mmc_power_up(struct mmc_host *host)
 	/*
 	 * This delay must be at least 74 clock sizes, or 1 ms, or the
 	 * time required to reach a stable voltage.
+	 * Different device may have different supply ramp up time.
+	 * If there is tRAMP, use it to wait for supply ramp up stable.
 	 */
-	usleep_range(5000, 6000);
+	if (host->tramp)
+		usleep_range(host->tramp * 1000, host->tramp * 1000 + 100);
+	else
+		usleep_range(5000, 6000);
 
 	mmc_host_clk_release(host);
 }
@@ -1605,6 +1628,7 @@ void mmc_power_off(struct mmc_host *host)
 	host->ios.power_mode = MMC_POWER_OFF;
 	host->ios.bus_width = MMC_BUS_WIDTH_1;
 	host->ios.timing = MMC_TIMING_LEGACY;
+	host->ios.signal_voltage = 0;
 	mmc_set_ios(host);
 
 	if (host->ops->set_dev_power)
@@ -1623,8 +1647,12 @@ void mmc_power_off(struct mmc_host *host)
 void mmc_power_cycle(struct mmc_host *host)
 {
 	mmc_power_off(host);
-	/* Wait at least 1 ms according to SD spec */
-	mmc_delay(1);
+	/*
+	 * Wait at least 1 ms according to SD spec
+	 * some of the SD card seems only 1ms is not enough,
+	 * change the actual delay to be 10ms for safe
+	 */
+	mmc_delay(10);
 	mmc_power_up(host);
 }
 
@@ -2329,6 +2357,14 @@ static int mmc_do_hw_reset(struct mmc_host *host, int check)
 				SD_MODE_UHS_SDR104))) {
 		pr_warn("%s: SD card disable DDR50 and SDR104\n", __func__);
 		mmc_card_set_noddr50(card);
+	}
+
+	if(card && mmc_card_sd(card) &&
+		card->sw_caps.hs_max_dtr == 50000000 &&
+		card ->host->ios.timing == MMC_TIMING_SD_HS &&
+		!check){
+		card->sw_caps.hs_max_dtr = 25000000;
+		printk("%s reduce frequency of clock to support sd card, clk= %d \n",__func__,card->sw_caps.hs_max_dtr);
 	}
 
 	mmc_power_off(host);

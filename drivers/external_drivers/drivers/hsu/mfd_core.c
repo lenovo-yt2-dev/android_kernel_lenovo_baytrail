@@ -556,18 +556,18 @@ static int hsu_debugfs_init(struct hsu_port *hsu)
 
 	for (i = 0; i < 3; i++) {
 		snprintf(name, sizeof(name), "port_%d_regs", i);
-		debugfs_create_file(name, S_IFREG | S_IRUGO,
+		debugfs_create_file(name, S_IRUSR,
 			hsu->debugfs, (void *)(&hsu->port[i]), &port_regs_ops);
 	}
 
 	for (i = 0; i < 6; i++) {
 		snprintf(name, sizeof(name), "dma_chan_%d_regs", i);
-		debugfs_create_file(name, S_IFREG | S_IRUGO,
+		debugfs_create_file(name, S_IRUSR,
 			hsu->debugfs, (void *)&hsu->chans[i], &dma_regs_ops);
 	}
 
 	snprintf(name, sizeof(name), "dump_status");
-	debugfs_create_file(name, S_IFREG | S_IRUGO,
+	debugfs_create_file(name, S_IRUSR,
 		hsu->debugfs, NULL, &hsu_dump_ops);
 
 	return 0;
@@ -1059,6 +1059,8 @@ static unsigned int serial_hsu_get_mctrl(struct uart_port *port)
 static void set_mctrl(struct uart_hsu_port *up, unsigned int mctrl)
 {
 	trace_hsu_func_start(up->index, __func__);
+	up->mcr &= ~(UART_MCR_RTS | UART_MCR_DTR | UART_MCR_OUT1 |
+		     UART_MCR_OUT2 | UART_MCR_LOOP);
 	if (mctrl & TIOCM_RTS)
 		up->mcr |= UART_MCR_RTS;
 	if (mctrl & TIOCM_DTR)
@@ -1081,6 +1083,8 @@ static void serial_hsu_set_mctrl(struct uart_port *port, unsigned int mctrl)
 		container_of(port, struct uart_hsu_port, port);
 
 	trace_hsu_func_start(up->index, __func__);
+	up->mcr &= ~(UART_MCR_RTS | UART_MCR_DTR | UART_MCR_OUT1 |
+		     UART_MCR_OUT2 | UART_MCR_LOOP);
 	if (mctrl & TIOCM_RTS)
 		up->mcr |= UART_MCR_RTS;
 	if (mctrl & TIOCM_DTR)
@@ -1525,7 +1529,7 @@ serial_hsu_set_termios(struct uart_port *port, struct ktermios *termios,
 	 * MSI by default
 	 */
 	up->ier &= ~UART_IER_MSI;
-	if (UART_ENABLE_MS(&up->port, termios->c_cflag))
+	if (!cfg->hw_ctrl_cts && UART_ENABLE_MS(&up->port, termios->c_cflag))
 		up->ier |= UART_IER_MSI;
 
 	serial_out(up, UART_IER, up->ier);
@@ -2276,6 +2280,15 @@ static int serial_port_setup(struct uart_hsu_port *up,
 	spin_lock_init(&up->cl_lock);
 	set_bit(flag_cmd_off, &up->flags);
 
+	if (cfg->type == debug_port) {
+		serial_hsu_reg.cons = SERIAL_HSU_CONSOLE;
+		if (serial_hsu_reg.cons)
+			serial_hsu_reg.cons->index = index;
+		up->use_dma = 0;
+	} else
+		serial_hsu_reg.cons = NULL;
+	uart_add_one_port(&serial_hsu_reg, &up->port);
+
 	if (phsu->irq_port_and_dma) {
 		up->dma_irq = up->port.irq;
 		ret = request_irq(up->dma_irq, hsu_dma_irq, IRQF_SHARED,
@@ -2300,14 +2313,6 @@ static int serial_port_setup(struct uart_hsu_port *up,
 		}
 	}
 
-	if (cfg->type == debug_port) {
-		serial_hsu_reg.cons = SERIAL_HSU_CONSOLE;
-		if (serial_hsu_reg.cons)
-			serial_hsu_reg.cons->index = index;
-		up->use_dma = 0;
-	} else
-		serial_hsu_reg.cons = NULL;
-	uart_add_one_port(&serial_hsu_reg, &up->port);
 	return 0;
 }
 
@@ -2319,10 +2324,9 @@ struct uart_hsu_port *serial_hsu_port_setup(struct device *pdev, int port,
 	unsigned int uclk, clock;
 	struct hsu_port_cfg *cfg;
 
-	if (!hsu_port_func_cfg)
-		return ERR_PTR(-EINVAL);
-
 	cfg = hsu_port_func_cfg + port;
+	if (!cfg)
+		return ERR_PTR(-EINVAL);
 
 	pr_info("Found a %s HSU\n", cfg->hw_ip ? "Designware" : "Intel");
 
@@ -2366,7 +2370,11 @@ struct uart_hsu_port *serial_hsu_port_setup(struct device *pdev, int port,
 		up->rxc = &phsu->chans[index * 2 + 1];
 		up->dma_ops = &intel_dma_ops;
 	} else {
+#ifdef CONFIG_LPSS_DMA
+		up->dma_ops = &lpss_dma_ops;
+#else
 		up->dma_ops = pdw_dma_ops;
+#endif
 	}
 
 	if (cfg->has_alt) {
@@ -2381,6 +2389,10 @@ struct uart_hsu_port *serial_hsu_port_setup(struct device *pdev, int port,
 	}
 
 	serial_port_setup(up, cfg);
+
+	if (up->dma_ops->setup)
+		up->dma_ops->setup(up);
+
 	phsu->port_num++;
 
 	return up;
@@ -2391,6 +2403,8 @@ void serial_hsu_port_free(struct uart_hsu_port *up)
 {
 	struct hsu_port_cfg *cfg = phsu->configs[up->index];
 
+	if (up->dma_ops->remove)
+		up->dma_ops->remove(up);
 	uart_remove_one_port(&serial_hsu_reg, &up->port);
 	free_irq(up->port.irq, up);
 	if (cfg->has_alt) {

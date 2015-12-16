@@ -486,45 +486,16 @@ static void chv_writel(u32 value, void __iomem *reg)
 static int chv_gpio_request(struct gpio_chip *chip, unsigned offset)
 {
 	struct chv_gpio *cg = to_chv_priv(chip);
-	void __iomem *reg;
-	unsigned long flags;
-	u32 value;
 
 	if (cg->pad_info[offset].family < 0)
 		return -EINVAL;
-
-	if (PAD_CFG_LOCKED(offset))
-		return 0;
-
-	reg = chv_gpio_reg(&cg->chip, offset, CV_PADCTRL0_REG);
-	spin_lock_irqsave(&cg->lock, flags);
-	value = chv_readl(reg);
-	value |= CV_GPIO_EN;
-	chv_writel(value, reg);
-	spin_unlock_irqrestore(&cg->lock, flags);
 
 	return 0;
 }
 
 static void chv_gpio_free(struct gpio_chip *chip, unsigned offset)
 {
-	struct chv_gpio *cg = to_chv_priv(chip);
-	void __iomem *reg;
-	unsigned long flags;
-	u32 value;
-
-	if (cg->pad_info[offset].family < 0)
-		return;
-
-	if (PAD_CFG_LOCKED(offset))
-		return;
-
-	reg = chv_gpio_reg(&cg->chip, offset, CV_PADCTRL0_REG);
-	spin_lock_irqsave(&cg->lock, flags);
-	value = chv_readl(reg);
-	value &= ~CV_GPIO_EN;
-	chv_writel(value, reg);
-	spin_unlock_irqrestore(&cg->lock, flags);
+	return;
 }
 
 void lnw_gpio_set_alt(int gpio, int alt)
@@ -612,15 +583,15 @@ static void chv_update_irq_type(struct chv_gpio *cg, unsigned type,
 	value &= ~CV_INV_RX_DATA;
 
 	if (type & IRQ_TYPE_EDGE_BOTH) {
-		if (type == IRQ_TYPE_EDGE_BOTH)
+		if ((type & IRQ_TYPE_EDGE_BOTH) == IRQ_TYPE_EDGE_BOTH)
 			value |= CV_TRIG_EDGE_BOTH;
-		else if (type == IRQ_TYPE_EDGE_RISING)
+		else if (type & IRQ_TYPE_EDGE_RISING)
 			value |= CV_TRIG_EDGE_RISING;
-		else if (type == IRQ_TYPE_EDGE_FALLING)
+		else if (type & IRQ_TYPE_EDGE_FALLING)
 			value |= CV_TRIG_EDGE_FALLING;
 	} else if (type & IRQ_TYPE_LEVEL_MASK) {
 			value |= CV_TRIG_LEVEL;
-		if (type == IRQ_TYPE_LEVEL_LOW)
+		if (type & IRQ_TYPE_LEVEL_LOW)
 			value |= CV_INV_RX_DATA;
 	}
 
@@ -702,10 +673,7 @@ static int chv_gpio_get(struct gpio_chip *chip, unsigned offset)
 	reg = chv_gpio_reg(chip, offset, CV_PADCTRL0_REG);
 	value = chv_readl(reg);
 
-	if ((value & CV_GPIO_CFG_MASK) == CV_GPIO_TX_EN)
-		return !!(value & CV_GPIO_TX_STAT);
-	else
-		return value & CV_GPIO_RX_STAT;
+	return value & CV_GPIO_RX_STAT;
 }
 
 static void chv_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
@@ -763,7 +731,7 @@ static int chv_gpio_direction_output(struct gpio_chip *chip,
 				     unsigned offset, int value)
 {
 	struct chv_gpio *cg = to_chv_priv(chip);
-	void __iomem *reg;
+	void __iomem *ctrl0, *ctrl1;
 	unsigned long flags;
 	u32 reg_val;
 
@@ -773,21 +741,23 @@ static int chv_gpio_direction_output(struct gpio_chip *chip,
 	if (PAD_CFG_LOCKED(offset))
 		return 0;
 
-	reg = chv_gpio_reg(chip, offset, CV_PADCTRL0_REG);
+	ctrl0 = chv_gpio_reg(chip, offset, CV_PADCTRL0_REG);
+	ctrl1 = chv_gpio_reg(chip, offset, CV_PADCTRL1_REG);
 
 	spin_lock_irqsave(&cg->lock, flags);
 
-	reg_val = chv_readl(reg) & (~CV_GPIO_CFG_MASK);
-	/* Disable RX and Enable TX */
-	value |= CV_GPIO_TX_EN;
+	/* Make sure interrupt of this pad is disabled */
+	chv_update_irq_type(cg, IRQ_TYPE_NONE, ctrl1);
 
-	/* Control TX State */
+	reg_val = chv_readl(ctrl0) & (~CV_GPIO_CFG_MASK);
+
+	/* Enable both RX and TX, control TX State */
 	if (value)
 		reg_val |= CV_GPIO_TX_STAT;
 	else
 		reg_val &= ~CV_GPIO_TX_STAT;
 
-	chv_writel(reg_val, reg);
+	chv_writel(reg_val, ctrl0);
 
 	spin_unlock_irqrestore(&cg->lock, flags);
 
@@ -831,8 +801,8 @@ static void chv_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 				"mux:%d %s %s %s %s %s "
 				"IntSel:%d ctrl0: 0x%x ctrl1: 0x%x\n",
 			i,
-			((ctrl0 & CV_GPIO_CFG_MASK) == 0x0) ? "out" : " ",
-			(ctrl0 & CV_GPIO_RX_EN) ? "in" : " ",
+			((ctrl0 & CV_GPIO_CFG_MASK) < CV_GPIO_RX_EN) ? "out" : " ",
+			((ctrl0 & CV_GPIO_CFG_MASK) == CV_GPIO_RX_EN) ? "in" : " ",
 			(ctrl0 & CV_GPIO_RX_STAT) ? "high" : " low ",
 			cg->pad_info[i].pad,
 			offs,
@@ -964,18 +934,18 @@ static void chv_gpio_irq_dispatch(struct chv_gpio *cg)
 	/* each GPIO controller has one INT_STAT reg */
 	reg = chv_gpio_reg(&cg->chip, 0, CV_INT_STAT_REG);
 	mask_reg = chv_gpio_reg(&cg->chip, 0, CV_INT_MASK_REG);
-	pending = chv_readl(reg) & chv_readl(mask_reg) & 0xFFFF;
-	while (pending) {
+	while ((pending = (chv_readl(reg) & chv_readl(mask_reg) & 0xFFFF))) {
 		intr_line = __ffs(pending);
 		mask = BIT(intr_line);
 		chv_writel(mask, reg);
 		offset = cg->intr_lines[intr_line];
-		if (unlikely(offset < 0))
-			dev_warn(&cg->pdev->dev, "unregistered GPIO irq\n");
+		if (unlikely(offset < 0)) {
+			dev_warn(&cg->pdev->dev, "unregistered shared irq\n");
+			continue;
+		}
 
 		DEFINE_DEBUG_IRQ_CONUNT_INCREASE(cg->chip.base + offset);
 		generic_handle_irq(irq_find_mapping(cg->domain, offset));
-		pending = chv_readl(reg) & chv_readl(mask_reg) & 0xFFFF;
 	}
 }
 
@@ -1095,7 +1065,7 @@ static void pinmux_set_handle(unsigned int num, int *value)
 	if (num == 16)
 		*value |= CV_GPIO_EN;
 	else if (num < 16) {
-		*value &= ~CV_PAD_MODE_MASK;
+		*value &= ~(CV_GPIO_EN | CV_PAD_MODE_MASK);
 		*value |= (num << 16);
 	}
 }
@@ -1131,16 +1101,13 @@ static void pullmode_set_handle(unsigned int num, int *value)
 
 static int pinvalue_get_handle(int value)
 {
-	if ((value & CV_GPIO_CFG_MASK) == CV_GPIO_TX_EN)
-		return !!(value & CV_GPIO_TX_STAT);
-	else
-		return value & CV_GPIO_RX_STAT;
+	return value & CV_GPIO_RX_STAT;
 }
 
 static void pinvalue_set_handle(unsigned int num, int *value)
 {
-	/* only can change output pin value */
-	if ((*value & CV_GPIO_CFG_MASK) != CV_GPIO_TX_EN)
+	/* change pin value if output enabled */
+	if ((*value & CV_GPIO_CFG_MASK) >= CV_GPIO_RX_EN)
 		return;
 
 	if (num)
@@ -1333,8 +1300,6 @@ chv_gpio_pnp_probe(struct pnp_dev *pdev, const struct pnp_device_id *id)
 	struct device *dev = &pdev->dev;
 	struct gpio_bank_pnp *bank;
 	int ret = 0;
-	int gpio_base;
-	char path[GPIO_PATH_MAX];
 	int nbanks = sizeof(chv_banks_pnp) / sizeof(struct gpio_bank_pnp);
 	struct gpio_debug *debug;
 
@@ -1360,15 +1325,6 @@ chv_gpio_pnp_probe(struct pnp_dev *pdev, const struct pnp_device_id *id)
 		ret = -ENODEV;
 		goto err;
 	}
-
-	snprintf(path, sizeof(path), "\\_SB.%s", bank->name);
-	/*
-	gpio_base = acpi_get_gpio(path, 0);
-	if (gpio_base < 0)
-		dev_err(dev, "Can't get base from ACPI GPIO chip %s", path);
-
-	bank->gpio_base = gpio_base;
-	*/
 
 	mem_rc = pnp_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!mem_rc) {
@@ -1457,7 +1413,6 @@ chv_gpio_pnp_probe(struct pnp_dev *pdev, const struct pnp_device_id *id)
 
 	return 0;
 err:
-	kfree(cg);
 	return ret;
 }
 

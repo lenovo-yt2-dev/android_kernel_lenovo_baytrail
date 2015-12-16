@@ -29,7 +29,27 @@
 
 #include <sound/soc.h>
 
-#define SST_MAX_BIN_BYTES 1024
+#define SST_MAX_BIN_BYTES 4096
+#define SST_MAX_VTSV_PATH_LEN 255
+
+/* VTSV PATH selection byte control max length is 257 bytes :
+ * 255 bytes of max path len + 2 bytes (u16) to hold length of
+ * vtsv path given by user*/
+#define SST_MAX_VTSV_PATH_BYTE_CTL_LEN	(SST_MAX_VTSV_PATH_LEN + sizeof(u16))
+
+/* SST_MAX_VTSV_PATH_BUF_LEN = VTSV Path max lenght + length of vtsv bin
+ * file name. Max length of vtsv bin filename "/vtsv_grammar.bin"s 18 bytes */
+#define SST_MAX_VTSV_PATH_BUF_LEN	(SST_MAX_VTSV_PATH_LEN + 18)
+
+/* VTSV Result */
+#define VTSV_MAX_NUM_RESULTS 6
+#define VTSV_SIZE_PER_RESULT 7 /* 7 16 bit words */
+/* Max 6 results each of size 7 words * 2 byte per result */
+#define VTSV_MAX_TOTAL_RESULT_SIZE \
+	(VTSV_MAX_NUM_RESULTS*VTSV_SIZE_PER_RESULT * 2)
+
+/* Adding two bytes to specify the valid data length in the VTSV Result array */
+#define VTSV_MAX_TOTAL_RESULT_ARRAY_SIZE (VTSV_MAX_TOTAL_RESULT_SIZE + 2)
 
 struct sst_data;
 
@@ -79,6 +99,8 @@ enum sst_controls {
 	SST_SET_PROBE_BYTE_STREAM =     0x100D,
 	SST_GET_PROBE_BYTE_STREAM =	0x100E,
 	SST_SET_VTSV_INFO =		0x100F,
+	SST_SET_VTSV_LIBS =		0x1010,
+	SST_SET_MONITOR_LPE =		0x1011,
 };
 
 struct pcm_stream_info {
@@ -142,12 +164,26 @@ struct sst_runtime_stream {
 	spinlock_t	status_lock;
 };
 
+#define SST_PLATFORM_VTSV_READ_EVENT	0x1
+#define SST_PLATFORM_TRIGGER_RECOVERY	0x2
+struct sst_platform_cb_params {
+	/* Async event from firmware like VTSV*/
+	unsigned int event;
+	/* Params related to event */
+	void *params;
+};
+
+struct sst_platform_cb_ops {
+	int (*async_cb) (struct sst_platform_cb_params *params);
+};
+
 struct sst_device {
 	char *name;
 	struct device *dev;
 	struct sst_ops *ops;
 	struct platform_device *pdev;
 	struct compress_sst_ops *compr_ops;
+	struct sst_platform_cb_ops *cb_ops;
 };
 
 int sst_register_dsp(struct sst_device *sst);

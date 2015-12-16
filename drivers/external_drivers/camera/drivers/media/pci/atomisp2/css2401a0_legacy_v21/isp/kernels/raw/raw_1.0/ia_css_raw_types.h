@@ -23,19 +23,21 @@
 #define __IA_CSS_RAW_TYPES_H
 
 #include <ia_css_frame_public.h>
-/* need include for sh_css_sp_pipeline but cannot include sh_css_internal.h */
+#include "sh_css_internal.h"
 
 /** Raw frame
  *
  *  ISP block: Raw frame
  */
 
-#include "ia_css.h"
-
 struct ia_css_raw_configuration {
 	const struct sh_css_sp_pipeline *pipe;
 	const struct ia_css_frame_info  *in_info;
 	const struct ia_css_frame_info  *internal_info;
+	bool two_ppc;
+	enum ia_css_stream_format stream_format;
+	bool deinterleaved;
+	uint8_t enable_left_padding;
 };
 
 #endif /* __IA_CSS_RAW_TYPES_H */

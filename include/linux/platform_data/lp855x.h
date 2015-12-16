@@ -53,6 +53,7 @@ int lp855x_ext_read_byte(u8 reg);
 #define LP8556_FAST_CONFIG	BIT(7) /* use it if EPROMs should be maintained
 					  when exiting the low power mode */
 #define	LP8556_5LEDSTR		0x1F  /* 5 led string definition for ffrd8 and bytcr-rvp boards.*/
+
 #define	LP8556_LEDSTREN		0x16
 #define LP8556_CFG98		0x98
 #define LP8556_CFG9E		0x9E

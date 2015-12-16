@@ -37,6 +37,8 @@
 #include <linux/suspend.h>
 #include <linux/wakelock.h>
 #include <linux/poll.h>
+#include <linux/acpi.h>
+#include <linux/acpi_gpio.h>
 
 #define MAX_BUFFER_SIZE		512
 
@@ -368,15 +370,103 @@ static int pn544_probe(struct i2c_client *client,
 	return -ENODEV;
 #endif
 
-	platform_data = client->dev.platform_data;
-	if (platform_data == NULL) {
-		pr_err("%s : nfc probe fail\n", __func__);
-		return  -ENODEV;
-	}
-
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		pr_err("%s : need I2C_FUNC_I2C\n", __func__);
 		return  -ENODEV;
+	}
+
+	if (ACPI_HANDLE(&client->dev)) {
+		/* In case of ACPI, allocate platform data dynamically */
+		platform_data =
+			kzalloc(sizeof(struct pn544_i2c_platform_data), GFP_KERNEL);
+		if (!platform_data) {
+			pr_err("%s : nfc probe fail\n", __func__);
+			return  -ENODEV;
+		}
+
+		client->dev.platform_data = platform_data;
+
+		platform_data->irq_gpio = acpi_get_gpio_by_index(&client->dev,
+			0, NULL);
+		if (platform_data->irq_gpio < 0) {
+			dev_err(&client->dev,
+				"irq_gpio acpi_get_gpio_by_index() failed\n");
+			ret = -ENODEV;
+			goto err_pdata;
+		}
+
+		platform_data->ven_gpio = acpi_get_gpio_by_index(&client->dev,
+			1, NULL);
+		if (platform_data->ven_gpio < 0) {
+			dev_err(&client->dev,
+				"ven_gpio acpi_get_gpio_by_index() failed\n");
+			ret = -ENODEV;
+			goto err_pdata;
+		}
+
+		platform_data->firm_gpio = acpi_get_gpio_by_index(&client->dev,
+			2, NULL);
+		if (platform_data->firm_gpio < 0) {
+			dev_err(&client->dev,
+				"firm_gpio acpi_get_gpio_by_index() failed\n");
+			ret = -ENODEV;
+			goto err_pdata;
+		}
+
+	} else {
+		/* With SFI, platform data is static */
+		platform_data = dev_get_platdata(&client->dev);
+		if (!platform_data) {
+			pr_err("%s : nfc probe fail\n", __func__);
+			return -ENODEV;
+		}
+	}
+
+	ret = gpio_request(platform_data->irq_gpio, NFC_HOST_INT_GPIO);
+	if (ret) {
+		dev_err(&client->dev, "Request NFC INT GPIO fails %d\n", ret);
+		ret = -ENODEV;
+		goto err_pdata;
+	}
+
+	ret = gpio_direction_input(platform_data->irq_gpio);
+	if (ret) {
+		dev_err(&client->dev, "Set GPIO Direction fails %d\n", ret);
+		ret = -ENODEV;
+		goto err_int;
+	}
+
+	/* Map IRQ nb to GPIO id */
+	client->irq = gpio_to_irq(platform_data->irq_gpio);
+
+	ret = gpio_request(platform_data->ven_gpio, NFC_ENABLE_GPIO);
+	if (ret) {
+		dev_err(&client->dev,
+			"Request for NFC Enable GPIO fails %d\n", ret);
+		ret = -ENODEV;
+		goto err_int;
+	}
+
+	ret = gpio_direction_output(platform_data->ven_gpio, 0);
+	if (ret) {
+		dev_err(&client->dev, "Set GPIO Direction fails %d\n", ret);
+		ret = -ENODEV;
+		goto err_enable;
+	}
+
+	ret = gpio_request(platform_data->firm_gpio, NFC_FW_RESET_GPIO);
+	if (ret) {
+		dev_err(&client->dev,
+			"Request for NFC FW Reset GPIO fails %d\n", ret);
+		ret = -ENODEV;
+		goto err_enable;
+	}
+
+	ret = gpio_direction_output(platform_data->firm_gpio, 0);
+	if (ret) {
+		dev_err(&client->dev, "Set GPIO Direction fails %d\n", ret);
+		ret = -ENODEV;
+		goto err_fw;
 	}
 
 	pn544_dev = kzalloc(sizeof(*pn544_dev), GFP_KERNEL);
@@ -384,12 +474,8 @@ static int pn544_probe(struct i2c_client *client,
 		dev_err(&client->dev,
 				"failed to allocate memory for module data\n");
 		ret = -ENOMEM;
-		goto err_exit;
+		goto err_fw;
 	}
-
-	ret = platform_data->request_resources(client);
-	if (ret)
-		goto err_exit;
 
 	pn544_dev->irq_gpio = platform_data->irq_gpio;
 	pn544_dev->ven_gpio  = platform_data->ven_gpio;
@@ -437,15 +523,22 @@ err_request_irq_failed:
 err_misc_register:
 	wake_lock_destroy(&pn544_dev->read_wake);
 	kfree(pn544_dev);
-err_exit:
+err_fw:
 	gpio_free(platform_data->firm_gpio);
+err_enable:
 	gpio_free(platform_data->ven_gpio);
+err_int:
 	gpio_free(platform_data->irq_gpio);
+err_pdata:
+	if (ACPI_HANDLE(&client->dev)) {
+		kfree(platform_data);
+	}
 	return ret;
 }
 
 static int pn544_remove(struct i2c_client *client)
 {
+	struct pn544_i2c_platform_data *platform_data;
 	struct pn544_dev *pn544_dev;
 
 	pn544_dev = i2c_get_clientdata(client);
@@ -458,6 +551,10 @@ static int pn544_remove(struct i2c_client *client)
 	gpio_free(pn544_dev->irq_gpio);
 	gpio_free(pn544_dev->ven_gpio);
 	gpio_free(pn544_dev->firm_gpio);
+	if (ACPI_HANDLE(&client->dev)) {
+		platform_data = dev_get_platdata(&client->dev);
+		kfree(platform_data);
+	}
 	kfree(pn544_dev);
 
 	return 0;
@@ -468,7 +565,6 @@ static int pn544_remove(struct i2c_client *client)
 static int pn544_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
-	struct pn544_dev *pn544_dev = i2c_get_clientdata(client);
 
 	disable_irq(client->irq);
 
@@ -495,15 +591,27 @@ static const struct i2c_device_id pn544_id[] = {
 	{ }
 };
 
+#ifdef CONFIG_ACPI
+static struct acpi_device_id acpi_ids[] = {
+	/* NFC NXP PN547 */
+	{ "NXP5472", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, acpi_ids);
+#endif
+
 static struct i2c_driver pn544_driver = {
 	.id_table	= pn544_id,
 	.probe		= pn544_probe,
 	.remove		= pn544_remove,
 	.driver		= {
-		.owner	= THIS_MODULE,
-		.name	= "pn544",
+	.owner		= THIS_MODULE,
+	.name		= "pn544",
 #ifdef CONFIG_SUSPEND
-		.pm = &pn544_pm_ops,
+	.pm		= &pn544_pm_ops,
+#endif
+#ifdef CONFIG_ACPI
+	.acpi_match_table = ACPI_PTR(acpi_ids),
 #endif
 	},
 };
@@ -526,6 +634,7 @@ static void __exit pn544_dev_exit(void)
 }
 module_exit(pn544_dev_exit);
 
+MODULE_ALIAS("i2c:pn544");
 MODULE_AUTHOR("Sylvain Fonteneau");
 MODULE_DESCRIPTION("NFC PN544 driver");
 MODULE_LICENSE("GPL");

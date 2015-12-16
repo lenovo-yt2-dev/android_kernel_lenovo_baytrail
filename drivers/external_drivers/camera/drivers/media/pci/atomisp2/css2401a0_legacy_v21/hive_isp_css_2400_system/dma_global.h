@@ -27,19 +27,7 @@
 #define IS_DMA_VERSION_2
 
 #define HIVE_ISP_NUM_DMA_CONNS		3
-/*
- * Consumes an unacceptable amount of SP resources
- *
-#define HIVE_ISP_NUM_DMA_CHANNELS_LOG2	5
 #define HIVE_ISP_NUM_DMA_CHANNELS	32
- */
-#define HIVE_ISP_NUM_DMA_CHANNELS_LOG2	4
-
-#if defined(HAS_SP_2400)
-    #define HIVE_ISP_NUM_DMA_CHANNELS	17
-#else
-    #define HIVE_ISP_NUM_DMA_CHANNELS	16
-#endif
 
 #define N_DMA_CHANNEL_ID	HIVE_ISP_NUM_DMA_CHANNELS
 

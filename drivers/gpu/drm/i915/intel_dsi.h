@@ -85,6 +85,11 @@
 #define GPIO_NC_11_PCONF0               0x40F0
 #define GPIO_NC_11_PAD                  0x40F8
 
+/* Dual Link support */
+#define MIPI_DUAL_LINK_NONE		0
+#define MIPI_DUAL_LINK_FRONT_BACK	1
+#define MIPI_DUAL_LINK_PIXEL_ALT	2
+
 struct intel_dsi_device {
 	unsigned int panel_id;
 	const char *name;
@@ -172,6 +177,8 @@ struct intel_dsi {
 
 	u16 dsi_clock_freq;
 	u8 operation_mode;
+	u8 dual_link;
+	u8 pixel_overlap;
 	u8 video_mode_type;
 	u32 data_width;
 	u8 dither;
@@ -179,6 +186,7 @@ struct intel_dsi {
 	u8 escape_clk_div;
 	u32 lp_rx_timeout;
 	u8 turn_arnd_val;
+	u16 burst_mode_ratio;
 	u16 init_count;
 	u16 rst_timer_val;
 	u32 hs_to_lp_count;
@@ -188,16 +196,18 @@ struct intel_dsi {
 	u32 clk_hs_to_lp_count;
 	u32 video_frmt_cfg_bits;
 	u32 dphy_reg;
+	u32 pclk;
+	u16 port;
 
 	/* all delays in ms */
-	u8 backlight_off_delay;
-	u8 backlight_on_delay;
-	u8 panel_on_delay;
-	u8 panel_off_delay;
-	u8 panel_pwr_cycle_delay;
+	u16 backlight_off_delay;
+	u16 backlight_on_delay;
+	u16 panel_on_delay;
+	u16 panel_off_delay;
+	u16 panel_pwr_cycle_delay;
 
 	bool send_shutdown;
-	u8 shutdown_pkt_delay; /*in ms*/
+	u16 shutdown_pkt_delay; /*in ms*/
 	enum panel_fitter pfit;
 };
 
@@ -217,9 +227,13 @@ extern struct intel_dsi_dev_ops vbt_generic_dsi_display_ops;
 extern struct intel_dsi_dev_ops auo_b101uan01e_dsi_display_ops;
 extern struct intel_dsi_dev_ops cpt_nt71410_dsi_display_ops;
 extern struct intel_dsi_dev_ops cmi_nt51021_dsi_display_ops;
+extern struct intel_dsi_dev_ops ti_dpp3430_dsi_display_ops;
 extern struct intel_dsi_dev_ops boe_nt51021_dsi_display_ops;
 extern struct intel_dsi_dev_ops inx_nt51021_dsi_display_ops;
 extern struct intel_dsi_dev_ops cpt_nt51011_dsi_display_ops;
+
+extern struct intel_dsi_dev_ops dummy_panel_dsi_display_ops;
+
 
 
 void intel_dsi_clear_device_ready(struct intel_encoder *encoder);
@@ -235,6 +249,41 @@ void intel_dsi_clear_device_ready(struct intel_encoder *encoder);
 #define MIPI_DSI_INNOLUX_NT51021_PANEL_ID          0x08
 #define MIPI_DSI_BOE_NT51021_PANEL_ID		   0x09
 #define MIPI_DSI_CPT_NT51011_PANEL_ID		   0x0A
+#define MIPI_DSI_TI_DPP3430_PANEL_ID              0x0b
+
+#define MIPI_DSI_DUMMY_PANEL_ID			   0xff
+
+
+
+/* Porting from dsi_mod_vbt_generic.h */
+#define NS_MHZ_RATIO 1000000
+
+#define PREPARE_CNT_MAX		0x3F
+#define EXIT_ZERO_CNT_MAX	0x3F
+#define CLK_ZERO_CNT_MAX	0xFF
+#define TRAIL_CNT_MAX		0x1F
+
+static inline u32 ceil_div(u32 numerator, u32 denominator)
+{
+	u32 result = numerator / denominator;
+	if (numerator % denominator)
+		result += 1;
+
+	return result;
+}
+
+/* timings based on dphy spec */
+struct mipi_phy_config {
+	u8 tclk_prepare;
+	u8 tclk_trail;
+	u16 tclk_prepare_clkzero;
+
+	u8 ths_prepare;
+	u8 ths_trail;
+	u16 ths_prepare_hszero;
+};
+/* This function is used to generate lp_byte_clk, dphy_reg, hs_to_lp_count, clk_lp_to_hs_count and clk_hs_to_lp_count */
+bool intel_dsi_generate_phy_reg(struct intel_dsi *intel_dsi, struct mipi_phy_config *config);
 
 
 #endif /* _INTEL_DSI_H */

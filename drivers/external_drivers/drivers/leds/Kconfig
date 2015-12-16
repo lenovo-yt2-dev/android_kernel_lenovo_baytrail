@@ -8,3 +8,12 @@ config LEDS_INTEL_KPD
           For detail information of sysfs control, Please refer to kernel document
           Documentation/ABI/testing/sysfs-class-led.
 
+config LEDS_LP5560
+	tristate "LED Support for N.S. LP5560 LED driver chip"
+	depends on LEDS_CLASS
+	help
+	  If you say yes here you get support for the National Semiconductor
+	  LP5560 LED driver. It is 1 channel chip with programmable engines.
+	  Driver provides direct control via LED class and interface for
+	  programming the engines.
+

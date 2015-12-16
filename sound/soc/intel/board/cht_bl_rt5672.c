@@ -32,7 +32,7 @@
 #include <linux/input.h>
 #include <linux/gpio.h>
 #include <linux/slab.h>
-#include <linux/vlv2_plat_clock.h>
+#include <asm/intel_soc_pmc.h>
 #include <linux/acpi_gpio.h>
 #include <linux/mutex.h>
 #include <asm/platform_cht_audio.h>
@@ -43,7 +43,7 @@
 #include <sound/jack.h>
 #include "../../codecs/rt5670.h"
 
-#define CHT_PLAT_CLK_3_HZ	25000000
+#define CHT_PLAT_CLK_3_HZ	19200000
 
 #define CHT_INTR_DEBOUNCE               0
 #define CHT_HS_INSERT_DET_DELAY         500
@@ -93,7 +93,6 @@ static inline void cht_force_enable_pin(struct snd_soc_codec *codec,
 		snd_soc_dapm_force_enable_pin(&codec->dapm, bias_widget);
 	else
 		snd_soc_dapm_disable_pin(&codec->dapm, bias_widget);
-	snd_soc_dapm_sync(&codec->dapm);
 }
 
 static inline void cht_set_codec_power(struct snd_soc_codec *codec, int jack_type)
@@ -115,8 +114,9 @@ static inline void cht_set_codec_power(struct snd_soc_codec *codec, int jack_typ
 		cht_force_enable_pin(codec, "micbias2", false);
 	       break;
 	default:
-		break;
+		return;
 	}
+	snd_soc_dapm_sync(&codec->dapm);
 }
 /* Identify the jack type as Headset/Headphone/None */
 static int cht_check_jack_type(struct snd_soc_jack *jack, struct snd_soc_codec *codec)
@@ -418,7 +418,7 @@ static int platform_clock_control(struct snd_soc_dapm_widget *w,
 		return -EIO;
 	}
 	if (SND_SOC_DAPM_EVENT_ON(event)) {
-		vlv2_plat_configure_clock(VLV2_PLAT_CLK_AUDIO,
+		pmc_pc_configure(VLV2_PLAT_CLK_AUDIO,
 				PLAT_CLK_FORCE_ON);
 		pr_debug("Platform clk turned ON\n");
 		snd_soc_codec_set_sysclk(codec, RT5670_SCLK_S_PLL1,
@@ -430,7 +430,7 @@ static int platform_clock_control(struct snd_soc_dapm_widget *w,
 		 */
 		snd_soc_codec_set_sysclk(codec, RT5670_SCLK_S_RCCLK,
 				0, 0, SND_SOC_CLOCK_IN);
-		vlv2_plat_configure_clock(VLV2_PLAT_CLK_AUDIO,
+		pmc_pc_configure(VLV2_PLAT_CLK_AUDIO,
 				PLAT_CLK_FORCE_OFF);
 		pr_debug("Platform clk turned OFF\n");
 	}

@@ -31,11 +31,7 @@
 
 #include "hmm/hmm_bo.h"
 #include "hmm/hmm_pool.h"
-#ifdef CSS20
 #include "ia_css_types.h"
-#else /* CSS20 */
-#include "sh_css_types.h"
-#endif /* CSS20 */
 
 #define HMM_CACHED true
 #define HMM_UNCACHED false
@@ -67,14 +63,20 @@ phys_addr_t hmm_virt_to_phys(ia_css_ptr virt);
  * virt must be the start address of ISP memory (return by hmm_alloc),
  * do not pass any other address.
  */
-void *hmm_vmap(ia_css_ptr virt);
+void *hmm_vmap(ia_css_ptr virt, bool cached);
 void hmm_vunmap(ia_css_ptr virt);
+
+/*
+ * flush the cache for the vmapped buffer.
+ * if the buffer has not been vmapped, return directly.
+ */
+void hmm_flush_vmap(ia_css_ptr virt);
 
 /*
  * Address translation from ISP shared memory address to kernel virtual address
  * if the memory is not vmmaped,  then do it.
  */
-void *hmm_isp_vaddr_to_host_vaddr(ia_css_ptr ptr);
+void *hmm_isp_vaddr_to_host_vaddr(ia_css_ptr ptr, bool cached);
 
 /*
  * Address translation from kernel virtual address to ISP shared memory address
@@ -90,6 +92,14 @@ ia_css_ptr hmm_host_vaddr_to_hrt_vaddr(const void *ptr);
  * do not pass any other address.
  */
 int hmm_mmap(struct vm_area_struct *vma, ia_css_ptr virt);
+
+/* show memory statistic
+ */
+void hmm_show_mem_stat(const char *func, const int line);
+
+/* init memory statistic
+ */
+void hmm_init_mem_stat(int res_pgnr, int dyc_en, int dyc_pgnr);
 
 extern bool dypool_enable;
 extern unsigned int dypool_pgnr;

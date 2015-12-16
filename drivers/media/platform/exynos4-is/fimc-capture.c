@@ -773,7 +773,7 @@ static struct media_entity *fimc_pipeline_get_head(struct media_entity *me)
 	struct media_pad *pad = &me->pads[0];
 
 	while (!(pad->flags & MEDIA_PAD_FL_SOURCE)) {
-		pad = media_entity_remote_source(pad);
+		pad = media_entity_remote_pad(pad);
 		if (!pad)
 			break;
 		me = pad->entity;
@@ -845,7 +845,7 @@ static int fimc_pipeline_try_format(struct fimc_ctx *ctx,
 					return ret;
 			}
 
-			pad = media_entity_remote_source(&me->pads[sfmt.pad]);
+			pad = media_entity_remote_pad(&me->pads[sfmt.pad]);
 			if (!pad)
 				return -EINVAL;
 			me = pad->entity;
@@ -893,7 +893,7 @@ static int fimc_get_sensor_frame_desc(struct v4l2_subdev *sensor,
 	int pad;
 
 	for (i = 0; i < num_planes; i++)
-		fd.entry[i].length = plane_fmt[i].sizeimage;
+		fd.entry[i].size.length = plane_fmt[i].sizeimage;
 
 	pad = sensor->entity.num_pads - 1;
 	if (try)
@@ -908,11 +908,11 @@ static int fimc_get_sensor_frame_desc(struct v4l2_subdev *sensor,
 		return -EINVAL;
 
 	for (i = 0; i < num_planes; i++)
-		plane_fmt[i].sizeimage = fd.entry[i].length;
+		plane_fmt[i].sizeimage = fd.entry[i].size.length;
 
-	if (fd.entry[0].length > FIMC_MAX_JPEG_BUF_SIZE) {
+	if (fd.entry[0].size.length > FIMC_MAX_JPEG_BUF_SIZE) {
 		v4l2_err(sensor->v4l2_dev,  "Unsupported buffer size: %u\n",
-			 fd.entry[0].length);
+			 fd.entry[0].size.length);
 
 		return -EINVAL;
 	}
@@ -1146,7 +1146,7 @@ static int fimc_pipeline_validate(struct fimc_dev *fimc)
 
 			if (p->flags & MEDIA_PAD_FL_SINK) {
 				sink_pad = p;
-				src_pad = media_entity_remote_source(sink_pad);
+				src_pad = media_entity_remote_pad(sink_pad);
 				if (src_pad)
 					break;
 			}

@@ -17,7 +17,7 @@
 #include <linux/sfi.h>
 
 #define MAX_NUM_STREAMS_CTP	5
-#define MAX_NUM_STREAMS_MRFLD	25
+#define MAX_NUM_STREAMS_MRFLD	26
 #define MAX_NUM_STREAMS	MAX_NUM_STREAMS_MRFLD
 
 #define SST_MAX_SSP_PORTS 4
@@ -116,6 +116,7 @@ struct sst_lib_dnld_info {
 	unsigned int mod_end;
 	unsigned int mod_table_offset;
 	unsigned int mod_table_size;
+	unsigned int mod_offset;
 	bool mod_ddr_dnld;
 };
 
@@ -127,6 +128,8 @@ struct sst_platform_info {
 	const struct sst_ipc_info *ipc_info;
 	const struct sst_platform_debugfs_data *debugfs_data;
 	const struct sst_lib_dnld_info *lib_info;
+	bool enable_recovery;
+	bool start_recovery_timer;
 };
 
 #endif

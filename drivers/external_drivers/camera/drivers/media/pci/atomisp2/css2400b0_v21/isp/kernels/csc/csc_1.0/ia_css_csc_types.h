@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_CSC_TYPES_H
 #define __IA_CSS_CSC_TYPES_H
 
+/** @file
+* CSS-API header file for Color Space Conversion parameters.
+*/
+
 /** Color Correction configuration.
  *
  *  This structure is used for 3 cases.

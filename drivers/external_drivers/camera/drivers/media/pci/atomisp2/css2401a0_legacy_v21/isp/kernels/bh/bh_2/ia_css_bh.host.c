@@ -33,9 +33,8 @@
 void
 ia_css_bh_hmem_decode(
 	struct ia_css_3a_rgby_output *out_ptr,
-	hrt_vaddress ddr_ptr)
+	const struct ia_css_bh_table *hmem_buf)
 {
-	struct ia_css_bh_table *hmem_buf = sh_css_malloc(sizeof(*hmem_buf));
 	int i;
 
 	/*
@@ -44,7 +43,6 @@ ia_css_bh_hmem_decode(
 	if(!hmem_buf)
 		return;
 	assert(sizeof_hmem(HMEM0_ID) == sizeof(*hmem_buf));
-	mmgr_load(ddr_ptr, (void *)hmem_buf, sizeof(*hmem_buf));
 
 	/* Deinterleave */
 	for (i = 0; i < HMEM_UNIT_SIZE; i++) {
@@ -55,14 +53,15 @@ ia_css_bh_hmem_decode(
 		/* sh_css_print ("hmem[%d] = %d, %d, %d, %d\n",
 			i, out_ptr[i].r, out_ptr[i].g, out_ptr[i].b, out_ptr[i].y); */
 	}
-	sh_css_free(hmem_buf);
 }
 
 void
 ia_css_bh_encode(
 	struct sh_css_isp_bh_params *to,
-	const struct ia_css_3a_config *from)
+	const struct ia_css_3a_config *from,
+	unsigned size)
 {
+	(void)size;
 	/* coefficients to calculate Y */
 	to->y_coef_r =
 	    uDIGIT_FITTING(from->ae_y_coef_r, 16, SH_CSS_AE_YCOEF_SHIFT);
@@ -75,8 +74,10 @@ ia_css_bh_encode(
 void
 ia_css_bh_hmem_encode(
 	struct sh_css_isp_bh_hmem_params *to,
-	const struct ia_css_3a_config *from)
+	const struct ia_css_3a_config *from,
+	unsigned size)
 {
+	(void)size;
 	(void)from;
 	(void)to;
 }

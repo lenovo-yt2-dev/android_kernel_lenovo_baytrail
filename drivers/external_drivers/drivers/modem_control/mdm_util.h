@@ -53,37 +53,18 @@
 #ifndef _MDM_UTIL_H
 #define _MDM_UTIL_H
 
+#define GPIO_RST_USBHUB 11
 /**
- * struct mdm_ctrl - Modem boot driver
  *
- * @lock: spinlock to serialise access to the driver information
- * @major: char device major number
- * @tdev: char device type dev
- * @dev: char device
- * @cdev: char device
- * @class: char device class
  * @opened: This flag is used to allow only ONE instance of this driver
  * @wait_wq: Read/Poll/Select wait event
- * @gpio_rst_out: Modem RESET_OUT GPIO
- * @gpio_pwr_on: Modem PWR_ON GPIO
- * @gpio_rst_bbn: Modem RESET_BBN GPIO
- * @gpio_cdump: Modem coredump GPIO
- * @irq_cdump: the modem core dump interrupt line
- * @irq_reset: the modem reset interrupt line
- * @rst_ongoing: Stating that a reset is ongoing
- * @wq: Modem Reset/Coredump worqueue
+ * @lock: spinlock to serialise access to the driver information
  * @hangup_work: Modem Reset/Coredump work
  */
-struct mdm_ctrl {
-	/* Char device registration */
-	int major;
-	dev_t tdev;
-	struct device *dev;
-	struct cdev cdev;
-	struct class *class;
-
+struct mdm_info {
 	/* Device infos */
 	struct mcd_base_info *pdata;
+	struct device *dev;
 
 	/* Used to prevent multiple access to device */
 	unsigned int opened;
@@ -111,7 +92,26 @@ struct mdm_ctrl {
 	struct timer_list flashing_timer;
 
 	bool is_mdm_ctrl_disabled;
+};
 
+/**
+ * struct mdm_ctrl - Modem boot driver
+ *
+ * @major: char device major number
+ * @tdev: char device type dev
+ * @dev: char device
+ * @cdev: char device
+ * @class: char device class
+ */
+struct mdm_ctrl {
+	/* Char device registration */
+	int major;
+	int nb_mdms;
+	dev_t tdev;
+	struct cdev cdev;
+	struct class *class;
+	struct mdm_info *mdm;
+	struct mcd_base_info *all_pdata;
 };
 
 /* List of states */
@@ -123,21 +123,24 @@ struct next_state {
 /* Modem control driver instance */
 extern struct mdm_ctrl *mdm_drv;
 
-inline void mdm_ctrl_set_opened(struct mdm_ctrl *drv, int value);
-inline int mdm_ctrl_get_opened(struct mdm_ctrl *drv);
+inline void mdm_ctrl_set_opened(struct mdm_info *mdm, int value);
+inline int mdm_ctrl_get_opened(struct mdm_info *mdm);
 
 void mdm_ctrl_enable_flashing(unsigned long int param);
 void mdm_ctrl_disable_flashing(unsigned long int param);
 
-void mdm_ctrl_launch_timer(struct timer_list *timer, int delay,
+void mdm_ctrl_launch_timer(struct mdm_info *mdm, int delay,
 			   unsigned int timer_type);
 
 inline void mdm_ctrl_set_reset_ongoing(struct mdm_ctrl *drv, int ongoing);
 inline int mdm_ctrl_get_reset_ongoing(struct mdm_ctrl *drv);
 
-inline void mdm_ctrl_set_state(struct mdm_ctrl *drv, int state);
-inline int mdm_ctrl_get_state(struct mdm_ctrl *drv);
+inline void mdm_ctrl_set_state(struct mdm_info *mdm, int state);
+inline int mdm_ctrl_get_state(struct mdm_info *mdm);
 
-void mdm_ctrl_get_device_info(struct mdm_ctrl *drv,
-			      struct platform_device *pdev);
+int mdm_ctrl_get_device_info(struct mdm_ctrl *drv,
+		struct platform_device *pdev);
+int mdm_ctrl_get_modem_data(struct mdm_ctrl *drv, int minor);
+
+void mdm_ctrl_set_mdm_cpu(struct mdm_info *mdm);
 #endif				/* _MDM_UTIL_H */

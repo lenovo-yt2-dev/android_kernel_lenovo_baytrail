@@ -77,11 +77,15 @@ config AMD_IOMMU_V2
 config DMAR_TABLE
 	bool
 
+config IOMMU_IOVA
+	tristate
+
 config INTEL_IOMMU
 	bool "Support for Intel IOMMU using DMA Remapping Devices"
 	depends on PCI_MSI && ACPI && (X86 || IA64_GENERIC)
 	select IOMMU_API
 	select DMAR_TABLE
+	select IOMMU_IOVA
 	help
 	  DMA remapping (DMAR) devices support enables independent address
 	  translations for Direct Memory Access (DMA) from devices.

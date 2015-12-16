@@ -42,6 +42,7 @@
 #include <linux/pm_qos.h>
 #include <linux/pm_runtime.h>
 #include <linux/completion.h>
+#include <linux/acpi.h>
 #include <asm/intel-mid.h>
 
 #include <linux/spi/spi.h>
@@ -1508,6 +1509,21 @@ static void intel_mid_ssp_spi_remove(struct pci_dev *pdev)
 	return;
 }
 
+static int intel_mid_ssp_spi_plat_probe(struct platform_device *pdev)
+{
+	pm_runtime_set_active(&pdev->dev);
+	pm_runtime_enable(&pdev->dev);
+	pm_runtime_allow(&pdev->dev);
+
+	return 0;
+}
+
+static int intel_mid_ssp_spi_plat_remove(struct platform_device *pdev)
+{
+	pm_runtime_forbid(&pdev->dev);
+	return;
+}
+
 #ifdef CONFIG_PM
 static int intel_mid_ssp_spi_suspend(struct device *dev)
 {
@@ -1613,6 +1629,12 @@ static const struct dev_pm_ops intel_mid_ssp_spi_pm_ops = {
 	.runtime_idle = intel_mid_ssp_spi_runtime_idle,
 };
 
+static const struct dev_pm_ops intel_mid_ssp_spi_plat_pm_ops = {
+	.runtime_suspend = intel_mid_ssp_spi_runtime_suspend,
+	.runtime_resume = intel_mid_ssp_spi_runtime_resume,
+	.runtime_idle = intel_mid_ssp_spi_runtime_idle,
+};
+
 static struct pci_driver intel_mid_ssp_spi_driver = {
 	.name =		DRIVER_NAME,
 	.id_table =	pci_ids,
@@ -1620,6 +1642,29 @@ static struct pci_driver intel_mid_ssp_spi_driver = {
 	.remove =	intel_mid_ssp_spi_remove,
 	.driver =	{
 		.pm	= &intel_mid_ssp_spi_pm_ops,
+	},
+};
+
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id intel_mid_ssp_spi_acpi_ids[] = {
+	{ "8086228E", 0},
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, intel_mid_ssp_spi_acpi_ids);
+#endif
+
+static struct platform_driver intel_mid_ssp_spi_plat_driver = {
+	.remove		= intel_mid_ssp_spi_plat_remove,
+	.driver		= {
+		.name	= DRIVER_NAME,
+		.owner	= THIS_MODULE,
+/* Disable PM only when kgdb(poll mode uart) is enabled */
+#if defined(CONFIG_PM) && !defined(CONFIG_CONSOLE_POLL)
+		.pm     = &intel_mid_ssp_spi_plat_pm_ops,
+#endif
+#ifdef CONFIG_ACPI
+		.acpi_match_table = ACPI_PTR(intel_mid_ssp_spi_acpi_ids),
+#endif
 	},
 };
 
@@ -1636,3 +1681,17 @@ static void __exit intel_mid_ssp_spi_exit(void)
 }
 
 module_exit(intel_mid_ssp_spi_exit);
+
+static int __init intel_mid_ssp_spi_plat_init(void)
+{
+	return platform_driver_probe(&intel_mid_ssp_spi_plat_driver, intel_mid_ssp_spi_plat_probe);
+}
+
+late_initcall(intel_mid_ssp_spi_plat_init);
+
+static void __exit intel_mid_ssp_spi_plat_exit(void)
+{
+	platform_driver_unregister(&intel_mid_ssp_spi_plat_driver);
+}
+
+module_exit(intel_mid_ssp_spi_plat_exit);

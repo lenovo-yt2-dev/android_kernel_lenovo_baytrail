@@ -253,7 +253,6 @@ cycle_t ftrace_now(int cpu)
 {
 	return buffer_ftrace_now(&global_trace.trace_buffer, cpu);
 }
-EXPORT_SYMBOL_GPL(ftrace_now);
 
 /**
  * tracing_is_enabled - Show if global_trace has been disabled

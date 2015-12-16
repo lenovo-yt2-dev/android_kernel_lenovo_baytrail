@@ -59,10 +59,10 @@ int rt5670_update_eqmode(
 
 	dev_dbg(codec->dev, "%s(): mode=%d\n", __func__, mode);
 
-	for (i = 0; i <= EQ_REG_NUM; i++)
+	for (i = 0; i < EQ_REG_NUM; i++)
 		hweq_param[mode].reg[i] = eqreg[channel][i];
 
-	for (i = 0; i <= EQ_REG_NUM; i++) {
+	for (i = 0; i < EQ_REG_NUM; i++) {
 		if (hweq_param[mode].reg[i])
 			ioctl_ops->index_write(codec, hweq_param[mode].reg[i],
 					hweq_param[mode].value[i]);
@@ -84,7 +84,7 @@ int rt5670_ioctl_common(struct snd_hwdep *hw, struct file *file,
 	struct snd_soc_codec *codec = hw->private_data;
 	struct rt_codec_cmd __user *_rt_codec = (struct rt_codec_cmd *)arg;
 	struct rt_codec_cmd rt_codec;
-	int *buf;
+	int *buf, ret = 0;
 	static int eq_mode[EQ_CH_NUM];
 
 	if (copy_from_user(&rt_codec, _rt_codec, sizeof(rt_codec))) {
@@ -96,8 +96,10 @@ int rt5670_ioctl_common(struct snd_hwdep *hw, struct file *file,
 	buf = kmalloc(sizeof(*buf) * rt_codec.number, GFP_KERNEL);
 	if (buf == NULL)
 		return -ENOMEM;
-	if (copy_from_user(buf, rt_codec.buf, sizeof(*buf) * rt_codec.number))
+	if (copy_from_user(buf, rt_codec.buf, sizeof(*buf) * rt_codec.number)) {
+		ret = -EFAULT;
 		goto err;
+	}
 
 	switch (cmd) {
 	case RT_SET_CODEC_HWEQ_IOCTL:
@@ -109,23 +111,22 @@ int rt5670_ioctl_common(struct snd_hwdep *hw, struct file *file,
 
 	case RT_GET_CODEC_ID:
 		*buf = snd_soc_read(codec, RT5670_VENDOR_ID2);
-		if (copy_to_user(rt_codec.buf, buf, sizeof(*buf) * rt_codec.number))
+		if (copy_to_user(rt_codec.buf, buf, sizeof(*buf) * rt_codec.number)) {
+			ret = -EFAULT;
 			goto err;
+		}
 		break;
 	case RT_READ_CODEC_DSP_IOCTL:
 	case RT_WRITE_CODEC_DSP_IOCTL:
 	case RT_GET_CODEC_DSP_MODE_IOCTL:
-		return rt5670_dsp_ioctl_common(hw, file, cmd, arg);
+		ret =  rt5670_dsp_ioctl_common(hw, file, cmd, arg);
 		break;
 	default:
 		break;
 	}
 
-	kfree(buf);
-	return 0;
-
 err:
 	kfree(buf);
-	return -EFAULT;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(rt5670_ioctl_common);

@@ -172,15 +172,16 @@ sysexit_from_sys_call:
 	andl  $~0x200,EFLAGS-R11(%rsp) 
 	movl	RIP-R11(%rsp),%edx		/* User %eip */
 	CFI_REGISTER rip,rdx
-	RESTORE_ARGS 0,24,0,0,0,0
-	xorq	%r8,%r8
+	RESTORE_ARGS 0,-ARG_SKIP,0,0,0,0
+	movq	EFLAGS-R11(%rsp),%r8		/* rflags */
+	movq	RSP-R11(%rsp),%rcx		/* User %esp */
 	xorq	%r9,%r9
 	xorq	%r10,%r10
 	xorq	%r11,%r11
-	popfq_cfi
+	pushq_cfi %r8
 	/*CFI_RESTORE rflags*/
-	popq_cfi %rcx				/* User %esp */
-	CFI_REGISTER rsp,rcx
+	popfq_cfi
+	xorq	%r8,%r8
 	TRACE_IRQS_ON
 	ENABLE_INTERRUPTS_SYSEXIT32
 

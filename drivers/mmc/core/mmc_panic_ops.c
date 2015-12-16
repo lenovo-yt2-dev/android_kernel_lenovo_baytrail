@@ -460,13 +460,6 @@ static int mmc_emergency_reinit_card(void)
 		return 0;
 
 	/*
-	 * before re-init card, flush cache first
-	 * if there is.
-	 * flush may be failed. So just ignore the failure
-	 * here
-	 */
-	mmc_emergency_cache_disable(host);
-	/*
 	 * low the clock to be init clock
 	 */
 	if (mmc_host_is_spi(host)) {
@@ -652,6 +645,7 @@ int mmc_emergency_write(char *data, unsigned int blk_id)
 		pr_err("%s: invalided writing blk_id\n", __func__);
 		return -EINVAL;
 	}
+
 	/*
 	 * everything is OK. So, let's start panic record.
 	 *
@@ -659,12 +653,20 @@ int mmc_emergency_write(char *data, unsigned int blk_id)
 	 */
 	memcpy(host->logbuf, data, SECTOR_SIZE);
 
+	host->dmabuf = dma_map_single(host->mmc->parent, host->logbuf,
+			SECTOR_SIZE, DMA_TO_DEVICE);
+	if (!host->dmabuf) {
+		pr_err("%s %s: DMA buf allocate error\n",
+				__func__, mmc_hostname(host->mmc));
+		return -EINVAL;
+	}
+
 	/* hold Dekker mutex first */
 	if (host->panic_ops->hold_mutex && host->panic_ops->release_mutex) {
 		ret = host->panic_ops->hold_mutex(host);
 		if (ret) {
 			pr_err("%s: hold Dekker mutex failed\n", __func__);
-			return ret;
+			goto out;
 		}
 	}
 
@@ -674,6 +676,9 @@ int mmc_emergency_write(char *data, unsigned int blk_id)
 	if (host->panic_ops->hold_mutex && host->panic_ops->release_mutex)
 		host->panic_ops->release_mutex(host);
 
+out:
+	dma_unmap_single(host->mmc->parent, host->logbuf,
+			SECTOR_SIZE, DMA_TO_DEVICE);
 	return ret;
 }
 EXPORT_SYMBOL(mmc_emergency_write);
@@ -863,22 +868,12 @@ void mmc_alloc_panic_host(struct mmc_host *host,
 		goto free_panic_host;
 	}
 
-	panic_host->dmabuf = dma_map_single(host->parent, panic_host->logbuf,
-			SECTOR_SIZE, DMA_TO_DEVICE);
-	if (!panic_host->dmabuf) {
-		pr_err("%s %s: DMA buf allocate error\n",
-				__func__, mmc_hostname(host));
-		goto free_logbuf;
-	}
-
 	panic_host->panic_ops = ops;
 	panic_host->mmc = NULL;
 	host->phost = panic_host;
 
 	return;
 
-free_logbuf:
-	kfree(panic_host->logbuf);
 free_panic_host:
 	kfree(panic_host);
 }

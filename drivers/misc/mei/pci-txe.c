@@ -442,6 +442,7 @@ static int mei_txe_pci_resume(struct device *device)
 {
 	struct pci_dev *pdev = to_pci_dev(device);
 	struct mei_device *dev;
+	struct mei_txe_hw *hw;
 	int err;
 
 	dev = pci_get_drvdata(pdev);
@@ -469,6 +470,12 @@ static int mei_txe_pci_resume(struct device *device)
 		return err;
 	}
 
+	hw = to_txe_hw(dev);
+	err = mei_txe_setup_satt2(dev,
+		dma_to_phys(&dev->pdev->dev, hw->pool_paddr), hw->pool_size);
+	if (err)
+		return err;
+
 	err = mei_restart(dev);
 
 	return err;
@@ -486,7 +493,7 @@ static int mei_txe_pm_runtime_idle(struct device *device)
 	if (!dev)
 		return -ENODEV;
 	if (mei_write_is_idle(dev))
-		pm_schedule_suspend(device, MEI_TXI_RPM_TIMEOUT * 2);
+		pm_runtime_autosuspend(device);
 
 	return -EBUSY;
 }

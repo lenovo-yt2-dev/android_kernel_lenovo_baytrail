@@ -12,6 +12,8 @@ struct sdhci_pci_data {
 	int		quirks;
 	int		quirks2;
 	int		platform_quirks; /* Platform related quirks */
+	int		tpru;	/* Supply power up time (ms) */
+	int		tramp;	/* Supply ramp up time (ms) */
 	int		(*setup)(struct sdhci_pci_data *data);
 	void		(*cleanup)(struct sdhci_pci_data *data);
 	int		(*power_up)(void *data);

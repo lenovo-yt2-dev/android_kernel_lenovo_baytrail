@@ -28,6 +28,7 @@ ccflags-$(CONFIG_DRM_VXD_BYT) := -Iinclude/drm -Iinclude/drm/ttm -Idrivers/gpu/d
 obj-y += \
 	psb_ttm_glue.o \
 	psb_cmdbuf.o \
+	tng_securefw.o \
 	psb_buffer.o \
 	psb_fence.o \
 	psb_mmu.o \

@@ -190,6 +190,37 @@ static struct byt_pwm_chip *find_pwm_chip(unsigned int pwm_num)
 	return NULL;
 }
 
+/* directly read a value to a PWM register */
+int lpio_bl_read(uint8_t pwm_num, uint32_t reg)
+{
+	struct byt_pwm_chip *byt_pwm;
+	int ret;
+
+	/* only PWM_CTRL register is supported */
+	if (reg != LPIO_PWM_CTRL)
+		return -EINVAL;
+
+	byt_pwm = find_pwm_chip(pwm_num);
+	if (!byt_pwm) {
+		pr_err("%s: can't find pwm device with pwm_num %d\n",
+				__func__, (int) pwm_num);
+		return -EINVAL;
+	}
+
+	pm_runtime_get_sync(byt_pwm->dev);
+	mutex_lock(&byt_pwm->lock);
+
+	ret = ioread32(PWMCR(byt_pwm));
+
+	mutex_unlock(&byt_pwm->lock);
+	pm_runtime_mark_last_busy(byt_pwm->dev);
+	pm_runtime_put_autosuspend(byt_pwm->dev);
+
+	return ret;
+
+}
+EXPORT_SYMBOL(lpio_bl_read);
+
 /* directly write a value to a PWM register */
 int lpio_bl_write(uint8_t pwm_num, uint32_t reg, uint32_t val)
 {

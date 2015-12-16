@@ -66,6 +66,7 @@ struct mrfld_8958_mc_private {
 	int jack_retry;
 	u8 pmic_id;
 	void __iomem    *osc_clk0_reg;
+	int spk_gpio;
 };
 
 
@@ -264,6 +265,23 @@ static int mrfld_8958_set_bias_level_post(struct snd_soc_card *card,
 	return ret;
 }
 
+static int mrfld_8958_set_spk_boost(struct snd_soc_dapm_widget *w,
+				struct snd_kcontrol *k, int event)
+{
+	struct snd_soc_dapm_context *dapm = w->dapm;
+	struct snd_soc_card *card = dapm->card;
+	struct mrfld_8958_mc_private *ctx = snd_soc_card_get_drvdata(card);
+	int ret = 0;
+
+	pr_debug("%s: ON? %d\n", __func__, SND_SOC_DAPM_EVENT_ON(event));
+
+	if (SND_SOC_DAPM_EVENT_ON(event))
+		gpio_set_value((unsigned)ctx->spk_gpio, 0);
+	else if (SND_SOC_DAPM_EVENT_OFF(event))
+		gpio_set_value((unsigned)ctx->spk_gpio, 1);
+
+	return ret;
+}
 #define PMIC_ID_ADDR		0x00
 #define PMIC_CHIP_ID_A0_VAL	0xC0
 
@@ -312,6 +330,12 @@ static const struct snd_soc_dapm_widget widgets[] = {
 			mrfld_8958_set_vflex_vsel,
 			SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
 };
+static const struct snd_soc_dapm_widget spk_boost_widget[] = {
+	/* DAPM route is added only for Moorefield */
+	SND_SOC_DAPM_SUPPLY("SPK_BOOST", SND_SOC_NOPM, 0, 0,
+			mrfld_8958_set_spk_boost,
+			SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+};
 
 static const struct snd_soc_dapm_route map[] = {
 	{ "Headphones", NULL, "HPOUT1L" },
@@ -350,6 +374,12 @@ static const struct snd_soc_dapm_route map[] = {
 	{ "AIF1ADC1L", NULL, "VFLEXCNT" },
 	{ "AIF1ADC1R", NULL, "VFLEXCNT" },
 
+};
+static const struct snd_soc_dapm_route mofd_spk_boost_map[] = {
+	{"SPKOUTLP", NULL, "SPK_BOOST"},
+	{"SPKOUTLN", NULL, "SPK_BOOST"},
+	{"SPKOUTRP", NULL, "SPK_BOOST"},
+	{"SPKOUTRN", NULL, "SPK_BOOST"},
 };
 
 static const struct wm8958_micd_rate micdet_rates[] = {
@@ -468,6 +498,7 @@ static int mrfld_8958_init(struct snd_soc_pcm_runtime *runtime)
 	struct snd_soc_codec *codec = runtime->codec;
 	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	struct snd_soc_card *card = runtime->card;
+	struct snd_soc_dapm_context *card_dapm = &card->dapm;
 	struct snd_soc_dai *aif1_dai = card->rtd[0].codec_dai;
 	struct mrfld_8958_mc_private *ctx = snd_soc_card_get_drvdata(card);
 
@@ -505,6 +536,12 @@ static int mrfld_8958_init(struct snd_soc_pcm_runtime *runtime)
 	snd_soc_dapm_nc_pin(dapm, "IN1RN");
 	snd_soc_dapm_nc_pin(dapm, "IN1RP");
 
+	if (ctx->spk_gpio >= 0) {
+		snd_soc_dapm_new_controls(card_dapm, spk_boost_widget,
+					ARRAY_SIZE(spk_boost_widget));
+		snd_soc_dapm_add_routes(card_dapm, mofd_spk_boost_map,
+				ARRAY_SIZE(mofd_spk_boost_map));
+	}
 	/* Force enable VMID to avoid cold latency constraints */
 	snd_soc_dapm_force_enable_pin(dapm, "VMID");
 	snd_soc_dapm_sync(dapm);
@@ -521,6 +558,9 @@ static int mrfld_8958_init(struct snd_soc_pcm_runtime *runtime)
 
 	snd_jack_set_key(ctx->jack.jack, SND_JACK_BTN_1, KEY_MEDIA);
 	snd_jack_set_key(ctx->jack.jack, SND_JACK_BTN_0, KEY_MEDIA);
+
+	snd_soc_update_bits(codec, WM8958_MICBIAS2, WM8958_MICB2_LVL_MASK,
+				WM8958_MICB2_LVL_2P6V << WM8958_MICB2_LVL_SHIFT);
 
 	wm8958_mic_detect(codec, &ctx->jack, NULL, NULL,
 			  wm8958_custom_mic_id, codec);
@@ -734,19 +774,47 @@ static struct snd_soc_card snd_soc_card_mrfld = {
 	.num_dapm_routes = ARRAY_SIZE(map),
 };
 
+static int snd_mrfld_8958_config_gpio(struct platform_device *pdev,
+					struct mrfld_8958_mc_private *drv)
+{
+	int ret = 0;
+
+	if (drv->spk_gpio >= 0) {
+		/* Set GPIO as output and init it with high value. So
+		 * spk boost is disable by default */
+		ret = devm_gpio_request_one(&pdev->dev, (unsigned)drv->spk_gpio,
+				GPIOF_INIT_HIGH, "spk_boost");
+		if (ret) {
+			pr_err("GPIO request failed\n");
+			return ret;
+		}
+	}
+	return ret;
+}
+
 static int snd_mrfld_8958_mc_probe(struct platform_device *pdev)
 {
 	int ret_val = 0;
 	struct mrfld_8958_mc_private *drv;
+	struct mrfld_audio_platform_data *mrfld_audio_pdata = pdev->dev.platform_data;
 
 	pr_debug("Entry %s\n", __func__);
 
+	if (!mrfld_audio_pdata) {
+		pr_err("Platform data not provided\n");
+		return -EINVAL;
+	}
 	drv = kzalloc(sizeof(*drv), GFP_ATOMIC);
 	if (!drv) {
 		pr_err("allocation failed\n");
 		return -ENOMEM;
 	}
-
+	drv->spk_gpio = mrfld_audio_pdata->spk_gpio;
+	ret_val = snd_mrfld_8958_config_gpio(pdev, drv);
+	if (ret_val) {
+		pr_err("GPIO configuration failed\n");
+		goto unalloc;
+	}
 	/* ioremap the register */
 	drv->osc_clk0_reg = devm_ioremap_nocache(&pdev->dev,
 					MERR_OSC_CLKOUT_CTRL0_REG_ADDR,

@@ -496,25 +496,17 @@ int __media_entity_setup_link(struct media_link *link, u32 flags)
 
 	mdev = source->parent;
 
-	if ((flags & MEDIA_LNK_FL_ENABLED) && mdev->link_notify) {
-		ret = mdev->link_notify(link->source, link->sink,
-					MEDIA_LNK_FL_ENABLED);
+	if (mdev->link_notify) {
+		ret = mdev->link_notify(link, flags,
+					MEDIA_DEV_NOTIFY_PRE_LINK_CH);
 		if (ret < 0)
 			return ret;
 	}
 
 	ret = __media_entity_setup_link_notify(link, flags);
-	if (ret < 0)
-		goto err;
 
-	if (!(flags & MEDIA_LNK_FL_ENABLED) && mdev->link_notify)
-		mdev->link_notify(link->source, link->sink, 0);
-
-	return 0;
-
-err:
-	if ((flags & MEDIA_LNK_FL_ENABLED) && mdev->link_notify)
-		mdev->link_notify(link->source, link->sink, 0);
+	if (mdev->link_notify)
+		mdev->link_notify(link, flags, MEDIA_DEV_NOTIFY_POST_LINK_CH);
 
 	return ret;
 }
@@ -560,17 +552,16 @@ media_entity_find_link(struct media_pad *source, struct media_pad *sink)
 EXPORT_SYMBOL_GPL(media_entity_find_link);
 
 /**
- * media_entity_remote_source - Find the source pad at the remote end of a link
- * @pad: Sink pad at the local end of the link
+ * media_entity_remote_pad - Find the pad at the remote end of a link
+ * @pad: Pad at the local end of the link
  *
- * Search for a remote source pad connected to the given sink pad by iterating
- * over all links originating or terminating at that pad until an enabled link
- * is found.
+ * Search for a remote pad connected to the given pad by iterating over all
+ * links originating or terminating at that pad until an enabled link is found.
  *
  * Return a pointer to the pad at the remote end of the first found enabled
  * link, or NULL if no enabled link has been found.
  */
-struct media_pad *media_entity_remote_source(struct media_pad *pad)
+struct media_pad *media_entity_remote_pad(struct media_pad *pad)
 {
 	unsigned int i;
 
@@ -590,4 +581,4 @@ struct media_pad *media_entity_remote_source(struct media_pad *pad)
 	return NULL;
 
 }
-EXPORT_SYMBOL_GPL(media_entity_remote_source);
+EXPORT_SYMBOL_GPL(media_entity_remote_pad);

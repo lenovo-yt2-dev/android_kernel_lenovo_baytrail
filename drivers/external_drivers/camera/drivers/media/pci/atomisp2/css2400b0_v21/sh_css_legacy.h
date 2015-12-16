@@ -22,7 +22,12 @@
 #ifndef _SH_CSS_LEGACY_H_
 #define _SH_CSS_LEGACY_H_
 
-#include "ia_css.h"
+#include <type_support.h>
+#include <ia_css_err.h>
+#include <ia_css_types.h>
+#include <ia_css_frame_public.h>
+#include <ia_css_pipe_public.h>
+#include <ia_css_stream_public.h>
 
 /** The pipe id type, distinguishes the kind of pipes that
  *  can be run in parallel.
@@ -32,9 +37,10 @@ enum ia_css_pipe_id {
 	IA_CSS_PIPE_ID_COPY,
 	IA_CSS_PIPE_ID_VIDEO,
 	IA_CSS_PIPE_ID_CAPTURE,
+	IA_CSS_PIPE_ID_YUVPP,
 	IA_CSS_PIPE_ID_ACC,
+	IA_CSS_PIPE_ID_NUM
 };
-#define IA_CSS_PIPE_ID_NUM (IA_CSS_PIPE_ID_ACC + 1)
 
 struct ia_css_pipe_extra_config {
 	bool enable_raw_binning;
@@ -45,6 +51,17 @@ struct ia_css_pipe_extra_config {
 	bool enable_fractional_ds;
 	bool disable_vf_pp;
 };
+
+#define DEFAULT_PIPE_EXTRA_CONFIG \
+{ \
+	false,				/* enable_raw_binning */ \
+	false,				/* enable_yuv_ds */ \
+	false,				/* enable_high_speed */ \
+	false,				/* enable_dvs_6axis */ \
+	false,				/* enable_reduced_pipe */ \
+	false,				/* enable_fractional_ds */ \
+	false,				/* disable_vf_pp */ \
+}
 
 enum ia_css_err
 ia_css_pipe_create_extra(const struct ia_css_pipe_config *config,
@@ -61,6 +78,7 @@ ia_css_temp_pipe_to_pipe_id(const struct ia_css_pipe *pipe,
 /** @brief Enable cont_capt mode (continuous preview+capture running together).
  *
  * @param	enable	Enabling value.
+ * @param	stop_copy_preview boolean stop_copy_preview
  *
  * Enable or disable continuous binaries if available. Default is disabled.
  */
@@ -71,25 +89,5 @@ sh_css_enable_cont_capt(bool enable, bool stop_copy_preview);
 enum ia_css_err
 sh_css_set_black_frame(struct ia_css_stream *stream,
 			const struct ia_css_frame *raw_black_frame);
-
-/** @brief Calculate the size of a mipi frame.
- *
- * @param[in]	width		The width (in pixels) of the frame.
- * @param[in]	height		The height (in lines) of the frame.
- * @param[in]	format		The frame (MIPI) format.
- * @param[in]	hasSOLandEOL	Whether frame (MIPI) contains (optional) SOL and EOF packets.
- * @param[in]	embedded_data_size_words		Embedded data size in memory words.
- * @param		size_mem_words					The mipi frame size in memory words (32B).
- * @return		The error code.
- *
- * Calculate the size of a mipi frame, based on the resolution and format. 
- */
-enum ia_css_err
-ia_css_mipi_frame_calculate_size(const unsigned int width,
-				const unsigned int height,
-				const enum ia_css_stream_format format,
-				const bool hasSOLandEOL,
-				const unsigned int embedded_data_size_words,
-				unsigned int *size_mem_words);
 
 #endif /* _SH_CSS_LEGACY_H_ */

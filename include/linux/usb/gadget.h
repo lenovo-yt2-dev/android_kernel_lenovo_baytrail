@@ -485,6 +485,11 @@ struct usb_gadget_ops {
  * @max_speed: Maximal speed the UDC can handle.  UDC must support this
  *      and all slower speeds.
  * @state: the state we are now (attached, suspended, configured, etc)
+ * @name: Identifies the controller hardware type.  Used in diagnostics
+ *	and sometimes configuration.
+ * @dev: Driver model state for this abstract device.
+ * @out_epnum: last used out ep number
+ * @in_epnum: last used in ep number
  * @sg_supported: true if we can handle scatter-gather
  * @is_otg: True if the USB device port uses a Mini-AB jack, so that the
  *	gadget driver must provide a USB OTG descriptor.
@@ -497,11 +502,8 @@ struct usb_gadget_ops {
  *	only supports HNP on a different root port.
  * @b_hnp_enable: OTG device feature flag, indicating that the A-Host
  *	enabled HNP support.
- * @name: Identifies the controller hardware type.  Used in diagnostics
- *	and sometimes configuration.
- * @dev: Driver model state for this abstract device.
- * @out_epnum: last used out ep number
- * @in_epnum: last used in ep number
+ * @quirk_ep_out_aligned_size: epout requires buffer size to be aligned to
+ *	MaxPacketSize.
  *
  * Gadgets have a mostly-portable "gadget driver" implementing device
  * functions, handling all usb configurations and interfaces.  Gadget
@@ -530,6 +532,11 @@ struct usb_gadget {
 	enum usb_device_speed		speed;
 	enum usb_device_speed		max_speed;
 	enum usb_device_state		state;
+	const char			*name;
+	struct device			dev;
+	unsigned			out_epnum;
+	unsigned			in_epnum;
+
 	unsigned			sg_supported:1;
 	unsigned			is_otg:1;
 	unsigned			is_a_peripheral:1;
@@ -537,10 +544,7 @@ struct usb_gadget {
 	unsigned			a_hnp_support:1;
 	unsigned			a_alt_hnp_support:1;
 	unsigned			host_request_flag:1;
-	const char			*name;
-	struct device			dev;
-	unsigned			out_epnum;
-	unsigned			in_epnum;
+	unsigned			quirk_ep_out_aligned_size:1;
 };
 #define work_to_gadget(w)	(container_of((w), struct usb_gadget, work))
 
@@ -557,6 +561,23 @@ static inline struct usb_gadget *dev_to_usb_gadget(struct device *dev)
 #define gadget_for_each_ep(tmp, gadget) \
 	list_for_each_entry(tmp, &(gadget)->ep_list, ep_list)
 
+
+/**
+ * usb_ep_align_maybe - returns @len aligned to ep's maxpacketsize if gadget
+ *	requires quirk_ep_out_aligned_size, otherwise reguens len.
+ * @g: controller to check for quirk
+ * @ep: the endpoint whose maxpacketsize is used to align @len
+ * @len: buffer size's length to align to @ep's maxpacketsize
+ *
+ * This helper is used in case it's required for any reason to check and maybe
+ * align buffer's size to an ep's maxpacketsize.
+ */
+static inline size_t
+usb_ep_align_maybe(struct usb_gadget *g, struct usb_ep *ep, size_t len)
+{
+	return !g->quirk_ep_out_aligned_size ? len :
+			round_up(len, (size_t)ep->desc->wMaxPacketSize);
+}
 
 /**
  * gadget_is_dualspeed - return true iff the hardware handles high speed

@@ -28,6 +28,11 @@
 #define FAB_ID_SC					4
 #define FAB_ID_SC1					5
 #define FAB_ID_UNKNOWN					6
+#define FAB_ID_PM_FULLCHIP				7
+#define FAB_ID_PM_AUDIO					8
+#define FAB_ID_PM_SECONDARY				9
+#define FAB_ID_PM_GP					10
+#define FAB_ID_PM_SC					11
 
 enum scu_cold_boot_err {
 	ERR_MEM_ERR		= 0xE101,
@@ -42,8 +47,8 @@ enum scu_cold_boot_err {
 };
 
 enum scu_runtime_err {
-	ERR_PLL_LOCKSLIP_ERR    = 0xE601,
-	ERR_UNDEFINED_L1_ERR    = 0xE603,
+	ERR_PLL_LOCKSLIP_ERR	= 0xE601,
+	ERR_UNDEFINED_L1_ERR	= 0xE603,
 	ERR_PUINT_INT_MBB_TMOUT_ERR,
 	ERR_FUSE_VOLTATK_ERR,
 	ERR_FUSE_VOLT_SAIATK_ERR,
@@ -54,6 +59,18 @@ enum scu_runtime_err {
 	ERR_KWDT_IPC_ERR
 };
 
+enum scu_recoverable_fab_err {
+	ERR_UNSUPPORTED_CMD_ERR	= 0xF00A,
+	ERR_ADDR_HOLE_ERR,
+	ERR_PROTECTION_ERR,
+	ERR_MEM_ASSERTION_ERR
+};
+
+enum scu_fatal_fab_err {
+	ERR_REQ_TIMEOUT_NOT_ACCEPTED	= 0xF00E,
+	ERR_REQ_TIMEOUT_NO_RESPONSE,
+	ERR_REQ_TIMEOUT_DATA_NOT_ACCEPTED
+};
 
 char *fabric_error_lookup(u32 fab_id, u32 error_index, int use_hidword);
 char *get_errortype_str(u16 error_type);

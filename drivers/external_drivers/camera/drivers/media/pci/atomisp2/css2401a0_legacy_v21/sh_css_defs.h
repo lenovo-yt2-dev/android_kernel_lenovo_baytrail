@@ -22,7 +22,11 @@
 #ifndef _SH_CSS_DEFS_H_
 #define _SH_CSS_DEFS_H_
 
+#if !defined(__SP1)
 #include "isp.h"
+#else
+#include "system_local.h"  /* to get IS_ISP_2500_SYSTEM for SP1*/
+#endif
 /*#include "vamem.h"*/ /* Cannot include for VAMEM properties this file is visible on ISP -> pipeline generator */
 
 #include "math_support.h"	/* max(), min, etc etc */
@@ -167,8 +171,10 @@ RGB[0,8191],coef[-8192,8191] -> RGB[0,8191]
 #define SH_CSS_MIN_SENSOR_HEIGHT          2
 
 #if defined(IS_ISP_2400_SYSTEM)
+/* MAX width and height set to the same to allow for rotated
+ * resolutions. */
 #define SH_CSS_MAX_VF_WIDTH               1920
-#define SH_CSS_MAX_VF_HEIGHT              1080
+#define SH_CSS_MAX_VF_HEIGHT              1920
 #else
 #define SH_CSS_MAX_VF_WIDTH               1280
 #define SH_CSS_MAX_VF_HEIGHT              960
@@ -194,6 +200,13 @@ RGB[0,8191],coef[-8192,8191] -> RGB[0,8191]
 
 /* Each line of this table is aligned to the maximum line width. */
 #define SH_CSS_MAX_S3ATBL_WIDTH              SH_CSS_MAX_BQ_GRID_WIDTH
+
+/* The video binary supports a delay of 1 or 2 */
+#define MAX_DVS_FRAME_DELAY		2
+/* We always need one additional frame because the video binary
+ * reads the previous and writes the current frame concurrently */
+#define MAX_NUM_VIDEO_DELAY_FRAMES	(MAX_DVS_FRAME_DELAY + 1)
+#define NUM_VIDEO_TNR_FRAMES		2
 
 /* Rules: these implement logic shared between the host code and ISP firmware.
    The ISP firmware needs these rules to be applied at pre-processor time,
@@ -226,84 +239,6 @@ RGB[0,8191],coef[-8192,8191] -> RGB[0,8191]
 	CEIL_MUL(_ISP_SCTBL_WIDTH_PER_COLOR(input_width, deci_factor_log2), \
 		 ISP_VEC_NELEMS)
 
-/* ********************************************************
- * Statistics for Digital Image Stabilization
- * ********************************************************/
-/* Some binaries put the vertical coefficients in DMEM instead
-   of VMEM to save VMEM. */
-#define _SDIS_VER_COEF_TBL_USE_DMEM(mode, enable_sdis, isp_pipe_version) \
-	(mode == IA_CSS_BINARY_MODE_VIDEO \
-	&& enable_sdis && isp_pipe_version == 1)
-
-/* For YUV upscaling, the internal size is used for DIS statistics */
-#define _ISP_SDIS_ELEMS_ISP(input, internal, enable_us) \
-	((enable_us) ? (internal) : (input))
-
-/* SDIS Number of Grid */
-#define _ISP_SDIS_HOR_GRID_NUM_ISP(in_width, deci_factor_log2) \
-	CEIL_SHIFT(_ISP_BQS(in_width), deci_factor_log2)
-#define _ISP_SDIS_VER_GRID_NUM_ISP(in_height, deci_factor_log2) \
-	CEIL_SHIFT(_ISP_BQS(in_height), deci_factor_log2)
-
-#define _ISP_SDIS_HOR_GRID_NUM_3A(in_width, deci_factor_log2) \
-	(_ISP_BQS(in_width) >> deci_factor_log2)
-#define _ISP_SDIS_VER_GRID_NUM_3A(in_height, deci_factor_log2) \
-	(_ISP_BQS(in_height) >> deci_factor_log2)
-
-/* SDIS Projections:
- * SDIS1: Horizontal projections are calculated for each line.
- * Vertical projections are calculated for each column.
- * SDIS2: Projections are calculated for each grid cell.
- * Grid cells that do not fall completely within the image are not
- * valid. The host needs to use the bigger one for the stride but
- * should only return the valid ones to the 3A. */
-#define __ISP_SDIS_HOR_PROJ_NUM_ISP(in_width, in_height, deci_factor_log2, \
-	isp_pipe_version) \
-	((isp_pipe_version == 1) ? \
-		CEIL_SHIFT(_ISP_BQS(in_height), deci_factor_log2) : \
-		(CEIL_SHIFT(_ISP_BQS(in_width), deci_factor_log2) * \
-		 CEIL_SHIFT(_ISP_BQS(in_height), deci_factor_log2)))
-
-#define __ISP_SDIS_VER_PROJ_NUM_ISP(in_width, in_height, deci_factor_log2, \
-	isp_pipe_version) \
-	((isp_pipe_version == 1) ? \
-		CEIL_SHIFT(_ISP_BQS(in_width), deci_factor_log2) : \
-		(CEIL_SHIFT(_ISP_BQS(in_width), deci_factor_log2) * \
-		 CEIL_SHIFT(_ISP_BQS(in_height), deci_factor_log2)))
-
-#define _ISP_SDIS_HOR_PROJ_NUM_3A(in_width, in_height, deci_factor_log2, \
-	isp_pipe_version) \
-	((isp_pipe_version == 1) ? \
-		(_ISP_BQS(in_height) >> deci_factor_log2) : \
-		((_ISP_BQS(in_width) >> deci_factor_log2) * \
-		 (_ISP_BQS(in_height) >> deci_factor_log2)))
-
-#define _ISP_SDIS_VER_PROJ_NUM_3A(in_width, in_height, deci_factor_log2, \
-	isp_pipe_version) \
-	((isp_pipe_version == 1) ? \
-		(_ISP_BQS(in_width) >> deci_factor_log2) : \
-		((_ISP_BQS(in_width) >> deci_factor_log2) * \
-		 (_ISP_BQS(in_height) >> deci_factor_log2)))
-
-/* SDIS Coefficients: */
-/* The ISP uses vectors to store the coefficients, so we round
-   the number of coefficients up to vectors. */
-#define __ISP_SDIS_HOR_COEF_NUM_VECS(in_width)  _ISP_VECS(_ISP_BQS(in_width))
-#define __ISP_SDIS_VER_COEF_NUM_VECS(in_height) _ISP_VECS(_ISP_BQS(in_height))
-
-/* The number of coefficients produced by the ISP */
-#define _ISP_SDIS_HOR_COEF_NUM_ISP(in_width) \
-	(__ISP_SDIS_HOR_COEF_NUM_VECS(in_width) * ISP_VEC_NELEMS)
-#define _ISP_SDIS_VER_COEF_NUM_ISP(in_height) \
-	(__ISP_SDIS_VER_COEF_NUM_VECS(in_height) * ISP_VEC_NELEMS)
-
-/* The number of coefficients used by the 3A library. This excludes
-   coefficients from grid cells that do not fall completely within the image. */
-#define _ISP_SDIS_HOR_COEF_NUM_3A(in_width, deci_factor_log2) \
-	((_ISP_BQS(in_width) >> deci_factor_log2) << deci_factor_log2)
-#define _ISP_SDIS_VER_COEF_NUM_3A(in_height, deci_factor_log2) \
-	((_ISP_BQS(in_height) >> deci_factor_log2) << deci_factor_log2)
-
 /* *****************************************************************
  * Statistics for 3A (Auto Focus, Auto White Balance, Auto Exposure)
  * *****************************************************************/
@@ -331,10 +266,8 @@ RGB[0,8191],coef[-8192,8191] -> RGB[0,8191]
 #define __ISP_MAX_VF_OUTPUT_WIDTH(width, left_crop) \
 	(width - 2*ISP_VEC_NELEMS + ((left_crop) ? 2 * ISP_VEC_NELEMS : 0))
 
-/* Number of vectors per vf line is determined by the chroma width,
- * the luma width is derived from that. That's why we have the +1. */
 #define __ISP_VF_OUTPUT_WIDTH_VECS(out_width, vf_log_downscale) \
-	(_ISP_VECS((out_width) >> ((vf_log_downscale)+1)) * 2)
+	(_ISP_VECS((out_width) >> (vf_log_downscale)))
 
 #define _ISP_VF_OUTPUT_WIDTH(vf_out_vecs) ((vf_out_vecs) * ISP_VEC_NELEMS)
 #define _ISP_VF_OUTPUT_HEIGHT(out_height, vf_log_ds) \
@@ -342,6 +275,10 @@ RGB[0,8191],coef[-8192,8191] -> RGB[0,8191]
 
 #define _ISP_LOG_VECTOR_STEP(mode) \
 	((mode) == IA_CSS_BINARY_MODE_CAPTURE_PP ? 2 : 1)
+
+/* It is preferred to have not more than 2x scaling at one step
+ * in GDC (assumption is for capture_pp and yuv_scale stages) */
+#define MAX_PREFERRED_YUV_DS_PER_STEP	2
 
 /* Rules for computing the internal width. This is extremely complicated
  * and definitely needs to be commented and explained. */
@@ -369,30 +306,20 @@ RGB[0,8191],coef[-8192,8191] -> RGB[0,8191]
 
 #define __ISP_CHUNK_STRIDE_DDR(c_subsampling, num_chunks) \
 	((c_subsampling) * (num_chunks) * HIVE_ISP_DDR_WORD_BYTES)
-#if 0
-#define __ISP_RGBA_WIDTH(rgba, num_chunks) \
-	((rgba) ? (num_chunks)*4*2*ISP_VEC_NELEMS : 0)
-#else
-#define __ISP_RGBA_WIDTH(rgba, num_chunks) \
-	(0)
-#endif
 #define __ISP_INTERNAL_WIDTH(out_width, \
 			     dvs_env_width, \
 			     left_crop, \
 			     mode, \
 			     c_subsampling, \
 			     num_chunks, \
-			     pipelining, \
-			     rgba) \
-	CEIL_MUL2(CEIL_MUL2(MAX(MAX(__ISP_PADDED_OUTPUT_WIDTH(out_width, \
+			     pipelining) \
+	CEIL_MUL2(CEIL_MUL2(MAX(__ISP_PADDED_OUTPUT_WIDTH(out_width, \
 							    dvs_env_width, \
 							    left_crop), \
 				  __ISP_MIN_INTERNAL_WIDTH(num_chunks, \
 							   pipelining, \
 							   mode) \
 				 ), \
-			      __ISP_RGBA_WIDTH(rgba, num_chunks) \
-			     ), \
 			  __ISP_CHUNK_STRIDE_ISP(mode) \
 			 ), \
 		 __ISP_CHUNK_STRIDE_DDR(c_subsampling, num_chunks) \
@@ -420,9 +347,30 @@ RGB[0,8191],coef[-8192,8191] -> RGB[0,8191]
 #define _ISP_INPUT_WIDTH(internal_width, ds_input_width, enable_ds) \
 	((enable_ds) ? (ds_input_width) : (internal_width))
 
+#define _ISP_MAX_INPUT_HEIGHT(max_internal_height, enable_ds, enable_fixed_bayer_ds, enable_raw_bin, \
+				enable_continuous) \
+	((enable_ds) ? \
+	   SH_CSS_MAX_SENSOR_HEIGHT :\
+	 (enable_fixed_bayer_ds) ? \
+	   SH_CSS_MAX_CONTINUOUS_SENSOR_HEIGHT_DEC : \
+	 (enable_raw_bin || enable_continuous) ? \
+	   SH_CSS_MAX_CONTINUOUS_SENSOR_HEIGHT \
+	   : max_internal_height)
+
 #define _ISP_INPUT_HEIGHT(internal_height, ds_input_height, enable_ds) \
 	((enable_ds) ? (ds_input_height) : (internal_height))
 
+#ifdef IS_ISP_2500_SYSTEM
+#define SH_CSS_MAX_STAGES 3 /* 2 stages for split isp pipelin, 1 for scaling */
+#else
 #define SH_CSS_MAX_STAGES 6 /* copy, preisp, anr, postisp, capture_pp, vf_pp */
+#endif
+
+/* For CSI2+ input system, it requires extra paddinga from vmem */
+#ifdef CONFIG_CSI2_PLUS
+#define _ISP_EXTRA_PADDING_VECS 2
+#else
+#define _ISP_EXTRA_PADDING_VECS 0
+#endif /* CONFIG_CSI2_PLUS */
 
 #endif /* _SH_CSS_DEFS_H_ */

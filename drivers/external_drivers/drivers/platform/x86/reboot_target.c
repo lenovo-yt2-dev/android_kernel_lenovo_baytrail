@@ -34,20 +34,26 @@ static const unsigned int DEFAULT_TARGET_INDEX = 0;
 static const struct name2id NAME2ID[] = {
 	{ "main",       0x00 },
 	{ "android",    0x00 },
-    { "GlobalActions",  0x00},
 	{ "charging",   0x0A },
 	{ "recovery",   0x0C },
 	{ "fastboot",   0x0E },
 	{ "bootloader", 0x0E },
-	{ "testmode",   0x0F },
 	{ "factory",    0x12 },
 	{ "dnx",        0x14 },
 	{ "ramconsole", 0x16 },
+	{ "factory2",   0x18 },
 };
+
+#define ALLOW_FACTORY_PARAM_NAME "allow_factory="
 
 static int reboot_target_name2id(const char *name)
 {
 	int i;
+	char *allow_factory;
+
+	allow_factory = strstr(saved_command_line, ALLOW_FACTORY_PARAM_NAME);
+	if (!allow_factory && strstr(name, "factory"))
+		return NAME2ID[DEFAULT_TARGET_INDEX].id;
 
 	for (i = 0; i < ARRAY_SIZE(NAME2ID); i++)
 		if (!strcmp(NAME2ID[i].name, name))
@@ -82,9 +88,6 @@ static int set_reboot_target(const char *name)
 		       __func__, name );
 		return -EINVAL;
 	}
-
-    if (!strcmp(name, "GlobalActions"))
-        return var ? var->set_reboot_target("main", id) : -ENODEV;
 
 	return var ? var->set_reboot_target(name, id) : -ENODEV;
 }

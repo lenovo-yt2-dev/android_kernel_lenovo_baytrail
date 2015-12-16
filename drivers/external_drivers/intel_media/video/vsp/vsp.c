@@ -54,7 +54,7 @@ static int vsp_prehandle_command(struct drm_file *priv,
 			    struct drm_psb_cmdbuf_arg *arg,
 			    unsigned char *cmd_start,
 			    struct psb_ttm_fence_rep *fence_arg);
-static int vsp_fence_surfaces(struct drm_file *priv,
+static int vsp_fence_vpp_surfaces(struct drm_file *priv,
 			      struct list_head *validate_list,
 			      uint32_t fence_type,
 			      struct drm_psb_cmdbuf_arg *arg,
@@ -67,10 +67,13 @@ static int vsp_fence_vp8enc_surfaces(struct drm_file *priv,
 				uint32_t fence_type,
 				struct drm_psb_cmdbuf_arg *arg,
 				struct psb_ttm_fence_rep *fence_arg,
-				struct ttm_buffer_object *pic_param_bo,
-				struct ttm_buffer_object *coded_buf_bo);
-
-static int  vp8_error_response(struct drm_psb_private *dev_priv, int context);
+				struct ttm_buffer_object *pic_param_bo);
+static int vsp_fence_compose_surfaces(struct drm_file *priv,
+				struct list_head *validate_list,
+				uint32_t fence_type,
+				struct drm_psb_cmdbuf_arg *arg,
+				struct psb_ttm_fence_rep *fence_arg,
+				struct ttm_buffer_object *pic_param_bo);
 
 static inline void psb_clflush(void *addr)
 {
@@ -88,7 +91,6 @@ int vsp_handle_response(struct drm_psb_private *dev_priv)
 	struct vss_response_t *msg;
 	uint32_t sequence;
 	uint32_t status;
-	struct vss_command_t *cur_cell_cmd, *cur_cmd;
 	unsigned int cmd_rd, cmd_wr;
 
 	idx = 0;
@@ -123,10 +125,17 @@ int vsp_handle_response(struct drm_psb_private *dev_priv)
 			cmd_wr = vsp_priv->ctrl->cmd_wr;
 
 			if (msg->context != 0 && cmd_wr == cmd_rd) {
-				sequence =vp8_error_response(dev_priv, msg->context);
+				vsp_priv->vp8_cmd_num = 0;
+				sequence = vsp_priv->last_sequence;
 			}
 
 			ret = false;
+
+			/* For VPP component, wouldn't receive any command
+			 * from user space.
+			 */
+			if (msg->context == 0)
+				vsp_priv->vsp_state = VSP_STATE_HANG;
 			break;
 
 		case VssEndOfSequenceResponse:
@@ -216,73 +225,12 @@ int vsp_handle_response(struct drm_psb_private *dev_priv)
 			VSP_DEBUG("sequence %d\n", sequence);
 			VSP_DEBUG("receive vp8 encoded frame response\n");
 
-#ifdef VP8_ENC_DEBUG
-			struct VssVp8encEncodedFrame *encoded_frame =
-				(struct VssVp8encEncodedFrame *)
-					(vsp_priv->coded_buf);
-			struct VssVp8encPictureParameterBuffer *t =
-					vsp_priv->vp8_encode_frame_cmd;
-			int i = 0;
-			int j = 0;
-			VSP_DEBUG("VSP clock cycles from pre response %x\n",
-				  msg->vss_cc);
-			vsp_priv->vss_cc_acc += msg->vss_cc;
-
-			VSP_DEBUG("receive vp8 encoded frame buffer %x",
-					msg->buffer);
-			VSP_DEBUG("size %x cur command id is %d\n",
-					msg->size, vsp_priv->ctrl->cmd_rd);
-			VSP_DEBUG("read vp8 pic param address %x at %d\n",
-				vsp_priv->vp8_encode_frame_cmd,
-				vsp_priv->ctrl->cmd_rd);
-
-			/* psb_clflush(vsp_priv->coded_buf); */
-
-			VSP_DEBUG("size %d\n", t->encoded_frame_size);
-
-			VSP_DEBUG("status[0x80010000=success] %x\n",
-					encoded_frame->status);
-			VSP_DEBUG("frame flags[1=Key, 0=Non-key] %d\n",
-					encoded_frame->frame_flags);
-			VSP_DEBUG("segments = %d\n",
-					encoded_frame->segments);
-			VSP_DEBUG("quantizer[0]=%d\n",
-					encoded_frame->quantizer[0]);
-			VSP_DEBUG("frame size %d[bytes]\n",
-					encoded_frame->frame_size);
-			VSP_DEBUG("partitions num %d\n",
-					encoded_frame->partitions);
-			VSP_DEBUG("coded data start %p\n",
-					encoded_frame->coded_data);
-			VSP_DEBUG("surfaceId_of_ref_frame[0] %x\n",
-					encoded_frame->surfaceId_of_ref_frame[0]);
-			VSP_DEBUG("surfaceId_of_ref_frame[1] %x\n",
-					encoded_frame->surfaceId_of_ref_frame[1]);
-			VSP_DEBUG("surfaceId_of_ref_frame[2] %x\n",
-					encoded_frame->surfaceId_of_ref_frame[2]);
-			VSP_DEBUG("surfaceId_of_ref_frame[3] %x\n",
-					encoded_frame->surfaceId_of_ref_frame[3]);
-
-			if (encoded_frame->partitions > PARTITIONS_MAX) {
-				VSP_DEBUG("partitions num error\n");
-				encoded_frame->partitions = PARTITIONS_MAX;
-			}
-
-			for (; i < encoded_frame->partitions; i++) {
-				VSP_DEBUG("%d partitions size %d start %x\n", i,
-					encoded_frame->partition_size[i],
-					encoded_frame->partition_start[i]);
-			}
-
-			/* dump coded buf for debug */
-			int size = sizeof(struct VssVp8encEncodedFrame);
-			char *tmp = (char *) (vsp_priv->coded_buf);
-			for (j = 0; j < 32; j++) {
-				VSP_DEBUG("coded buf is: %d, %x\n", j,
-					*(tmp + size - 4 + j));
-			}
-#endif
-
+			break;
+		}
+		case VssWiDi_ComposeFrameResponse:
+		{
+			VSP_DEBUG("Compose sequence %x is done!!\n", msg->buffer);
+			sequence = msg->buffer;
 			break;
 		}
 		default:
@@ -356,25 +304,8 @@ int vsp_cmdbuf_vpp(struct drm_file *priv,
 	unsigned long cmd_page_offset = arg->cmdbuf_offset & ~PAGE_MASK;
 	struct ttm_bo_kmap_obj cmd_kmap;
 	bool is_iomem;
-	uint32_t invalid_mmu = 0;
 	struct file *filp = priv->filp;
-
-	ret = mutex_lock_interruptible(&vsp_priv->vsp_mutex);
-	if (unlikely(ret != 0))
-		return -EFAULT;
-
-	if (vsp_priv->vsp_state == VSP_STATE_IDLE)
-		ospm_apm_power_down_vsp(dev);
-
-	if (power_island_get(OSPM_VIDEO_VPP_ISLAND) == false) {
-		ret = -EBUSY;
-		goto out_err;
-	}
-
-	/* check if mmu should be invalidated */
-	invalid_mmu = atomic_cmpxchg(&dev_priv->vsp_mmu_invaldc, 1, 0);
-	if (invalid_mmu && psb_check_vsp_idle(dev) == 0)
-		vsp_priv->ctrl->mmu_tlb_soft_invalidate = 1;
+	bool need_power_put = 0;
 
 	memset(&cmd_kmap, 0, sizeof(cmd_kmap));
 	vsp_priv->vsp_cmd_num = 1;
@@ -384,12 +315,12 @@ int vsp_cmdbuf_vpp(struct drm_file *priv,
 	    (arg->cmdbuf_size > cmd_buffer->acc_size) ||
 	    (arg->cmdbuf_size + arg->cmdbuf_offset) > cmd_buffer->acc_size) {
 		DRM_ERROR("VSP: the size of cmdbuf is invalid!");
-		DRM_ERROR("VSP: offset=%x, size=%x,cmd_buffer size=%x\n",
+		DRM_ERROR("VSP: offset=%x, size=%x,cmd_buffer size=%zx\n",
 			  arg->cmdbuf_offset, arg->cmdbuf_size,
 			  cmd_buffer->acc_size);
 		vsp_priv->vsp_cmd_num = 0;
 		ret = -EFAULT;
-		goto out_err1;
+		goto out_err;
 	}
 
 	VSP_DEBUG("map command first\n");
@@ -398,7 +329,7 @@ int vsp_cmdbuf_vpp(struct drm_file *priv,
 	if (ret) {
 		DRM_ERROR("VSP: ttm_bo_kmap failed: %d\n", ret);
 		vsp_priv->vsp_cmd_num = 0;
-		goto out_err1;
+		goto out_err;
 	}
 
 	cmd_start = (unsigned char *) ttm_kmap_obj_virtual(&cmd_kmap,
@@ -411,11 +342,34 @@ int vsp_cmdbuf_vpp(struct drm_file *priv,
 	if (ret)
 		goto out;
 
+	if (time_after(jiffies, vsp_priv->cmd_submit_time + HZ * 50 / 1000)) {
+		VSP_DEBUG(" will be force to flush cmd due to jiffies\n");
+		vsp_priv->force_flush_cmd = 1;
+	}
+
+	if (drm_vsp_vpp_batch_cmd == 0)
+		vsp_priv->force_flush_cmd = 1;
+
+	if (vsp_priv->vsp_state == VSP_STATE_IDLE)
+		ospm_apm_power_down_vsp(dev);
+
+	if (vsp_priv->acc_num_cmd >= 1 || vsp_priv->force_flush_cmd != 0
+	    || vsp_priv->delayed_burst_cnt > 0) {
+		if (power_island_get(OSPM_VIDEO_VPP_ISLAND) == false) {
+			ret = -EBUSY;
+			goto out_err1;
+		}
+		need_power_put = 1;
+	}
+
 	VSP_DEBUG("will submit command\n");
 	ret = vsp_submit_cmdbuf(dev, filp, cmd_start, arg->cmdbuf_size);
 	if (ret)
-		goto out;
+		goto out_err1;
 
+out_err1:
+	if (need_power_put)
+		power_island_put(OSPM_VIDEO_VPP_ISLAND);
 out:
 	ttm_bo_kunmap(&cmd_kmap);
 
@@ -425,11 +379,7 @@ out:
 	spin_unlock(&cmd_buffer->bdev->fence_lock);
 
 	vsp_priv->vsp_cmd_num = 0;
-out_err1:
-	power_island_put(OSPM_VIDEO_VPP_ISLAND);
 out_err:
-	mutex_unlock(&vsp_priv->vsp_mutex);
-
 	return ret;
 }
 
@@ -447,21 +397,23 @@ int vsp_submit_cmdbuf(struct drm_device *dev,
 		DRM_ERROR("The VSP is hang abnormally!");
 		return -EFAULT;
 	}
+	if (vsp_priv->acc_num_cmd >= 1 || vsp_priv->force_flush_cmd != 0
+	    || vsp_priv->delayed_burst_cnt > 0) {
+		/* consider to invalidate/flush MMU */
+		if (vsp_priv->vsp_state == VSP_STATE_DOWN) {
+			VSP_DEBUG("needs reset\n");
 
-	/* consider to invalidate/flush MMU */
-	if (vsp_priv->vsp_state == VSP_STATE_DOWN) {
-		VSP_DEBUG("needs reset\n");
-
-		if (vsp_reset(dev_priv)) {
-			ret = -EBUSY;
-			DRM_ERROR("VSP: failed to reset\n");
-			return ret;
+			if (vsp_reset(dev_priv)) {
+				ret = -EBUSY;
+				DRM_ERROR("VSP: failed to reset\n");
+				return ret;
+			}
 		}
-	}
 
-	if (vsp_priv->vsp_state == VSP_STATE_SUSPEND) {
-		ret = vsp_resume_function(dev_priv);
-		VSP_DEBUG("The VSP is on suspend, send resume!\n");
+		if (vsp_priv->vsp_state == VSP_STATE_SUSPEND) {
+			ret = vsp_resume_function(dev_priv);
+			VSP_DEBUG("The VSP is on suspend, send resume!\n");
+		}
 	}
 
 	/* submit command to HW */
@@ -500,13 +452,11 @@ int vsp_send_command(struct drm_device *dev,
 
 
 	/* if the VSP in suspend, update the saved config info */
-#if 0
 	if (vsp_priv->vsp_state == VSP_STATE_SUSPEND) {
 		VSP_DEBUG("In suspend, need update saved cmd_wr!\n");
 		vsp_priv->ctrl = (struct vsp_ctrl_reg *)
 				 &(vsp_priv->saved_config_regs[2]);
 	}
-#endif
 
 	while (cmd_size) {
 		rd = vsp_priv->ctrl->cmd_rd;
@@ -514,10 +464,11 @@ int vsp_send_command(struct drm_device *dev,
 
 		remaining_space = rd >= wr + 1 ? rd - wr - 1 :
 			VSP_CMD_QUEUE_SIZE - (wr + 1 - rd) ;
+		remaining_space -= vsp_priv->acc_num_cmd;
 
 		VSP_DEBUG("VSP: rd %d, wr %d, remaining_space %d, ",
 			  rd, wr, remaining_space);
-		VSP_DEBUG("cmd_size %ld sizeof(*cur_cmd) %d\n",
+		VSP_DEBUG("cmd_size %ld sizeof(*cur_cmd) %ld\n",
 			  cmd_size, sizeof(*cur_cmd));
 
 		if (remaining_space < vsp_priv->vsp_cmd_num) {
@@ -535,7 +486,7 @@ int vsp_send_command(struct drm_device *dev,
 			continue;
 		}
 
-		for (cmd_idx = 0; cmd_idx < remaining_space;) {
+		for (cmd_idx = vsp_priv->acc_num_cmd; cmd_idx < remaining_space;) {
 			VSP_DEBUG("current cmd type %x\n", cur_cmd->type);
 			if (cur_cmd->type == VspFencePictureParamCommand) {
 				VSP_DEBUG("skip VspFencePictureParamCommand");
@@ -556,6 +507,18 @@ int vsp_send_command(struct drm_device *dev,
 					goto out;
 				else
 					continue;
+			} else if (cur_cmd->type == VspFenceComposeCommand) {
+				VSP_DEBUG("skip VspFenceComposeCommand\n");
+				cur_cmd++;
+				cmd_size -= sizeof(*cur_cmd);
+				VSP_DEBUG("first cmd_size %ld\n", cmd_size);
+				if (cmd_size == 0)
+					goto out;
+				else
+					continue;
+			} else if (cur_cmd->type == VssWiDi_ComposeFrameCommand) {
+				/* save the fence value in buffer_id */
+				cur_cmd->buffer_id = vsp_priv->compose_fence;
 			}
 
 			/* FIXME: could remove cmd_idx here */
@@ -568,8 +531,9 @@ int vsp_send_command(struct drm_device *dev,
 				cur_cell_cmd->context, cur_cell_cmd->type,
 				cur_cell_cmd->buffer, cur_cell_cmd->size,
 				cur_cell_cmd->buffer_id, cur_cell_cmd->irq);
-			VSP_DEBUG("send %.8x cmd to VSP",
+			VSP_DEBUG("send %.8x cmd to VSP\n",
 					cur_cell_cmd->type);
+
 			num_cmd++;
 			cur_cmd++;
 			cmd_size -= sizeof(*cur_cmd);
@@ -585,9 +549,23 @@ int vsp_send_command(struct drm_device *dev,
 out:
 	/* update write index */
 	VSP_DEBUG("%d cmd will send to VSP!\n", num_cmd);
+	if (vsp_priv->delayed_burst_cnt > 0)
+		--vsp_priv->delayed_burst_cnt;
 
-	vsp_priv->ctrl->cmd_wr =
-		(vsp_priv->ctrl->cmd_wr + num_cmd) % VSP_CMD_QUEUE_SIZE;
+	vsp_priv->cmd_submit_time = jiffies;
+
+	vsp_priv->acc_num_cmd += num_cmd;
+	if (vsp_priv->acc_num_cmd > 1 || vsp_priv->force_flush_cmd != 0 ||
+	    vsp_priv->delayed_burst_cnt > 0) {
+		vsp_priv->ctrl->cmd_wr =
+			(vsp_priv->ctrl->cmd_wr + vsp_priv->acc_num_cmd) %
+			VSP_CMD_QUEUE_SIZE;
+		vsp_priv->acc_num_cmd = 0;
+		vsp_priv->force_flush_cmd = 0;
+		cancel_delayed_work(&vsp_priv->vsp_cmd_submit_check_wq);
+	} else {
+		schedule_delayed_work(&vsp_priv->vsp_cmd_submit_check_wq, HZ);
+	}
 
 	return 0;
 }
@@ -609,9 +587,11 @@ static int vsp_prehandle_command(struct drm_file *priv,
 	struct drm_device *dev = priv->minor->dev;
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct vsp_private *vsp_priv = dev_priv->vsp_private;
-	struct ttm_buffer_object *pic_bo_vp8;
-	struct ttm_buffer_object *coded_buf_bo;
+	struct ttm_buffer_object *pic_bo_vp8 = NULL;
 	int vp8_pic_num = 0;
+	struct ttm_buffer_object *compose_param_bo = NULL;
+	int compose_param_num = 0;
+
 
 	cur_cmd = (struct vss_command_t *)cmd_start;
 
@@ -642,6 +622,28 @@ static int vsp_prehandle_command(struct drm_file *priv,
 				ret = -1;
 				goto out;
 			}
+		} else if (cur_cmd->type == VspFenceComposeCommand) {
+			compose_param_bo =
+				ttm_buffer_object_lookup(tfile,
+							 cur_cmd->buffer);
+			if (compose_param_bo == NULL) {
+				DRM_ERROR("VSP: failed to find %x bo\n",
+					  cur_cmd->buffer);
+				ret = -1;
+				goto out;
+			}
+			compose_param_num++;
+			VSP_DEBUG("find compose param buffer: id %x, offset %lx\n",
+				  cur_cmd->buffer, compose_param_bo->offset);
+			VSP_DEBUG("compose param placement %x bus.add %p\n",
+				  compose_param_bo->mem.placement,
+				  compose_param_bo->mem.bus.addr);
+			if (compose_param_num > 1) {
+				DRM_ERROR("compose_param_num invalid(%d)!\n",
+					  compose_param_num);
+				ret = -1;
+				goto out;
+			}
 		} else if (cur_cmd->type == VspSetContextCommand) {
 			VSP_DEBUG("set context and new vsp FRC context\n");
 		} else if (cur_cmd->type == Vss_Sys_STATE_BUF_COMMAND) {
@@ -653,6 +655,8 @@ static int vsp_prehandle_command(struct drm_file *priv,
 				cur_cmd->buffer = 1;
 			} else if (priv->filp == vsp_priv->vp8_filp[1]) {
 				cur_cmd->buffer = 2;
+			} else if (priv->filp == vsp_priv->vp8_filp[2]) {
+				cur_cmd->buffer = 3;
 			} else {
 				DRM_ERROR("got the wrong context_id and exit\n");
 				return -1;
@@ -663,6 +667,16 @@ static int vsp_prehandle_command(struct drm_file *priv,
 			cur_cmd->irq = 0;
 			cur_cmd->reserved6 = 0;
 			cur_cmd->reserved7 = 0;
+		} else if (cur_cmd->type == VssGenInitializeContext) {
+			/* Init them just get InitContext command */
+			vsp_priv->force_flush_cmd = 0;
+			vsp_priv->acc_num_cmd = 0;
+			vsp_priv->delayed_burst_cnt = 90;
+
+			vsp_cmd_num++;
+
+		} else if (cur_cmd->type == VssGenDestroyContext) {
+			vsp_cmd_num++;
 		} else
 			/* calculate the numbers of cmd send to VSP */
 			vsp_cmd_num++;
@@ -678,6 +692,8 @@ static int vsp_prehandle_command(struct drm_file *priv,
 				cur_cmd->context = 1;
 			} else if (priv->filp == vsp_priv->vp8_filp[1]) {
 				cur_cmd->context = 2;
+			} else if (priv->filp == vsp_priv->vp8_filp[2]) {
+				cur_cmd->context = 3;
 			} else {
 				DRM_ERROR("got the wrong context_id and exit\n");
 				return -1;
@@ -694,23 +710,13 @@ static int vsp_prehandle_command(struct drm_file *priv,
 				goto out;
 			}
 
-			coded_buf_bo =
-				ttm_buffer_object_lookup(tfile,
-						cur_cmd->reserved6);
-			if (coded_buf_bo == NULL) {
-				DRM_ERROR("VSP: failed to find %x bo\n",
-					cur_cmd->reserved6);
-				ret = -1;
-				goto out;
-			}
-
 			vp8_pic_num++;
 			VSP_DEBUG("find pic param buffer: id %x, offset %lx\n",
 				cur_cmd->reserved7, pic_bo_vp8->offset);
 			VSP_DEBUG("pic param placement %x bus.add %p\n",
 				pic_bo_vp8->mem.placement,
 				pic_bo_vp8->mem.bus.addr);
-			if (pic_param_num > 1) {
+			if (vp8_pic_num > 1) {
 				DRM_ERROR("should be only 1 pic param cmd\n");
 				ret = -1;
 				goto out;
@@ -722,6 +728,8 @@ static int vsp_prehandle_command(struct drm_file *priv,
 				cur_cmd->context = 1;
 			} else if (priv->filp == vsp_priv->vp8_filp[1]) {
 				cur_cmd->context = 2;
+			} else if (priv->filp == vsp_priv->vp8_filp[2]) {
+				cur_cmd->context = 3;
 			} else {
 				DRM_ERROR("got the wrong context_id and exit\n");
 				return -1;
@@ -729,6 +737,10 @@ static int vsp_prehandle_command(struct drm_file *priv,
 
 			memcpy(&vsp_priv->seq_cmd, cur_cmd, sizeof(struct vss_command_t));
 		}
+
+		/* for VP8, directly submit without delay */
+		if (cur_cmd->context != 0)
+			vsp_priv->force_flush_cmd = 1;
 
 		cmd_size -= sizeof(*cur_cmd);
 		cur_cmd++;
@@ -738,17 +750,24 @@ static int vsp_prehandle_command(struct drm_file *priv,
 		vsp_priv->vsp_cmd_num = vsp_cmd_num;
 
 	if (pic_param_num > 0) {
-		ret = vsp_fence_surfaces(priv, validate_list, fence_type, arg,
+		ret = vsp_fence_vpp_surfaces(priv, validate_list, fence_type, arg,
 					 fence_arg, pic_param_bo);
 	} else if (vp8_pic_num > 0) {
 		ret = vsp_fence_vp8enc_surfaces(priv, validate_list,
 					fence_type, arg,
-					fence_arg, pic_bo_vp8, coded_buf_bo);
+					fence_arg, pic_bo_vp8);
+	} else if (compose_param_num) {
+		vsp_priv->force_flush_cmd = 1;
+		ret = vsp_fence_compose_surfaces(priv, validate_list,
+					fence_type, arg,
+					fence_arg, compose_param_bo);
 	} else {
 		/* unreserve these buffer */
 		list_for_each_entry_safe(pos, next, validate_list, head) {
 			ttm_bo_unreserve(pos->bo);
 		}
+
+		vsp_priv->force_flush_cmd = 1;
 
 		VSP_DEBUG("no fence for this command\n");
 		goto out;
@@ -761,7 +780,7 @@ out:
 	return ret;
 }
 
-int vsp_fence_surfaces(struct drm_file *priv,
+int vsp_fence_vpp_surfaces(struct drm_file *priv,
 		       struct list_head *validate_list,
 		       uint32_t fence_type,
 		       struct drm_psb_cmdbuf_arg *arg,
@@ -782,6 +801,9 @@ int vsp_fence_surfaces(struct drm_file *priv,
 	struct list_head surf_list, tmp_list;
 	struct ttm_validate_buffer *pos, *next, *cur_valid_buf;
 	struct ttm_object_file *tfile = BCVideoGetPriv(priv)->tfile;
+	struct drm_device *dev = priv->minor->dev;
+	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct vsp_private *vsp_priv = dev_priv->vsp_private;
 
 	INIT_LIST_HEAD(&surf_list);
 	INIT_LIST_HEAD(&tmp_list);
@@ -800,6 +822,9 @@ int vsp_fence_surfaces(struct drm_file *priv,
 
 	output_surf_num = pic_param->num_output_pictures;
 	VSP_DEBUG("output surf num %d\n", output_surf_num);
+
+	if (output_surf_num == 0)
+		vsp_priv->force_flush_cmd = 1;
 
 	/* create surface fence*/
 	for (idx = 0; idx < output_surf_num - 1; ++idx) {
@@ -901,8 +926,7 @@ static int vsp_fence_vp8enc_surfaces(struct drm_file *priv,
 				uint32_t fence_type,
 				struct drm_psb_cmdbuf_arg *arg,
 				struct psb_ttm_fence_rep *fence_arg,
-				struct ttm_buffer_object *pic_param_bo,
-				struct ttm_buffer_object *coded_buf_bo)
+				struct ttm_buffer_object *pic_param_bo)
 {
 	bool is_iomem;
 	int ret = 0;
@@ -930,40 +954,19 @@ static int vsp_fence_vp8enc_surfaces(struct drm_file *priv,
 				&vp8_encode_frame__kmap,
 				&is_iomem);
 
-	VSP_DEBUG("save vp8 pic param address %x\n", pic_param);
+	VSP_DEBUG("save vp8 pic param address %p\n", pic_param);
 
-	VSP_DEBUG("bo addr %x kernel addr %x surfaceid %x base %x base_uv %x\n",
+	VSP_DEBUG("bo addr %p kernel addr %p surfaceid %x base %x base_uv %x\n",
 			pic_param_bo,
 			pic_param,
 			pic_param->input_frame.surface_id,
 			pic_param->input_frame.base,
 			pic_param->input_frame.base_uv);
 
-	VSP_DEBUG("pic_param->encoded_frame_base = %p\n",
+	VSP_DEBUG("pic_param->encoded_frame_base = %d\n",
 			pic_param->encoded_frame_base);
 
 	vsp_priv->vp8_encode_frame_cmd = (void *)pic_param;
-
-	if (vsp_priv->coded_buf != NULL) {
-		ttm_bo_kunmap(&vsp_priv->coded_buf_kmap);
-		ttm_bo_unref(&vsp_priv->coded_buf_bo);
-		vsp_priv->coded_buf = NULL;
-	}
-	/* map coded buffer */
-	ret = ttm_bo_kmap(coded_buf_bo, 0, coded_buf_bo->num_pages,
-			  &vsp_priv->coded_buf_kmap);
-	if (ret) {
-		DRM_ERROR("VSP: ttm_bo_kmap failed: %d\n", ret);
-		ttm_bo_unref(&coded_buf_bo);
-		goto out;
-	}
-
-	vsp_priv->coded_buf_bo = coded_buf_bo;
-	vsp_priv->coded_buf = (void *)
-		ttm_kmap_obj_virtual(
-				&vsp_priv->coded_buf_kmap,
-				&is_iomem);
-
 
 	/* just fence pic param if this is not end command */
 	/* only send last output fence_arg back */
@@ -971,8 +974,7 @@ static int vsp_fence_vp8enc_surfaces(struct drm_file *priv,
 			  arg->fence_flags, validate_list,
 			  fence_arg, &fence);
 	if (fence) {
-		VSP_DEBUG("vp8 fence sequence %x at output pic %x\n",
-			  fence->sequence);
+		VSP_DEBUG("vp8 fence sequence %x\n", fence->sequence);
 		pic_param->input_frame.surface_id = fence->sequence;
 		vsp_priv->last_sequence = fence->sequence;
 
@@ -988,6 +990,39 @@ out:
 #endif
 	return ret;
 }
+
+static int vsp_fence_compose_surfaces(struct drm_file *priv,
+				struct list_head *validate_list,
+				uint32_t fence_type,
+				struct drm_psb_cmdbuf_arg *arg,
+				struct psb_ttm_fence_rep *fence_arg,
+				struct ttm_buffer_object *compose_param_bo)
+{
+	int ret = 0;
+	struct ttm_fence_object *fence = NULL;
+	struct drm_device *dev = priv->minor->dev;
+	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct vsp_private *vsp_priv = dev_priv->vsp_private;
+
+	psb_fence_or_sync(priv, VSP_ENGINE_VPP, fence_type,
+			  arg->fence_flags, validate_list,
+			  fence_arg, &fence);
+	if (fence) {
+		VSP_DEBUG("compose fence sequence %x\n",
+			  fence->sequence);
+		vsp_priv->compose_fence = fence->sequence;
+
+		ttm_fence_object_unref(&fence);
+	} else {
+		VSP_DEBUG("NO fence?????\n");
+		ret = -1;
+	}
+	ttm_bo_unref(&compose_param_bo);
+	return ret;
+}
+
+
+
 
 bool vsp_fence_poll(struct drm_device *dev)
 {
@@ -1020,6 +1055,7 @@ int vsp_new_context(struct drm_device *dev, struct file *filp, int ctx_type)
 {
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct vsp_private *vsp_priv = dev_priv->vsp_private;
+	int ret = 0;
 
 	dev_priv = dev->dev_private;
 	if (dev_priv == NULL) {
@@ -1033,27 +1069,51 @@ int vsp_new_context(struct drm_device *dev, struct file *filp, int ctx_type)
 		return -1;
 	}
 
-	vsp_priv->context_num++;
 	if (VAEntrypointEncSlice == ctx_type) {
 		vsp_priv->context_vp8_num++;
-		if (vsp_priv->context_vp8_num > 2) {
-			DRM_ERROR("VSP: Only support dual vp8 encoding!\n");
-			return vsp_priv->context_vp8_num;
+		if (vsp_priv->context_vp8_num > MAX_VP8_CONTEXT_NUM) {
+			DRM_ERROR("VSP: Only support 3 vp8 encoding!\n");
+			/* store the 4th vp8 encoding fd for remove context use */
+			vsp_priv->vp8_filp[3] = filp;
+			return -1;
 		}
 
-		/* store the fd of 2 vp8 encoding processes */
+		/* store the fd of 3 vp8 encoding processes */
 		if (vsp_priv->vp8_filp[0] == NULL) {
 			vsp_priv->vp8_filp[0] = filp;
 		} else if (vsp_priv->vp8_filp[1] == NULL) {
 			vsp_priv->vp8_filp[1] = filp;
+		} else if (vsp_priv->vp8_filp[2] == NULL) {
+			vsp_priv->vp8_filp[2] = filp;
 		} else {
-			DRM_ERROR("VSP: The current 2 vp8 contexts have not been removed\n");
+			DRM_ERROR("VSP: The current 3 vp8 contexts have not been removed\n");
 		}
-
-		return vsp_priv->context_vp8_num;
+	} else if (ctx_type == VAEntrypointVideoProc) {
+		vsp_priv->context_vpp_num++;
+#ifdef MOOREFIELD
+		if (vsp_priv->context_vpp_num > MAX_VPP_CONTEXT_NUM) {
+			DRM_ERROR("VSP: Only support one VPP stream!\n");
+			ret = -1;
+		}
+#endif
+	} else {
+		DRM_ERROR("VSP: couldn't support the context %x\n", ctx_type);
+		ret = -1;
 	}
 
-	return vsp_priv->context_num;
+	VSP_DEBUG("context_vp8_num %d, context_vpp_num %d\n",
+			vsp_priv->context_vp8_num, vsp_priv->context_vpp_num);
+
+	/* load VSP firmware now */
+	if (unlikely(vsp_priv->fw_loaded == 0)) {
+		ret = tng_securefw(dev, "vsp", "VSP", TNG_IMR11L_MSG_REGADDR);
+		if (ret != 0) {
+			DRM_ERROR("VSP: failed to init firmware\n");
+			return ret;
+		}
+	}
+
+	return ret;
 }
 
 void vsp_rm_context(struct drm_device *dev, struct file *filp, int ctx_type)
@@ -1064,6 +1124,7 @@ void vsp_rm_context(struct drm_device *dev, struct file *filp, int ctx_type)
 	int count = 0;
 	struct vss_command_t *cur_cmd;
 	bool tmp = true;
+	int i = 0;
 
 	dev_priv = dev->dev_private;
 	if (dev_priv == NULL) {
@@ -1078,31 +1139,44 @@ void vsp_rm_context(struct drm_device *dev, struct file *filp, int ctx_type)
 	}
 
 	if (vsp_priv->ctrl == NULL) {
-		vsp_priv->context_num--;
-		if (filp == vsp_priv->vp8_filp[0])
-			vsp_priv->vp8_filp[0] = NULL;
-		else
-			vsp_priv->vp8_filp[1] = NULL;
+		for (i = 0; i < MAX_VP8_CONTEXT_NUM + 1; i++) {
+			if (filp == vsp_priv->vp8_filp[i])
+				vsp_priv->vp8_filp[i] = NULL;
+		}
 
 		if (VAEntrypointEncSlice == ctx_type) {
-			vsp_priv->context_vp8_num--;
+			if (vsp_priv->context_vp8_num > 0)
+				vsp_priv->context_vp8_num--;
+		} else if (ctx_type == VAEntrypointVideoProc) {
+			if (vsp_priv->context_vpp_num > 0)
+				vsp_priv->context_vpp_num--;
 		}
 		return;
 	}
 
 	VSP_DEBUG("ctx_type=%d\n", ctx_type);
 
-	if (VAEntrypointEncSlice == ctx_type) {
-		/* power on again to send VssGenDestroyContext to firmware */
-		if (power_island_get(OSPM_VIDEO_VPP_ISLAND) == false) {
-			tmp = -EBUSY;
-		}
+	/* power on again to send VssGenDestroyContext to firmware */
+	if (power_island_get(OSPM_VIDEO_VPP_ISLAND) == false) {
+		DRM_DEBUG_PM("The VSP power on fail!\n");
+		return ;
+	}
+
+	if (VAEntrypointEncSlice == ctx_type && filp != vsp_priv->vp8_filp[3]) {
+		vsp_priv->context_vp8_num--;
+		mutex_lock(&vsp_priv->vsp_mutex);
 		if (vsp_priv->vsp_state == VSP_STATE_SUSPEND) {
 			tmp = vsp_resume_function(dev_priv);
 			VSP_DEBUG("The VSP is on suspend, send resume!\n");
 		}
 
 		VSP_DEBUG("VP8 send the last command here to destroy context buffer\n");
+		/* Update cmd_wr for VP8 and FRC/VPP switch context case */
+		if (vsp_priv->acc_num_cmd >= 1) {
+			vsp_priv->ctrl->cmd_wr = (vsp_priv->ctrl->cmd_wr + 1) % VSP_CMD_QUEUE_SIZE;
+			vsp_priv->acc_num_cmd = 0;
+		}
+
 		cur_cmd = vsp_priv->cmd_queue + vsp_priv->ctrl->cmd_wr % VSP_CMD_QUEUE_SIZE;
 
 		cur_cmd->context = VSP_API_GENERIC_CONTEXT_ID;
@@ -1114,40 +1188,40 @@ void vsp_rm_context(struct drm_device *dev, struct file *filp, int ctx_type)
 		cur_cmd->reserved7 = 0;
 
 		/* judge which vp8 process should be remove context */
-		if (filp == vsp_priv->vp8_filp[0]) {
-			cur_cmd->buffer = 1;
-			vsp_priv->vp8_filp[0] = NULL;
-		} else if (filp == vsp_priv->vp8_filp[1]) {
-			cur_cmd->buffer = 2;
-			vsp_priv->vp8_filp[1] = NULL;
-		} else {
-			VSP_DEBUG("support dual VP8 encoding at most\n");
+		for (i = 0; i< MAX_VP8_CONTEXT_NUM; i++) {
+			/* context_id=1 for filp[0] */
+			/* context_id=2 for filp[1] */
+			/* context_id=3 for filp[2] */
+			if (filp == vsp_priv->vp8_filp[i]) {
+				cur_cmd->buffer = i + 1;
+				vsp_priv->vp8_filp[i] = NULL;
+			}
 		}
-		
+
 		vsp_priv->ctrl->cmd_wr =
 			(vsp_priv->ctrl->cmd_wr + 1) % VSP_CMD_QUEUE_SIZE;
+		mutex_unlock(&vsp_priv->vsp_mutex);
 
 		/* Wait all the cmd be finished */
-		while (vsp_priv->vp8_cmd_num > 0 && count++ < 120) {
-			msleep(1);
+		while (vsp_priv->vp8_cmd_num > 0 && count++ < 20000) {
+			PSB_UDELAY(6);
 		}
 
-		if (count == 120) {
+		if (count == 20000) {
 			DRM_ERROR("Failed to handle sigint event\n");
 		}
-
-		if (vsp_priv->coded_buf != NULL) {
-			ttm_bo_kunmap(&vsp_priv->coded_buf_kmap);
-			ttm_bo_unref(&vsp_priv->coded_buf_bo);
-			vsp_priv->coded_buf = NULL;
-		}
-
+	} else if(VAEntrypointEncSlice == ctx_type && filp == vsp_priv->vp8_filp[3]) {
+		/* driver support 3 vp8 encoding simultaneously at most */
+		/* clear the 4th vp8 encoding fd */
 		vsp_priv->context_vp8_num--;
-	}
+		vsp_priv->vp8_filp[3] = NULL;
+	} else if (ctx_type == VAEntrypointVideoProc)
+		vsp_priv->context_vpp_num--;
 
-	vsp_priv->context_num--;
-
-	if (vsp_priv->context_num >= 1) {
+	/* Return if there is any context is running */
+	if (vsp_priv->context_vp8_num > 0 || vsp_priv->context_vpp_num > 0) {
+		VSP_DEBUG("context_vp8_num %d, context_vpp_num %d\n",
+			vsp_priv->context_vp8_num, vsp_priv->context_vpp_num);
 		return;
 	}
 
@@ -1167,7 +1241,7 @@ void vsp_rm_context(struct drm_device *dev, struct file *filp, int ctx_type)
 		PSB_DEBUG_PM("VSP: OK. Power down the HW!\n");
 
 	/* FIXME: frequency should change */
-	VSP_PERF("the total time spend on VSP is %ld ms\n",
+	VSP_PERF("the total time spend on VSP is %lld ms\n",
 		 div_u64(vsp_priv->vss_cc_acc, 200 * 1000));
 
 	return;
@@ -1206,7 +1280,9 @@ int psb_check_vsp_idle(struct drm_device *dev)
 	int cmd_rd, cmd_wr;
 	unsigned int reg, mode;
 
-	if (vsp_priv->fw_loaded == 0 || vsp_priv->vsp_state == VSP_STATE_DOWN)
+	if (vsp_priv->fw_loaded == 0
+	    || vsp_priv->vsp_state == VSP_STATE_DOWN
+	    || vsp_priv->vsp_state == VSP_STATE_SUSPEND)
 		return 0;
 
 	cmd_rd = vsp_priv->ctrl->cmd_rd;
@@ -1284,7 +1360,7 @@ void vsp_irq_task(struct work_struct *work)
 	struct drm_psb_private *dev_priv;
 	uint32_t sequence;
 
-	if (!vsp_priv)
+	if (!vsp_priv || vsp_priv->fw_loaded == VSP_FW_NONE)
 		return;
 
 	dev = vsp_priv->dev;
@@ -1319,10 +1395,51 @@ void vsp_irq_task(struct work_struct *work)
 	return;
 }
 
+void vsp_cmd_submit_check(struct work_struct *work)
+{
+	struct vsp_private *vsp_priv =
+		container_of(work, struct vsp_private, vsp_cmd_submit_check_wq.work);
+	struct drm_device *dev;
+	struct drm_psb_private *dev_priv;
+	uint32_t power_up_try_count;
+
+	if (!vsp_priv)
+		return;
+
+	dev = vsp_priv->dev;
+	dev_priv = dev->dev_private;
+
+	mutex_lock(&vsp_priv->vsp_mutex);
+
+	if (vsp_priv->acc_num_cmd > 0) {
+		power_up_try_count = 10;
+		while (power_up_try_count--)
+			if (power_island_get(OSPM_VIDEO_VPP_ISLAND) == true)
+				break;
+		if (power_up_try_count <= 0) {
+			DRM_ERROR("failed to send remaining command");
+			goto out;
+		}
+
+		vsp_resume_function(dev_priv);
+
+		vsp_priv->ctrl->cmd_wr =
+			(vsp_priv->ctrl->cmd_wr + vsp_priv->acc_num_cmd) % VSP_CMD_QUEUE_SIZE;
+		vsp_priv->acc_num_cmd = 0;
+		vsp_priv->force_flush_cmd = 0;
+
+		power_island_put(OSPM_VIDEO_VPP_ISLAND);
+	}
+
+out:
+	mutex_unlock(&vsp_priv->vsp_mutex);
+	return;
+}
+
 int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 {
 	struct vsp_private *vsp_priv = dev_priv->vsp_private;
-	unsigned int reg, i, j, *cmd_p;
+	unsigned int reg, i;
 
 	/* config info */
 	for (i = 0; i < VSP_CONFIG_SIZE; i++) {
@@ -1331,11 +1448,11 @@ int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 	}
 
 	/* ma_header_reg */
-	MM_READ32(vsp_priv->boot_header.ma_header_reg, 0, &reg);
+	MM_VSP_READ32(vsp_priv->boot_header.ma_header_reg, 0, &reg);
 	VSP_DEBUG("ma_header_reg:%x\n", reg);
 
 	/* The setting-struct */
-	VSP_DEBUG("setting addr:%x\n", vsp_priv->setting_bo->offset);
+	VSP_DEBUG("setting addr:%lx\n", vsp_priv->setting_bo->offset);
 	VSP_DEBUG("setting->command_queue_size:0x%x\n",
 			vsp_priv->setting->command_queue_size);
 	VSP_DEBUG("setting->command_queue_addr:%x\n",
@@ -1348,7 +1465,7 @@ int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 	/* dump dma register */
 	VSP_DEBUG("partition1_dma_external_ch[0..23]_pending_req_cnt\n");
 	for (i=0; i <= 23; i++) {
-		MM_READ32(0x150010, i * 0x20, &reg);
+		MM_VSP_READ32(0x150010, i * 0x20, &reg);
 		if (reg != 0)
 			VSP_DEBUG("partition1_dma_external_ch%d_pending_req_cnt = 0x%x\n",
 					i, reg);
@@ -1356,7 +1473,7 @@ int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 
 	VSP_DEBUG("partition1_dma_external_dim[0..31]_pending_req_cnt\n");
 	for (i=0; i <= 31; i++) {
-		MM_READ32(0x151008, i * 0x20, &reg);
+		MM_VSP_READ32(0x151008, i * 0x20, &reg);
 		if (reg != 0)
 			VSP_DEBUG("partition1_dma_external_dim%d_pending_req_cnt = 0x%x\n",
 					i, reg);
@@ -1364,14 +1481,14 @@ int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 
 	VSP_DEBUG("partition1_dma_internal_ch[0..7]_pending_req_cnt\n");
 	for (i=0; i <= 7; i++) {
-		MM_READ32(0x160010, i * 0x20, &reg);
+		MM_VSP_READ32(0x160010, i * 0x20, &reg);
 		if (reg != 0)
 			VSP_DEBUG("partition1_dma_internal_ch%d_pending_req_cnt = 0x%x\n",
 					i, reg);
 	}
 	VSP_DEBUG("partition1_dma_internal_dim[0..7]_pending_req_cnt\n");
 	for (i=0; i <= 7; i++) {
-		MM_READ32(0x160408, i * 0x20, &reg);
+		MM_VSP_READ32(0x160408, i * 0x20, &reg);
 		if (reg != 0)
 			VSP_DEBUG("partition1_dma_internal_dim%d_pending_req_cnt = 0x%x\n",
 					i, reg);
@@ -1379,7 +1496,7 @@ int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 
 	/* IRQ registers */
 	for (i = 0; i < 6; i++) {
-		MM_READ32(0x180000, i * 4, &reg);
+		MM_VSP_READ32(0x180000, i * 4, &reg);
 		VSP_DEBUG("partition1_gp_ireg_IRQ%d:%x", i, reg);
 	}
 	IRQ_REG_READ32(VSP_IRQ_CTRL_IRQ_EDGE, &reg);
@@ -1396,7 +1513,7 @@ int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 	VSP_DEBUG("partition1_irq_control_irq_pulse:%x\n", reg);
 
 	/* MMU table address */
-	MM_READ32(MMU_TABLE_ADDR, 0x0, &reg);
+	MM_VSP_READ32(MMU_TABLE_ADDR, 0x0, &reg);
 	VSP_DEBUG("mmu_page_table_address:%x\n", reg);
 
 	/* SP0 info */
@@ -1472,27 +1589,26 @@ int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 
 	/* ECA info */
 	VSP_DEBUG("ECA info\n");
-	MM_READ32(0x30000, 0x0, &reg);
+	MM_VSP_READ32(0x30000, 0x0, &reg);
 	VSP_DEBUG("partition1_sp0_tile_eca_stat_and_ctrl:%x\n", reg);
-	MM_READ32(0x30000, 0x4, &reg);
+	MM_VSP_READ32(0x30000, 0x4, &reg);
 	VSP_DEBUG("partition1_sp0_tile_eca_base_address:%x\n", reg);
-	MM_READ32(0x30000, 0x2C, &reg);
+	MM_VSP_READ32(0x30000, 0x2C, &reg);
 	VSP_DEBUG("partition1_sp0_tile_eca_debug_pc:%x\n", reg);
-	MM_READ32(0x30000, 0x30, &reg);
+	MM_VSP_READ32(0x30000, 0x30, &reg);
 	VSP_DEBUG("partition1_sp0_tile_eca_stall_stat_cfg_pmem_loc_op0:%x\n",
 			reg);
 
 	/* WDT info */
 	for (i = 0; i < 14; i++) {
-		MM_READ32(0x170000, i * 4, &reg);
+		MM_VSP_READ32(0x170000, i * 4, &reg);
 		VSP_DEBUG("partition1_wdt_reg%d:%x\n", i, reg);
 	}
 
 	/* command queue */
 	VSP_DEBUG("command queue:\n");
 	for (i = 0; i < VSP_CMD_QUEUE_SIZE; i++) {
-		cmd_p = &(vsp_priv->cmd_queue[i]);
-		VSP_DEBUG("cmd[%d]:%.8x %.8x %.8x %.8x %.8x %.8x %.8x %.8x", i,
+		VSP_DEBUG("cmd[%d]:%.8x %.8x %.8x %.8x %.8x %.8x %.8x %.8x\n", i,
 			vsp_priv->cmd_queue[i].context,
 			vsp_priv->cmd_queue[i].type,
 			vsp_priv->cmd_queue[i].buffer,
@@ -1506,8 +1622,7 @@ int psb_vsp_dump_info(struct drm_psb_private *dev_priv)
 	/* response queue */
 	VSP_DEBUG("ack queue:\n");
 	for (i = 0; i < VSP_ACK_QUEUE_SIZE; i++) {
-		cmd_p = &(vsp_priv->ack_queue[i]);
-		VSP_DEBUG("ack[%d]:%.8x %.8x %.8x %.8x %.8x %.8x %.8x %.8x", i,
+		VSP_DEBUG("ack[%d]:%.8x %.8x %.8x %.8x %.8x %.8x %.8x %.8x\n", i,
 			vsp_priv->ack_queue[i].context,
 			vsp_priv->ack_queue[i].type,
 			vsp_priv->ack_queue[i].buffer,
@@ -1564,6 +1679,18 @@ void check_invalid_cmd_type(unsigned int cmd_type)
 		DRM_ERROR("state buffer size too small\n");
 		break;
 
+	case VssWiDi_ComposeInit:
+		DRM_ERROR("WiDi Composer init failure\n");
+		break;
+
+	case VssWiDi_ComposeFrameCommand:
+		DRM_ERROR("WiDi composer compose frame failure\n");
+		break;
+
+	case VssWiDi_ComposeEndOfSequenceCommand:
+		DRM_ERROR("WiDi composer end of sequence command failure\n");
+		break;
+
 	default:
 		DRM_ERROR("VSP: Unknown command type %x\n", cmd_type);
 		break;
@@ -1589,7 +1716,6 @@ void check_invalid_cmd_arg(unsigned int cmd_type)
 
 void handle_error_response(unsigned int error_type, unsigned int cmd_type)
 {
-
 	switch (error_type) {
 	case VssInvalidCommandType:
 		check_invalid_cmd_type(cmd_type);
@@ -1607,11 +1733,13 @@ void handle_error_response(unsigned int error_type, unsigned int cmd_type)
 		break;
 	case VssInvalidSequenceParameters_VP8:
 		check_invalid_cmd_type(cmd_type);
-		DRM_ERROR("VSP: Invalid sequence parameter\n");
+		DRM_ERROR("VSP: Invalid sequence parameter(vp8) or"
+			" invalid frame parameter(WiDi composer)\n");
 		break;
 	case VssInvalidPictureParameters_VP8:
 		check_invalid_cmd_type(cmd_type);
-		DRM_ERROR("VSP: Invalid picture parameter\n");
+		DRM_ERROR("VSP: Invalid picture parameter(vp8) or"
+			" init failure (WiDi composer)\n");
 		break;
 	case VssInitFailure_VP8:
 		check_invalid_cmd_type(cmd_type);
@@ -1620,6 +1748,9 @@ void handle_error_response(unsigned int error_type, unsigned int cmd_type)
 	case VssCorruptFrame:
 		DRM_ERROR("VSP: Coded Frame is corrupted\n");
 		break;
+	case VssCorruptFramecontinue_VP8:
+		DRM_ERROR("VSP: not need to re-init context\n");
+		break;
 	case VssContextMustBeDestroyed_VP8:
 		DRM_ERROR("VSP: context must be destroyed and new context is created\n");
 		break;
@@ -1627,56 +1758,5 @@ void handle_error_response(unsigned int error_type, unsigned int cmd_type)
 		DRM_ERROR("VSP: Unknown error, code %x\n", error_type);
 		break;
 	}
-}
-
-static int vp8_error_response(struct drm_psb_private *dev_priv, int context)
-{
-	struct vsp_private *vsp_priv = dev_priv->vsp_private;
-	struct vss_command_t *cur_cell_cmd, *cur_cmd;
-	unsigned int cmd_rd, cmd_wr;
-	int sequence;
-
-	cmd_rd = vsp_priv->ctrl->cmd_rd;
-	cmd_wr = vsp_priv->ctrl->cmd_wr;
-	VSP_DEBUG("cmd_rd=%d, cmd_wr=%d\n", cmd_rd, cmd_wr);
-
-	VSP_DEBUG("send destroy context buffer command\n");
-	cur_cmd = vsp_priv->cmd_queue + vsp_priv->ctrl->cmd_wr % VSP_CMD_QUEUE_SIZE;
-
-	cur_cmd->context = VSP_API_GENERIC_CONTEXT_ID;
-	cur_cmd->type = VssGenDestroyContext;
-	cur_cmd->size = 0;
-	cur_cmd->buffer_id = 0;
-	cur_cmd->irq = 0;
-	cur_cmd->reserved6 = 0;
-	cur_cmd->reserved7 = 0;
-	cur_cmd->buffer = context;
-
-	VSP_DEBUG("send create context buffer command\n");
-	cur_cmd = vsp_priv->cmd_queue + (vsp_priv->ctrl->cmd_wr + 1) % VSP_CMD_QUEUE_SIZE;
-	cur_cmd->context = VSP_API_GENERIC_CONTEXT_ID;
-	cur_cmd->type = VssGenInitializeContext;
-	cur_cmd->buffer = context;
-	cur_cmd->size = VSP_APP_ID_VP8_ENC;
-	cur_cmd->buffer_id = 0;
-	cur_cmd->irq = 0;
-	cur_cmd->reserved6 = 0;
-	cur_cmd->reserved7 = 0;
-
-	VSP_DEBUG("send seq cmd again\n");
-	cur_cell_cmd = vsp_priv->cmd_queue + (vsp_priv->ctrl->cmd_wr + 2) % VSP_CMD_QUEUE_SIZE;
-
-	memcpy(cur_cell_cmd, &vsp_priv->seq_cmd, sizeof(struct vss_command_t));
-	VSP_DEBUG("cmd: %.8x %.8x %.8x %.8x %.8x %.8x\n",
-		   cur_cell_cmd->context, cur_cell_cmd->type,
-		   cur_cell_cmd->buffer, cur_cell_cmd->size,
-		   cur_cell_cmd->buffer_id, cur_cell_cmd->irq);
-	VSP_DEBUG("send %.8x cmd to VSP\n", cur_cell_cmd->type);
-
-	vsp_priv->ctrl->cmd_wr = (vsp_priv->ctrl->cmd_wr + VSP_CMD_QUEUE_SIZE + 3) % VSP_CMD_QUEUE_SIZE;
-
-	sequence = vsp_priv->last_sequence;
-
-	return sequence;
 }
 

@@ -47,9 +47,11 @@ static struct arizona_pdata wm5102_pdata  = {
     .irq_flags = IRQF_TRIGGER_FALLING,
     .gpio_base = CODEC_GPIO_BASE,
     .micd_pol_gpio = CODEC_GPIO_BASE + 4,
+	.jd_wake_time = 3000,
     .init_mic_delay = 500,
     .micd_bias_start_time = 7,
     .micd_rate = 6,
+    .micd_detect_debounce = 0,
     .micd_configs = wm5102_micd_config,
     .num_micd_configs = ARRAY_SIZE(wm5102_micd_config),
     .micd_ranges = micd_ctp_ranges,
@@ -98,7 +100,7 @@ void __init *wm5102_platform_data(void *info)
 #endif
 
 	//wm5102_pdata.reset = acpi_get_gpio("\\_SB.I2C7.PMIC", 3);
-	wm5102_pdata.reset = 203;
+	wm5102_pdata.reset = 371;
 	wm5102_pdata.ldoena = 125;
 
 	return &wm5102_pdata;

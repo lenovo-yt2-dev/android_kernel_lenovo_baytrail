@@ -119,12 +119,12 @@ DEFINE_PCI_DEVICE_TABLE(hsuart_port_pci_ids) = {
 	{ PCI_VDEVICE(INTEL, 0x08FC), hsu_port0 },
 	{ PCI_VDEVICE(INTEL, 0x08FD), hsu_port1 },
 	{ PCI_VDEVICE(INTEL, 0x08FE), hsu_port2 },
-	/* Tangier support */
+	/* Tangier and Anniedale support */
 	{ PCI_VDEVICE(INTEL, 0x1191), hsu_port0 },
-	/* VLV2 support */
+	/* VLV2 support FDK only */
 	{ PCI_VDEVICE(INTEL, 0x0F0A), hsu_port0 },
 	{ PCI_VDEVICE(INTEL, 0x0F0C), hsu_port1 },
-	/* CHV support */
+	/* CHV support, enume by ACPI not PCI now */
 	{ PCI_VDEVICE(INTEL, 0x228A), hsu_port0 },
 	{ PCI_VDEVICE(INTEL, 0x228C), hsu_port1 },
 	{},
@@ -134,7 +134,7 @@ DEFINE_PCI_DEVICE_TABLE(hsuart_dma_pci_ids) = {
 	{ PCI_VDEVICE(INTEL, 0x081E), hsu_dma },
 	/* Cloverview support */
 	{ PCI_VDEVICE(INTEL, 0x08FF), hsu_dma },
-	/* Tangier support */
+	/* Tangier and Anniedale support */
 	{ PCI_VDEVICE(INTEL, 0x1192), hsu_dma },
 	{},
 };
@@ -143,7 +143,7 @@ static int serial_hsu_pci_port_probe(struct pci_dev *pdev,
 				const struct pci_device_id *ent)
 {
 	struct uart_hsu_port *up;
-	int ret, port, hw_type;
+	int ret, port;
 	resource_size_t start, len;
 
 	start = pci_resource_start(pdev, 0);
@@ -152,7 +152,7 @@ static int serial_hsu_pci_port_probe(struct pci_dev *pdev,
 	dev_info(&pdev->dev,
 		"FUNC: %d driver: %ld addr:%lx len:%lx\n",
 		PCI_FUNC(pdev->devfn), ent->driver_data,
-		(unsigned long) start, (unsigned long) len);
+		(ulong) start, (ulong) len);
 
 	port = intel_mid_hsu_func_to_port(PCI_FUNC(pdev->devfn));
 	if (port == -1)
@@ -219,7 +219,6 @@ static struct pci_driver hsu_port_pci_driver = {
 static int serial_hsu_pci_dma_probe(struct pci_dev *pdev,
 				const struct pci_device_id *ent)
 {
-	struct hsu_dma_chan *dchan;
 	int ret, share_irq = 0;
 	resource_size_t start, len;
 
@@ -229,8 +228,8 @@ static int serial_hsu_pci_dma_probe(struct pci_dev *pdev,
 	dev_info(&pdev->dev,
 		"FUNC: %d driver: %ld addr:%lx len:%lx\n",
 		PCI_FUNC(pdev->devfn), ent->driver_data,
-		(unsigned long) pci_resource_start(pdev, 0),
-		(unsigned long) pci_resource_len(pdev, 0));
+		(ulong) pci_resource_start(pdev, 0),
+		(ulong) pci_resource_len(pdev, 0));
 
 	ret = pci_enable_device(pdev);
 	if (ret)

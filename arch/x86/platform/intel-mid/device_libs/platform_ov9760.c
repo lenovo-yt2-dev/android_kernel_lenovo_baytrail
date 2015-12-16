@@ -20,6 +20,9 @@
 #ifdef CONFIG_VLV2_PLAT_CLK
 #include <linux/vlv2_plat_clock.h>
 #endif
+#ifdef CONFIG_INTEL_SOC_PMC
+#include <asm/intel_soc_pmc.h>
+#endif
 
 #include "platform_camera.h"
 #include "platform_ov9760.h"
@@ -39,6 +42,14 @@
 #ifdef CONFIG_VLV2_PLAT_CLK
 #define OSC_CAM1_CLK 0x1
 #define CLK_19P2MHz 0x1
+#endif
+#ifdef CONFIG_INTEL_SOC_PMC
+#define OSC_CAM1_CLK 0x1
+#define CLK_19P2MHz 0x1
+/* workaround - use xtal for cht */
+#define CLK_19P2MHz_XTAL 0x0
+#define CLK_ON  0x1
+#define CLK_OFF 0x2
 #endif
 #ifdef CONFIG_CRYSTAL_COVE
 #define VPROG_2P8V 0x66		/* +V2P85SX */
@@ -85,6 +96,8 @@ static void ov9760_verify_gpio_power(void)
 	OV9760_PLAT_LOG(1,"VPROG_3P3V  addr:0x%x value:%x\n", VPROG_3P3V, intel_mid_pmic_readb(VPROG_3P3V));
 	OV9760_PLAT_LOG(1,"VPROG_2P8V  addr:0x%x value:%x\n", VPROG_2P8V, intel_mid_pmic_readb(VPROG_2P8V));
 	OV9760_PLAT_LOG(1,"VPROG_1P8V  addr:0x%x value:%x\n", VPROG_1P8V, intel_mid_pmic_readb(VPROG_1P8V));
+
+
 }
 static int ov9760_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 {
@@ -109,6 +122,29 @@ static int ov9760_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 
 static int ov9760_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 {
+	ov9760_verify_gpio_power();
+#ifdef CONFIG_INTEL_SOC_PMC
+        int ret = 0;
+        if (flag) {
+                ret = pmc_pc_set_freq(OSC_CAM1_CLK, (IS_CHT) ?
+                        CLK_19P2MHz_XTAL : CLK_19P2MHz);
+                if (ret) {
+                        return ret;
+                }
+                usleep_range(2000, 2500);
+                return pmc_pc_configure(OSC_CAM1_CLK, CLK_ON);
+        }
+        return pmc_pc_configure(OSC_CAM1_CLK, CLK_OFF);
+#elif defined(CONFIG_INTEL_SCU_IPC_UTIL)
+        static const unsigned int clock_khz = 19200;
+        return intel_scu_ipc_osc_clk(OSC_CLK_CAM1,
+                                     flag ? clock_khz : 0);
+#else
+        pr_err("ov9760 clock is not set.\n");
+        return 0;
+#endif
+
+#if 0
 	static const unsigned int clock_khz = 19200;
 	ov9760_verify_gpio_power();
 	OV9760_PLAT_LOG(1,"%s %d flag:%d\n", __func__, __LINE__, flag);
@@ -129,6 +165,8 @@ static int ov9760_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 #else
 	pr_err("ov9760 clock is not set.\n");
 	return 0;
+#endif
+
 #endif
 }
 

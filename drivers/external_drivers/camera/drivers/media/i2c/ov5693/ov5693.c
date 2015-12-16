@@ -371,22 +371,16 @@ static long __ov5693_set_exposure(struct v4l2_subdev *sd, int coarse_itg,
 
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov5693_device *dev = to_ov5693_sensor(sd);
 	u16 vts;
 	int ret;
 
-	/*
-	 * According to spec, the low 4 bits of exposure/gain reg are
-	 * fraction bits, so need to take 4 bits left shift to align
-	 * reg integer bits.
-	 */
-	coarse_itg <<= 4;
-	gain <<= 4;
-
-	ret = ov5693_read_reg(client, OV5693_16BIT,
-					OV5693_VTS_H, &vts);
+	/* group hold start */
+	ret = ov5693_write_reg(client, OV5693_8BIT, OV5693_GROUP_ACCESS, 0);
 	if (ret)
 		return ret;
 
+	vts = dev->ov5693_res[dev->fmt_idx].lines_per_frame;
 	if (coarse_itg + OV5693_INTEGRATION_TIME_MARGIN >= vts)
 		vts = coarse_itg + OV5693_INTEGRATION_TIME_MARGIN;
 
@@ -394,10 +388,12 @@ static long __ov5693_set_exposure(struct v4l2_subdev *sd, int coarse_itg,
 	if (ret)
 		return ret;
 
-	/* group hold start */
-	ret = ov5693_write_reg(client, OV5693_8BIT, OV5693_GROUP_ACCESS, 0);
-	if (ret)
-		return ret;
+	/*
+	 * According to spec, the low 4 bits of exposure reg are
+	 * fraction bits, so need to take 4 bits left shift to align
+	 * reg integer bits.
+	 */
+	coarse_itg <<= 4;
 
 	/* set exposure */
 	ret = ov5693_write_reg(client, OV5693_8BIT,
@@ -612,12 +608,13 @@ static int ov5693_g_ctrl(struct v4l2_ctrl *ctrl)
 
 static int ov5693_s_ctrl(struct v4l2_ctrl *ctrl)
 {
-	struct ov5693_device *dev = container_of(
-		ctrl->handler, struct ov5693_device, ctrl_handler);
+	struct ov5693_device *dev = NULL;
 	int ret = 0;
 
 	if (!ctrl)
 		return -EINVAL;
+	dev = container_of(
+		ctrl->handler, struct ov5693_device, ctrl_handler);
 
 	switch (ctrl->id) {
 	case V4L2_CID_RUN_MODE:

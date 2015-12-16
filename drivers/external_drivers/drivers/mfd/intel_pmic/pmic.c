@@ -24,9 +24,17 @@
 #include <linux/acpi.h>
 #include <asm/intel_vlv2.h>
 #include <linux/version.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
 #include "./pmic.h"
+#include <linux/gpio.h>
 
-enum pmic_chip_type {CCOVE, DCOVE};
+#define PMIC_NUM_REG       0xEF
+#define PMIC_READ_STRLEN   4
+#define PMIC_WRITE_STRLEN  9
+#define NR_RETRY_CNT       3
+
+enum pmic_chip_type {CCOVE, DCOVE, WCOVE};
 
 static LIST_HEAD(pdata_list);
 struct cell_dev_pdata {
@@ -34,15 +42,43 @@ struct cell_dev_pdata {
 	const char		*name;
 	void			*data;
 	int			len;
+	int			id;
 };
 
 static struct intel_mid_pmic *pmic;
+static struct dentry *pmic_dbgfs_root;
+int pmic_reg = 0;
 static int cache_offset = -1, cache_read_val, cache_write_val, \
 	cache_write_pending, cache_flags;
 
 struct device *intel_mid_pmic_dev(void)
 {
 	return pmic->dev;
+}
+
+int intel_mid_pmic_read_multi(int reg, u8 len, u8 *buf)
+{
+	int ret;
+
+	if (!pmic)
+		return -EIO;
+	mutex_lock(&pmic->io_lock);
+	ret = pmic->readmul(reg, len, buf);
+	mutex_unlock(&pmic->io_lock);
+	return ret;
+}
+EXPORT_SYMBOL(intel_mid_pmic_read_multi);
+
+int intel_mid_pmic_write_multi(int reg, u8 len, u8 *buf)
+{
+	int ret;
+
+	if (!pmic)
+		return -EIO;
+	mutex_lock(&pmic->io_lock);
+	ret = pmic->writemul(reg, len, buf);
+	mutex_unlock(&pmic->io_lock);
+	return ret;
 }
 
 int intel_mid_pmic_readb(int reg)
@@ -190,7 +226,7 @@ int intel_scu_ipc_writev(u16 *addr, u8 *data, int len)
 }
 EXPORT_SYMBOL(intel_scu_ipc_writev);
 
-int intel_mid_pmic_set_pdata(const char *name, void *data, int len)
+int intel_mid_pmic_set_pdata(const char *name, void *data, int len, int id)
 {
 	struct cell_dev_pdata *pdata;
 
@@ -202,6 +238,7 @@ int intel_mid_pmic_set_pdata(const char *name, void *data, int len)
 	pdata->name = name;
 	pdata->data = data;
 	pdata->len = len;
+	pdata->id = id;
 	list_add_tail(&pdata->list, &pdata_list);
 	return 0;
 }
@@ -230,6 +267,7 @@ static int pmic_regmap_write(struct intel_pmic_regmap *map, int val)
 		return -ENXIO;
 	if (IS_PMIC_REG_INV(map))
 		val = ~val;
+
 	mutex_lock(&pmic->io_lock);
 	if (cache_offset == map->offset) {
 		if (cache_flags != map->flags) {
@@ -262,9 +300,9 @@ static int pmic_regmap_write(struct intel_pmic_regmap *map, int val)
 		cache_read_val = cache_write_val;
 err:
 	dev_dbg(pmic->dev, "[%s]: offset=%x, shift=%x, mask=%x, flags=%x\n",
-		map->offset, map->shift, map->mask, map->flags);
+		__func__, map->offset, map->shift, map->mask, map->flags);
 	dev_dbg(pmic->dev, "[%s]: cache_read=%x, cache_write=%x, ret=%x\n",
-		cache_read_val, cache_write_val, ret);
+		__func__, cache_read_val, cache_write_val, ret);
 	mutex_unlock(&pmic->io_lock);
 	return ret;
 }
@@ -309,9 +347,9 @@ static int pmic_regmap_read(struct intel_pmic_regmap *map)
 		cache_write_val = cache_read_val;
 err:
 	dev_dbg(pmic->dev, "[%s]: offset=%x, shift=%x, mask=%x, flags=%x\n",
-		map->offset, map->shift, map->mask, map->flags);
+		__func__, map->offset, map->shift, map->mask, map->flags);
 	dev_dbg(pmic->dev, "[%s]: cache_read=%x, cache_write=%x, ret=%x\n",
-		cache_read_val, cache_write_val, ret);
+		__func__, cache_read_val, cache_write_val, ret);
 	mutex_unlock(&pmic->io_lock);
 	return ret;
 }
@@ -321,6 +359,9 @@ static void pmic_irq_enable(struct irq_data *data)
 	clear_bit((data->irq - pmic->irq_base) % 32,
 		&(pmic->irq_mask[(data->irq - pmic->irq_base) / 32]));
 	pmic->irq_need_update = 1;
+
+	dev_dbg(pmic->dev, "[%s]: irq_mask = %x", __func__,
+				pmic->irq_mask[(data->irq - pmic->irq_base)/32]);
 }
 
 static void pmic_irq_disable(struct irq_data *data)
@@ -328,19 +369,25 @@ static void pmic_irq_disable(struct irq_data *data)
 	set_bit((data->irq - pmic->irq_base) % 32,
 		&(pmic->irq_mask[(data->irq - pmic->irq_base) / 32]));
 	pmic->irq_need_update = 1;
+	dev_dbg(pmic->dev, "[%s]: irq_mask = %x", __func__,
+				pmic->irq_mask[(data->irq - pmic->irq_base)/32]);
 }
 
 static void pmic_irq_sync_unlock(struct irq_data *data)
 {
+	struct intel_pmic_regmap *map;
+
+	dev_dbg(pmic->dev, "[%s]: irq_mask = %x", __func__,
+				pmic->irq_mask[(data->irq - pmic->irq_base)/32]);
 	if (pmic->irq_need_update) {
+		map = &pmic->irq_regmap[(data->irq - pmic->irq_base)].mask;
+
 		if (test_bit((data->irq - pmic->irq_base) % 32,
-			&(pmic->irq_mask[(data->irq
-			- pmic->irq_base) / 32])))
-			pmic_regmap_write(&pmic->irq_regmap[(data->irq
-				- pmic->irq_base)].mask, 1);
+			&(pmic->irq_mask[(data->irq - pmic->irq_base) / 32])))
+			pmic_regmap_write(map, map->mask);
 		else
-			pmic_regmap_write(&pmic->irq_regmap[(data->irq
-				- pmic->irq_base)].mask, 0);
+			pmic_regmap_write(map, 0);
+
 		pmic->irq_need_update = 0;
 		pmic_regmap_flush();
 	}
@@ -366,7 +413,8 @@ static irqreturn_t pmic_irq_thread(int irq, void *data)
 		if (test_bit(i % 32, &(pmic->irq_mask[i / 32])))
 			continue;
 		if (pmic_regmap_read(&pmic->irq_regmap[i].status)) {
-			pmic_regmap_write(&pmic->irq_regmap[i].ack, 1);
+			pmic_regmap_write(&pmic->irq_regmap[i].ack,
+				pmic->irq_regmap[i].ack.mask);
 			handle_nested_irq(pmic->irq_base + i);
 		}
 	}
@@ -388,19 +436,25 @@ static int pmic_irq_init(void)
 	int cur_irq;
 	int ret;
 	int i;
+	struct intel_pmic_regmap *map;
 
 	/* Mostly, it can help to increase cache hit if merge same register
 	   access in one loop */
 	for (i = 0; i < pmic->irq_num; i++) {
-		pmic_regmap_write(&pmic->irq_regmap[i].mask, 1);
-		set_bit(i % 32, &(pmic->irq_mask[i / 32]));
+		map = &pmic->irq_regmap[i].mask;
+		if (IS_PMIC_REG_VALID(map)) {
+			pmic_regmap_write(map, map->mask);
+			set_bit(i % 32, &(pmic->irq_mask[i / 32]));
+		}
 	}
 	for (i = 0; i < pmic->irq_num; i++) {
-		pmic_regmap_write(&pmic->irq_regmap[i].ack, 1);
+		map = &pmic->irq_regmap[i].ack;
+		if (IS_PMIC_REG_VALID(map))
+			pmic_regmap_write(map, map->mask);
 	}
 	pmic_regmap_flush();
 
-	pmic->irq_base = irq_alloc_descs(VV_PMIC_IRQBASE, 0, pmic->irq_num, 0);
+	pmic->irq_base = irq_alloc_descs(-1, VV_PMIC_IRQBASE, pmic->irq_num, 0);
 	if (pmic->irq_base < 0) {
 		dev_warn(pmic->dev, "Failed to allocate IRQs: %d\n",
 			 pmic->irq_base);
@@ -420,11 +474,25 @@ static int pmic_irq_init(void)
 		irq_set_nested_thread(cur_irq, 1);
 		irq_set_noprobe(cur_irq);
 	}
+
+	if (gpio_is_valid(pmic->pmic_int_gpio)) {
+		ret = gpio_request_one(pmic->pmic_int_gpio,
+					GPIOF_DIR_IN, "PMIC Interupt");
+		if (ret) {
+			dev_err(pmic->dev, "Request PMIC_INT gpio error\n");
+			return ret;
+		}
+
+		pmic->irq = gpio_to_irq(pmic->pmic_int_gpio);
+	}
+
 	ret = request_threaded_irq(pmic->irq, pmic_irq_isr, pmic_irq_thread,
 			pmic->irq_flags, "intel_mid_pmic", pmic);
 	if (ret != 0) {
 		dev_err(pmic->dev, "Failed to request IRQ %d: %d\n",
 				pmic->irq, ret);
+		if (gpio_is_valid(pmic->pmic_int_gpio))
+			gpio_free(pmic->pmic_int_gpio);
 		return ret;
 	}
 	ret = enable_irq_wake(pmic->irq);
@@ -434,6 +502,133 @@ static int pmic_irq_init(void)
 	}
 
 	return 0;
+}
+
+static int pmic_addr_show(struct seq_file *seq, void *v)
+{
+	int i = 0;
+	int ret = 0;
+
+	for (i = 0; i < NR_RETRY_CNT; i++) {
+		ret = intel_mid_pmic_readb(pmic_reg);
+		if (ret == -EAGAIN || ret == -ETIMEDOUT)
+			continue;
+		else
+			break;
+	}
+	if (ret < 0)
+		dev_dbg(pmic->dev, "pmic_reg read err:%d\n", ret);
+
+	seq_printf(seq, "0x%x=0x%x\n", pmic_reg, ret);
+
+    return 0;
+}
+
+static int pmic_addr_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, pmic_addr_show, NULL);
+}
+
+static ssize_t pmic_addr_write(struct file *filp, const char __user *buffer,
+							   size_t count, loff_t *ppos)
+{
+	char buf[32] = {0};
+	int i = 0, ret = 0;
+	int val = 0, len = 0;
+
+    if (copy_from_user(buf, buffer, count))
+        return -EFAULT;
+
+	len = count - 1;
+
+	if (len == PMIC_READ_STRLEN) {
+		sscanf(buf, "0x%x", &pmic_reg);
+	} else if (len == PMIC_WRITE_STRLEN) {
+		sscanf(buf, "%x=%x", &pmic_reg, &val);
+		for (i = 0; i < NR_RETRY_CNT; i++) {
+			ret = intel_mid_pmic_writeb(pmic_reg, val);
+			if (ret == -EAGAIN || ret == -ETIMEDOUT)
+				continue;
+			else
+				break;
+		}
+		if (ret < 0)
+			dev_dbg(pmic->dev, "pmic_reg write err:%d\n", ret);
+	} else {
+		dev_dbg(pmic->dev, "Wrong set.\n");
+		return -EPERM;
+	}
+
+    *ppos += count;
+
+    return count;
+}
+
+struct file_operations addr_fops = {
+    .owner = THIS_MODULE,
+    .open = pmic_addr_open,
+    .read = seq_read,
+    .write = pmic_addr_write,
+};
+
+static int pmic_all_show(struct seq_file *seq, void *v)
+{
+	int i = 0, j = 0;
+	int ret = 0;
+	for (i = 0; i < PMIC_NUM_REG; ++i) {
+		pmic_reg = i;
+		for (j = 0; j < NR_RETRY_CNT; j++) {
+			ret = intel_mid_pmic_readb(pmic_reg);
+			if (ret == -EAGAIN || ret == -ETIMEDOUT)
+				continue;
+			else
+				break;
+		}
+		if (ret < 0)
+			dev_dbg(pmic->dev, "pmic_reg read err:%d\n", ret);
+
+		seq_printf(seq, "0x%x=0x%x\n", pmic_reg, ret);
+	}
+
+    return 0;
+}
+
+static int pmic_all_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, pmic_all_show, NULL);
+}
+
+struct file_operations all_fops = {
+    .owner = THIS_MODULE,
+    .open = pmic_all_open,
+    .read = seq_read,
+};
+
+static void pmic_create_debugfs()
+{
+	struct dentry *entry;
+
+	pmic_dbgfs_root = debugfs_create_dir("pmic_debug", NULL);
+	if (IS_ERR(pmic_dbgfs_root)) {
+		dev_dbg(pmic->dev, "DEBUGFS DIR create failed\n");
+		return ;
+	}
+
+	entry = debugfs_create_file("all", 0644, pmic_dbgfs_root, NULL, &all_fops);
+	if (IS_ERR(entry)) {
+		debugfs_remove_recursive(pmic_dbgfs_root);
+		pmic_dbgfs_root = NULL;
+		dev_dbg(pmic->dev, "DEBUGFS entry Create failed\n");
+		return ;
+	}
+
+	entry = debugfs_create_file("addr", 0644, pmic_dbgfs_root, NULL, &addr_fops);
+	if (IS_ERR(entry)) {
+		debugfs_remove_recursive(pmic_dbgfs_root);
+		pmic_dbgfs_root = NULL;
+		dev_dbg(pmic->dev, "DEBUGFS entry Create failed\n");
+		return ;
+	}
 }
 
 int intel_pmic_add(struct intel_mid_pmic *chip)
@@ -456,12 +651,16 @@ int intel_pmic_add(struct intel_mid_pmic *chip)
 	pmic_irq_init();
 	for (i = 0; pmic->cell_dev[i].name != NULL; i++) {
 		list_for_each_entry(pdata, &pdata_list, list) {
-			if (!strcmp(pdata->name, pmic->cell_dev[i].name)) {
+			if (!strcmp(pdata->name, pmic->cell_dev[i].name) &&
+					(pdata->id == pmic->cell_dev[i].id)) {
 				pmic->cell_dev[i].platform_data = pdata->data;
 				pmic->cell_dev[i].pdata_size = pdata->len;
 			}
 		}
 	}
+
+	pmic_create_debugfs();
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 1))
 	return mfd_add_devices(pmic->dev, -1, pmic->cell_dev, i,
 			NULL, pmic->irq_base, NULL);
@@ -477,6 +676,10 @@ int intel_pmic_remove(struct intel_mid_pmic *chip)
 		return -ENODEV;
 	mfd_remove_devices(pmic->dev);
 	pmic = NULL;
+
+	if (pmic_dbgfs_root)
+		debugfs_remove_recursive(pmic_dbgfs_root);
+
 	return 0;
 }
 

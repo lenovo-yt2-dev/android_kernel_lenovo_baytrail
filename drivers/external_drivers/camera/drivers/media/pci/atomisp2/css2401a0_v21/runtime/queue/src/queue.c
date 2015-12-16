@@ -20,8 +20,9 @@
  */
 
 #include "ia_css_queue.h"
-#include <system_types.h>
+#include <math_support.h>
 #include <ia_css_circbuf.h>
+#include <ia_css_circbuf_desc.h>
 #include "queue_access.h"
 
 /*****************************************************************************
@@ -34,7 +35,7 @@ int ia_css_queue_local_init(
 	if (NULL == qhandle || NULL == desc
 		|| NULL == desc->cb_elems || NULL == desc->cb_desc) {
 		/* Invalid parameters, return error*/
-		return EINVAL ;
+		return EINVAL;
 	}
 
 	/* Mark the queue as Local */
@@ -93,6 +94,7 @@ int ia_css_queue_enqueue(
 			ia_css_queue_t *qhandle,
 			uint32_t item)
 {
+	int error = 0;
 	if (0 == qhandle)
 		return EINVAL;
 
@@ -115,8 +117,9 @@ int ia_css_queue_enqueue(
 
 		/* a. Load the queue cb_desc from remote */
 		QUEUE_CB_DESC_INIT(&cb_desc);
-		if (0 != ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags))
-			return ENOSYS;
+		error = ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
 
 		/* b. Operate on the queue */
 		if (ia_css_circbuf_desc_is_full(&cb_desc))
@@ -124,8 +127,9 @@ int ia_css_queue_enqueue(
 
 		cb_elem.val = item;
 
-		if (0 != ia_css_queue_item_store(qhandle, cb_desc.end, &cb_elem))
-			return ENOSYS;
+		error = ia_css_queue_item_store(qhandle, cb_desc.end, &cb_elem);
+		if (error != 0)
+			return error;
 
 		cb_desc.end = (cb_desc.end + 1) % cb_desc.size;
 
@@ -136,8 +140,9 @@ int ia_css_queue_enqueue(
 		 */
 		ignore_desc_flags = QUEUE_IGNORE_SIZE_START_STEP_FLAGS;
 
-		if (0 != ia_css_queue_store(qhandle, &cb_desc, ignore_desc_flags))
-			return ENOSYS;
+		error = ia_css_queue_store(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
 	}
 
 	return 0;
@@ -147,6 +152,7 @@ int ia_css_queue_dequeue(
 			ia_css_queue_t *qhandle,
 			uint32_t *item)
 {
+	int error = 0;
 	if (qhandle == 0 || NULL == item)
 		return EINVAL;
 
@@ -169,19 +175,21 @@ int ia_css_queue_dequeue(
 
 		QUEUE_CB_DESC_INIT(&cb_desc);
 
-		if (0 != ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags))
-			return ENOSYS;
+		error = ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
 
 		/* b. Operate on the queue */
 		if (ia_css_circbuf_desc_is_empty(&cb_desc))
 			return ENODATA;
 
-		if (0 != ia_css_queue_item_load(qhandle, cb_desc.start, &cb_elem))
-			return ENOSYS;
+		error = ia_css_queue_item_load(qhandle, cb_desc.start, &cb_elem);
+		if (error != 0)
+			return error;
 
 		*item = cb_elem.val;
 
-		cb_desc.start = (cb_desc.start + 1) % cb_desc.size;
+		cb_desc.start = OP_std_modadd(cb_desc.start, 1, cb_desc.size);
 
 		/* c. Store the queue object */
 		/* Set only fields requiring update with
@@ -189,17 +197,167 @@ int ia_css_queue_dequeue(
 		 * to load/store functions
 		 */
 		ignore_desc_flags = QUEUE_IGNORE_SIZE_END_STEP_FLAGS;
-		if (0 != ia_css_queue_store(qhandle, &cb_desc, ignore_desc_flags))
-			return ENOSYS;
+		error = ia_css_queue_store(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
 	}
 	return 0;
+}
+
+int ia_css_queue_is_full(
+			ia_css_queue_t *qhandle,
+			bool *is_full)
+{
+	int error = 0;
+	if ((qhandle == NULL) || (is_full == NULL))
+		return EINVAL;
+
+	/* 1. Load the required queue object */
+	if (qhandle->type == IA_CSS_QUEUE_TYPE_LOCAL) {
+		/* Directly de-ref the object and
+		 * operate on the queue
+		 */
+		*is_full = ia_css_circbuf_is_full(&qhandle->desc.cb_local);
+		return 0;
+	} else if (qhandle->type == IA_CSS_QUEUE_TYPE_REMOTE) {
+		/* a. Load the queue from remote */
+		ia_css_circbuf_desc_t cb_desc;
+		uint32_t ignore_desc_flags = QUEUE_IGNORE_STEP_FLAG;
+		QUEUE_CB_DESC_INIT(&cb_desc);
+		error = ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
+
+		/* b. Operate on the queue */
+		*is_full = ia_css_circbuf_desc_is_full(&cb_desc);
+		return 0;
+	}
+
+	return EINVAL;
+}
+
+int ia_css_queue_get_free_space(
+			ia_css_queue_t *qhandle,
+			uint32_t *size)
+{
+	int error = 0;
+	if ((qhandle == NULL) || (size == NULL))
+		return EINVAL;
+
+	/* 1. Load the required queue object */
+	if (qhandle->type == IA_CSS_QUEUE_TYPE_LOCAL) {
+		/* Directly de-ref the object and
+		 * operate on the queue
+		 */
+		*size = ia_css_circbuf_get_free_elems(&qhandle->desc.cb_local);
+		return 0;
+	} else if (qhandle->type == IA_CSS_QUEUE_TYPE_REMOTE) {
+		/* a. Load the queue from remote */
+		ia_css_circbuf_desc_t cb_desc;
+		uint32_t ignore_desc_flags = QUEUE_IGNORE_STEP_FLAG;
+		QUEUE_CB_DESC_INIT(&cb_desc);
+		error = ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
+
+		/* b. Operate on the queue */
+		*size = ia_css_circbuf_desc_get_free_elems(&cb_desc);
+		return 0;
+	}
+
+	return EINVAL;
+}
+
+int ia_css_queue_get_used_space(
+			ia_css_queue_t *qhandle,
+			uint32_t *size)
+{
+	int error = 0;
+	if ((qhandle == NULL) || (size == NULL))
+		return EINVAL;
+
+	/* 1. Load the required queue object */
+	if (qhandle->type == IA_CSS_QUEUE_TYPE_LOCAL) {
+		/* Directly de-ref the object and
+		 * operate on the queue
+		 */
+		*size = ia_css_circbuf_get_num_elems(&qhandle->desc.cb_local);
+		return 0;
+	} else if (qhandle->type == IA_CSS_QUEUE_TYPE_REMOTE) {
+		/* a. Load the queue from remote */
+		ia_css_circbuf_desc_t cb_desc;
+		uint32_t ignore_desc_flags = QUEUE_IGNORE_STEP_FLAG;
+		QUEUE_CB_DESC_INIT(&cb_desc);
+		error = ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
+
+		/* b. Operate on the queue */
+		*size = ia_css_circbuf_desc_get_num_elems(&cb_desc);
+		return 0;
+	}
+
+	return EINVAL;
+}
+
+int ia_css_queue_peek(
+		ia_css_queue_t *qhandle,
+		uint32_t offset,
+		uint32_t *element)
+{
+	uint32_t num_elems = 0;
+	int error = 0;
+
+	if ((qhandle == NULL) || (element == NULL))
+		return EINVAL;
+
+	/* 1. Load the required queue object */
+	if (qhandle->type == IA_CSS_QUEUE_TYPE_LOCAL) {
+		/* Directly de-ref the object and
+		 * operate on the queue
+		 */
+		/* Check if offset is valid */
+		num_elems = ia_css_circbuf_get_num_elems(&qhandle->desc.cb_local);
+		if (offset > num_elems)
+			return EINVAL;
+
+		*element = ia_css_circbuf_peek_from_start(&qhandle->desc.cb_local, (int) offset);
+		return 0;
+	} else if (qhandle->type == IA_CSS_QUEUE_TYPE_REMOTE) {
+		/* a. Load the queue from remote */
+		ia_css_circbuf_desc_t cb_desc;
+		ia_css_circbuf_elem_t cb_elem;
+		uint32_t ignore_desc_flags = QUEUE_IGNORE_STEP_FLAG;
+
+		QUEUE_CB_DESC_INIT(&cb_desc);
+
+		error =  ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
+
+		/* Check if offset is valid */
+		num_elems = ia_css_circbuf_desc_get_num_elems(&cb_desc);
+		if (offset > num_elems)
+			return EINVAL;
+
+		offset = OP_std_modadd(cb_desc.start, offset, cb_desc.size);
+		error = ia_css_queue_item_load(qhandle, (uint8_t)offset, &cb_elem);
+		if (error != 0)
+			return error;
+
+		*element = cb_elem.val;
+		return 0;
+	}
+
+	return EINVAL;
 }
 
 int ia_css_queue_is_empty(
 			ia_css_queue_t *qhandle,
 			bool *is_empty)
 {
-	if (!qhandle || !is_empty)
+	int error = 0;
+	if ((qhandle == NULL) || (is_empty == NULL))
 		return EINVAL;
 
 	/* 1. Load the required queue object */
@@ -215,8 +373,9 @@ int ia_css_queue_is_empty(
 		uint32_t ignore_desc_flags = QUEUE_IGNORE_STEP_FLAG;
 
 		QUEUE_CB_DESC_INIT(&cb_desc);
-		if (0 != ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags))
-			return ENOSYS;
+		error = ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
 
 		/* b. Operate on the queue */
 		*is_empty = ia_css_circbuf_desc_is_empty(&cb_desc);
@@ -230,7 +389,8 @@ int ia_css_queue_get_size(
 			ia_css_queue_t *qhandle,
 			uint32_t *size)
 {
-	if (qhandle == 0 || size == NULL)
+	int error = 0;
+	if ((qhandle == 0) || (size == NULL))
 		return EINVAL;
 
 	/* 1. Load the required queue object */
@@ -247,8 +407,9 @@ int ia_css_queue_get_size(
 
 		QUEUE_CB_DESC_INIT(&cb_desc);
 
-		if (0 != ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags))
-			return ENOSYS;
+		error = ia_css_queue_load(qhandle, &cb_desc, ignore_desc_flags);
+		if (error != 0)
+			return error;
 
 		/* Return maximum usable capacity */
 		*size = cb_desc.size;

@@ -22,6 +22,12 @@
 #ifndef __IA_CSS_S3A_TYPES_H
 #define __IA_CSS_S3A_TYPES_H
 
+/** @file
+* CSS-API header file for 3A statistics parameters.
+*/
+
+#include <ia_css_frac.h>
+
 #if (defined(SYSTEM_css_skycam_a0t_system) || defined(SYSTEM_css_skycam_c0_system)) && (! defined(PIPE_GENERATION) )
 #include "../../../../components/stats_3a/src/stats_3a_public.h"
 #endif
@@ -97,6 +103,36 @@ struct ia_css_3a_grid_info {
 					bayer bit depth in DSP. */
 #endif
 };
+
+#if defined(SYSTEM_css_skycam_a0t_system) || defined(SYSTEM_css_skycam_c0_system)
+#define DEFAULT_3A_GRID_INFO \
+{ \
+	0,				/* ae_enable */ \
+	{0,0,0,0,0,0,0,0,0},	        /* AE:     width,height,b_width,b_height,x_start,y_start,x_end,y_end*/ \
+	0,				/* awb_enable */ \
+	{0,0,0,0,0,0,0,0},              /* AWB:    width,height,b_width,b_height,x_start,y_start,x_end,y_end*/ \
+	0,				/* af_enable */ \
+	{0,0,0,0,0,0,0},		/* AF:     width,height,b_width,b_height,x_start,y_start,ff_en*/ \
+	0,				/* awb_fr_enable */ \
+	{0,0,0,0,0,0,0},                  /* AWB_FR: width,height,b_width,b_height,x_start,y_start,ff_en*/ \
+	0,				/* elem_bit_depth */ \
+}
+#else
+#define DEFAULT_3A_GRID_INFO \
+{ \
+	0,				/* enable */ \
+	0,				/* use_dmem */ \
+	0,				/* has_histogram */ \
+	0,				/* width */ \
+	0,				/* height */ \
+	0,				/* aligned_width */ \
+	0,				/* aligned_height */ \
+	0,				/* bqs_per_grid_cell */ \
+	0,				/* deci_factor_log2 */ \
+	0,				/* elem_bit_depth */ \
+}
+
+#endif
 
 /* This struct should be split into 3, for AE, AWB and AF.
  * However, that will require driver/ 3A lib modifications.

@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_DE2_TYPES_H
 #define __IA_CSS_DE2_TYPES_H
 
+/** @file
+* CSS-API header file for Demosaicing parameters.
+*/
+
 /** Eigen Color Demosaicing configuration.
  *
  *  ISP block: DE2

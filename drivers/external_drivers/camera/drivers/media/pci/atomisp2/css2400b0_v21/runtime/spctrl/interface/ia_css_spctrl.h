@@ -47,7 +47,6 @@ typedef struct {
 enum ia_css_err ia_css_spctrl_load_fw(sp_ID_t sp_id,
 			ia_css_spctrl_cfg *spctrl_cfg);
 
-
 /*!  Unload/release any memory allocated to hold the firmware
 */
 enum ia_css_err ia_css_spctrl_unload_fw(sp_ID_t sp_id);

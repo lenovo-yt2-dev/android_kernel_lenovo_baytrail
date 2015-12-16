@@ -21,6 +21,9 @@
 #include "sensor_driver_config.h"
 #include "sensor_general.h"
 
+/*don't enable this if already put in XML*/
+#ifdef CONFIG_SENSOR_RAW_PROC_BMC150
+
 /*Raw data process algos for bmc150 compass
 * Output 16LSB/uT with temperature compensation
 */
@@ -130,9 +133,12 @@ int bsbm0150_proc_z(struct sensor_data *data, int raw)
 
 	return retval;
 }
+#endif
 
 static struct sensor_rawdata_proc sensor_proc_tbl[] = {
+#ifdef CONFIG_SENSOR_RAW_PROC_BMC150
 	{"BSBM0150", bsbm0150_proc_x, bsbm0150_proc_y, bsbm0150_proc_z},
+#endif
 	{NULL}
 };
 

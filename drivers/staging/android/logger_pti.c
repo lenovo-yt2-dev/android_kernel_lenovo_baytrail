@@ -100,24 +100,21 @@ static void logger_pti_write_seg(void *buf, unsigned int len,
 				 bool from_usr, bool som, bool eom,
 				 void *cb_data)
 {
-	struct pti_plugin *pti_plugin;
-	char *tmp_buf;
+	struct pti_plugin *pti_plugin = (struct pti_plugin *)cb_data;
 
-	if (unlikely(cb_data == NULL))
+	if (unlikely(pti_plugin == NULL))
 		return;
 
 	if (from_usr) {
-		tmp_buf = kmalloc(len, GFP_KERNEL);
-
+		char *tmp_buf = kmalloc(len, GFP_KERNEL);
 		if ((!tmp_buf) || copy_from_user(tmp_buf, buf, len)) {
 			kfree(tmp_buf);
 			return;
 		}
+		pti_writedata(pti_plugin->mc, (u8 *)tmp_buf, len, eom);
+		kfree(tmp_buf);
 	} else
-		tmp_buf = buf;
-
-	pti_plugin = (struct pti_plugin *)cb_data;
-	pti_writedata(pti_plugin->mc, (u8 *)buf, len, eom);
+		pti_writedata(pti_plugin->mc, (u8 *)buf, len, eom);
 }
 
 /**

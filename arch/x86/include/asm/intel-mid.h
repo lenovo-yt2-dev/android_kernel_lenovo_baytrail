@@ -42,6 +42,7 @@ extern struct sfi_rtc_table_entry sfi_mrtc_array[];
 extern void *get_oem0_table(void);
 extern void register_rpmsg_service(char *name, int id, u32 addr);
 extern int sdhci_pci_request_regulators(void);
+extern unsigned int sfi_get_watchdog_irq(void);
 
 /* OEMB table */
 struct sfi_table_oemb {

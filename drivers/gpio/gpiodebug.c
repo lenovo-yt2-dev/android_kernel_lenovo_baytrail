@@ -482,7 +482,7 @@ int gpio_debug_register(struct gpio_debug *debug)
 		}
 
 		/* register info */
-		gpiodebug_create_file("register_info", 0444, gpio_root[i],
+		gpiodebug_create_file("register_info", 0400, gpio_root[i],
 			debug, &gpio_reginfo_fops);
 
 		for (j = 0; j < ARRAY_SIZE(global_array); j++) {
@@ -494,24 +494,24 @@ int gpio_debug_register(struct gpio_debug *debug)
 				switch (global_array[j].fops_type) {
 				case REGISTER_FOPS:
 					gpiodebug_create_file(
-					  global_array[j].current_name, 0644,
+					  global_array[j].current_name, 0600,
 					  gpio_root[i], &global_data[i][j],
 					  &gpio_conf_fops);
 					break;
 				case NORMAL_FOPS:
 					gpiodebug_create_file(
-					  global_array[j].available_name, 0444,
+					  global_array[j].available_name, 0400,
 					  gpio_root[i], &global_data[i][j],
 					  &show_gpiodebug_fops);
 
 					gpiodebug_create_file(
-					  global_array[j].current_name, 0644,
+					  global_array[j].current_name, 0600,
 					  gpio_root[i], &global_data[i][j],
 					  &set_gpiodebug_fops);
 					break;
 				case COUNT_FOPS:
 					gpiodebug_create_file(
-					  global_array[j].current_name, 0444,
+					  global_array[j].current_name, 0400,
 					  gpio_root[i], &global_data[i][j],
 					  &show_count_fops);
 					break;
@@ -534,7 +534,7 @@ static int __init gpio_debug_init(void)
 	}
 
 	/* readme */
-	gpiodebug_create_file("readme", 0444, gpiodebug_debugfs_root,
+	gpiodebug_create_file("readme", 0400, gpiodebug_debugfs_root,
 		NULL, &gpio_readme_fops);
 
 	return 0;

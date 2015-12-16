@@ -24,14 +24,17 @@
 
 #include <assert_support.h>
 #include <type_support.h>
-#include <platform_support.h>
 #include <math_support.h>
 #include <storage_class.h>
+#include <platform_support.h>
+#include <sp.h>
 #include "ia_css_circbuf_comm.h"
+#include "ia_css_circbuf_desc.h"
 #ifdef __SP
-#include <hive_isp_css_sp_api_modified.h> /* OP_std_break(); */
+#include "event_handler.sp.h"
+/* We should not #define SP_FILE_ID here, because we are in a header file. */
+#include "ia_css_sp_assert_level.sp.h"
 #endif
-
 
 /****************************************************************
  *
@@ -47,11 +50,6 @@ struct ia_css_circbuf_s {
 	ia_css_circbuf_elem_t *elems;	/* an array of elements    */
 };
 
-/**********************************************************************
- *
- * Forward declarations.
- *
- **********************************************************************/
 /**
  * @brief Create the circular buffer.
  *
@@ -69,20 +67,9 @@ STORAGE_CLASS_EXTERN void ia_css_circbuf_create(
  *
  * @param cb The pointer to the circular buffer.
  */
-STORAGE_CLASS_EXTERN void ia_css_circbuf_destroy(ia_css_circbuf_t *cb);
+STORAGE_CLASS_EXTERN void ia_css_circbuf_destroy(
+		ia_css_circbuf_t *cb);
 
-/**
- * @brief Push a value in the circular buffer.
- * Put a new value at the tail of the circular buffer.
- * The user should call "ia_css_circbuf_is_full()"
- * to avoid accessing to a full buffer.
- *
- * @param cb	The pointer to the circular buffer.
- * @param val	The value to be pushed in.
- */
-STORAGE_CLASS_INLINE void ia_css_circbuf_push(
-	ia_css_circbuf_t *cb,
-	uint32_t val);
 /**
  * @brief Pop a value out of the circular buffer.
  * Get a value at the head of the circular buffer.
@@ -93,7 +80,8 @@ STORAGE_CLASS_INLINE void ia_css_circbuf_push(
  *
  * @return the pop-out value.
  */
-STORAGE_CLASS_EXTERN uint32_t ia_css_circbuf_pop(ia_css_circbuf_t *cb);
+STORAGE_CLASS_EXTERN uint32_t ia_css_circbuf_pop(
+		ia_css_circbuf_t *cb);
 
 /**
  * @brief Extract a value out of the circular buffer.
@@ -110,116 +98,11 @@ STORAGE_CLASS_EXTERN uint32_t ia_css_circbuf_extract(
 	ia_css_circbuf_t *cb,
 	int offset);
 
-/**
- * @brief Get a position in the circular buffer.
+/****************************************************************
  *
- * @param cb     The pointer to the circular buffer.
- * @param base   The base position.
- * @param offset The offset.
+ * Inline functions.
  *
- * @return the position in the circular buffer.
- */
-STORAGE_CLASS_INLINE uint8_t ia_css_circbuf_get_pos_at_offset(
-	ia_css_circbuf_t *cb,
-	uint32_t base,
-	int offset);
-/**
- * @brief Get the offset between two positions in the circular buffer.
- * Get the offset from the source position to the terminal position,
- * along the direction in which the new elements come in.
- *
- * @param cb	   The pointer to the circular buffer.
- * @param src_pos  The source position.
- * @param dest_pos The terminal position.
- *
- * @return the offset.
- */
-STORAGE_CLASS_INLINE int ia_css_circbuf_get_offset(
-	ia_css_circbuf_t *cb,
-	uint32_t src_pos,
-	uint32_t dest_pos);
-
-/**
- * @brief Get the maximum number of elements.
- *
- * @param cb The pointer to the circular buffer.
- *
- * @return the maximum number of elements.
- *
- * TODO: Test this API.
- */
-STORAGE_CLASS_INLINE uint32_t ia_css_circbuf_get_size(ia_css_circbuf_t *cb);
-
-/**
- * @brief Get the number of availalbe elements.
- *
- * @param cb The pointer to the circular buffer.
- *
- * @return the number of available elements.
- */
-STORAGE_CLASS_INLINE uint32_t
-ia_css_circbuf_get_num_elems(ia_css_circbuf_t *cb);
-
-/**
- * @brief Test if the circular buffer is empty.
- *
- * @param cb	The pointer to the circular buffer.
- *
- * @return
- *	- true when it is empty.
- *	- false when it is not empty.
- */
-STORAGE_CLASS_INLINE bool ia_css_circbuf_is_empty(ia_css_circbuf_t *cb);
-
-/**
- * @brief Test if the circular buffer is empty.
- *
- * @param cb_desc	The pointer to the circular buffer descriptor.
- *
- * @return
- *	- true when it is empty.
- *	- false when it is not empty.
- */
-STORAGE_CLASS_INLINE bool ia_css_circbuf_desc_is_empty(ia_css_circbuf_desc_t *cb_desc);
-
-/**
- * @brief Test if the circular buffer is full.
- *
- * @param cb	The pointer to the circular buffer.
- *
- * @return
- *	- true when it is full.
- *	- false when it is not full.
- */
-STORAGE_CLASS_INLINE bool ia_css_circbuf_is_full(ia_css_circbuf_t *cb);
-
-/**
- * @brief Test if the circular buffer is full.
- *
- * @param cb_desc	The pointer to the circular buffer descriptor.
- *
- * @return
- *	- true when it is full.
- *	- false when it is not full.
- */
-STORAGE_CLASS_INLINE bool ia_css_circbuf_desc_is_full(ia_css_circbuf_desc_t *cb_desc);
-
-/**
- * @brief Initialize the circular buffer descriptor
- *
- * @param cb_desc	The pointer circular buffer descriptor
- * @param size 		The size of the circular buffer
- */
-STORAGE_CLASS_INLINE void ia_css_circbuf_desc_init(
-	ia_css_circbuf_desc_t *cb_desc,
-	int8_t size);
-/**
- * @brief Initialize the element.
- *
- * @param elem The pointer to the element.
- */
-STORAGE_CLASS_INLINE void ia_css_circbuf_elem_init(ia_css_circbuf_elem_t *elem);
-
+ ****************************************************************/
 /**
  * @brief Set the "val" field in the element.
  *
@@ -228,7 +111,24 @@ STORAGE_CLASS_INLINE void ia_css_circbuf_elem_init(ia_css_circbuf_elem_t *elem);
  */
 STORAGE_CLASS_INLINE void ia_css_circbuf_elem_set_val(
 	ia_css_circbuf_elem_t *elem,
-	uint32_t val);
+	uint32_t val)
+{
+	OP___assert(elem != NULL);
+
+	elem->val = val;
+}
+
+/**
+ * @brief Initialize the element.
+ *
+ * @param elem The pointer to the element.
+ */
+STORAGE_CLASS_INLINE void ia_css_circbuf_elem_init(
+		ia_css_circbuf_elem_t *elem)
+{
+	OP___assert(elem != NULL);
+	ia_css_circbuf_elem_set_val(elem, 0);
+}
 
 /**
  * @brief Copy an element.
@@ -238,74 +138,35 @@ STORAGE_CLASS_INLINE void ia_css_circbuf_elem_set_val(
  */
 STORAGE_CLASS_INLINE void ia_css_circbuf_elem_cpy(
 	ia_css_circbuf_elem_t *src,
-	ia_css_circbuf_elem_t *dest);
-
-/**
- * @brief Write a new element into the circular buffer.
- * Write a new element WITHOUT checking whether the
- * circular buffer is full or not. So it also overwrites
- * the oldest element when the buffer is full.
- *
- * @param cb	The pointer to the circular buffer.
- * @param elem	The new element.
- */
-STORAGE_CLASS_INLINE void ia_css_circbuf_write(
-	ia_css_circbuf_t *cb,
-	ia_css_circbuf_elem_t elem);
-
-/****************************************************************
- *
- * Inline functions.
- *
- ****************************************************************/
-/**
- * @brief Initialize the element.
- * Refer to "Forward declarations" for details.
- */
-STORAGE_CLASS_INLINE void
-ia_css_circbuf_elem_init(ia_css_circbuf_elem_t *elem)
-{
-	ia_css_circbuf_elem_set_val(elem, 0);
-}
-
-/**
- * @brief Set the "val" field in the element.
- * Refer to "Forward declarations" for details.
- */
-STORAGE_CLASS_INLINE void
-ia_css_circbuf_elem_set_val(
-	ia_css_circbuf_elem_t *elem,
-	uint32_t val)
-{
-	elem->val = val;
-}
-
-/**
- * @brief Copy an element.
- * Refer to "Forward declarations" for details.
- */
-STORAGE_CLASS_INLINE void
-ia_css_circbuf_elem_cpy(
-	ia_css_circbuf_elem_t *src,
 	ia_css_circbuf_elem_t *dest)
 {
+	OP___assert(src != NULL);
+	OP___assert(dest != NULL);
+
 	ia_css_circbuf_elem_set_val(dest, src->val);
 }
 
 /**
- * @brief Get a position in the circular buffer.
- * Refer to "Forward declarations" for details.
+ * @brief Get position in the circular buffer.
+ *
+ * @param cb		The pointer to the circular buffer.
+ * @param base		The base position.
+ * @param offset	The offset.
+ *
+ * @return the position at offset.
  */
-STORAGE_CLASS_INLINE uint8_t
-ia_css_circbuf_get_pos_at_offset(
+STORAGE_CLASS_INLINE uint8_t ia_css_circbuf_get_pos_at_offset(
 	ia_css_circbuf_t *cb,
 	uint32_t base,
 	int offset)
 {
 	uint8_t dest;
+
+	OP___assert(cb != NULL);
+	OP___assert(cb->desc != NULL);
 	OP___assert(cb->desc->size > 0);
 
-	/* step 1: ajudst the offset  */
+	/* step 1: adjudst the offset  */
 	while (offset < 0) {
 		offset += cb->desc->size;
 	}
@@ -318,15 +179,24 @@ ia_css_circbuf_get_pos_at_offset(
 
 /**
  * @brief Get the offset between two positions in the circular buffer.
- * Refer to "Forward declarations" for details.
+ * Get the offset from the source position to the terminal position,
+ * along the direction in which the new elements come in.
+ *
+ * @param cb		The pointer to the circular buffer.
+ * @param src_pos	The source position.
+ * @param dest_pos	The terminal position.
+ *
+ * @return the offset.
  */
-STORAGE_CLASS_INLINE int
-ia_css_circbuf_get_offset(
+STORAGE_CLASS_INLINE int ia_css_circbuf_get_offset(
 	ia_css_circbuf_t *cb,
 	uint32_t src_pos,
 	uint32_t dest_pos)
 {
 	int offset;
+
+	OP___assert(cb != NULL);
+	OP___assert(cb->desc != NULL);
 
 	offset = (int)(dest_pos - src_pos);
 	offset += (offset < 0) ? cb->desc->size : 0;
@@ -336,24 +206,36 @@ ia_css_circbuf_get_offset(
 
 /**
  * @brief Get the maximum number of elements.
- * Refer to "Forward declarations" for details.
+ *
+ * @param cb The pointer to the circular buffer.
+ *
+ * @return the maximum number of elements.
  *
  * TODO: Test this API.
  */
-STORAGE_CLASS_INLINE uint32_t
-ia_css_circbuf_get_size(ia_css_circbuf_t *cb)
+STORAGE_CLASS_INLINE uint32_t ia_css_circbuf_get_size(
+		ia_css_circbuf_t *cb)
 {
+	OP___assert(cb != NULL);
+	OP___assert(cb->desc != NULL);
+
 	return cb->desc->size;
 }
 
 /**
- * @brief Get the number of availalbe elements.
- * Refer to "Forward declarations" for details.
+ * @brief Get the number of available elements.
+ *
+ * @param cb The pointer to the circular buffer.
+ *
+ * @return the number of available elements.
  */
-STORAGE_CLASS_INLINE uint32_t
-ia_css_circbuf_get_num_elems(ia_css_circbuf_t *cb)
+STORAGE_CLASS_INLINE uint32_t ia_css_circbuf_get_num_elems(
+		ia_css_circbuf_t *cb)
 {
 	int num;
+
+	OP___assert(cb != NULL);
+	OP___assert(cb->desc != NULL);
 
 	num = ia_css_circbuf_get_offset(cb, cb->desc->start, cb->desc->end);
 
@@ -362,63 +244,61 @@ ia_css_circbuf_get_num_elems(ia_css_circbuf_t *cb)
 
 /**
  * @brief Test if the circular buffer is empty.
- * Refer to "Forward declarations" for details.
+ *
+ * @param cb	The pointer to the circular buffer.
+ *
+ * @return
+ *	- true when it is empty.
+ *	- false when it is not empty.
  */
-STORAGE_CLASS_INLINE bool ia_css_circbuf_desc_is_empty(ia_css_circbuf_desc_t *cb_desc)
+STORAGE_CLASS_INLINE bool ia_css_circbuf_is_empty(
+		ia_css_circbuf_t *cb)
 {
-	return (cb_desc->end == cb_desc->start);
-}
+	OP___assert(cb != NULL);
+	OP___assert(cb->desc != NULL);
 
-/**
- * @brief Test if the circular buffer is empty.
- * Refer to "Forward declarations" for details.
- */
-STORAGE_CLASS_INLINE bool ia_css_circbuf_is_empty(ia_css_circbuf_t *cb)
-{
 	return ia_css_circbuf_desc_is_empty(cb->desc);
 }
 
 /**
  * @brief Test if the circular buffer is full.
- * Refer to "Forward declarations" for details.
- */
-STORAGE_CLASS_INLINE bool ia_css_circbuf_desc_is_full(ia_css_circbuf_desc_t *cb_desc)
-{
-	return (OP_std_modadd(cb_desc->end, 1, cb_desc->size) == cb_desc->start);
-}
-/**
- * @brief Test if the circular buffer is full.
- * Refer to "Forward declarations" for details.
+ *
+ * @param cb	The pointer to the circular buffer.
+ *
+ * @return
+ *	- true when it is full.
+ *	- false when it is not full.
  */
 STORAGE_CLASS_INLINE bool ia_css_circbuf_is_full(ia_css_circbuf_t *cb)
 {
+	OP___assert(cb != NULL);
+	OP___assert(cb->desc != NULL);
+
 	return ia_css_circbuf_desc_is_full(cb->desc);
 }
 
 /**
- * @brief Initialize the circular buffer descriptor
- * Refer to "Forward declarations" for details.
- */
-STORAGE_CLASS_INLINE void ia_css_circbuf_desc_init(
-	ia_css_circbuf_desc_t *cb_desc,
-	int8_t size)
-{
-	OP___assert(cb_desc);
-	cb_desc->size = size;
-}
-/**
  * @brief Write a new element into the circular buffer.
- * Refer to "Forward declarations" for details.
+ * Write a new element WITHOUT checking whether the
+ * circular buffer is full or not. So it also overwrites
+ * the oldest element when the buffer is full.
+ *
+ * @param cb	The pointer to the circular buffer.
+ * @param elem	The new element.
  */
-STORAGE_CLASS_INLINE void
-ia_css_circbuf_write(
+STORAGE_CLASS_INLINE void ia_css_circbuf_write(
 	ia_css_circbuf_t *cb,
 	ia_css_circbuf_elem_t elem)
 {
-	if (ia_css_circbuf_is_full(cb)) {
-		/* Cannot continue as the queue is full*/
-		OP_std_break();
-	}
+	OP___assert(cb != NULL);
+	OP___assert(cb->desc != NULL);
+
+	/* Cannot continue as the queue is full*/
+#ifdef __SP
+	SP_ASSERT_FATAL(!ia_css_circbuf_is_full(cb));
+#else
+	assert(!ia_css_circbuf_is_full(cb));
+#endif
 
 	ia_css_circbuf_elem_cpy(&elem, &cb->elems[cb->desc->end]);
 
@@ -427,14 +307,20 @@ ia_css_circbuf_write(
 
 /**
  * @brief Push a value in the circular buffer.
- * Refer to "Forward declarations" for details.
+ * Put a new value at the tail of the circular buffer.
+ * The user should call "ia_css_circbuf_is_full()"
+ * to avoid accessing to a full buffer.
+ *
+ * @param cb	The pointer to the circular buffer.
+ * @param val	The value to be pushed in.
  */
-STORAGE_CLASS_INLINE void
-ia_css_circbuf_push(
+STORAGE_CLASS_INLINE void ia_css_circbuf_push(
 	ia_css_circbuf_t *cb,
 	uint32_t val)
 {
 	ia_css_circbuf_elem_t elem;
+
+	OP___assert(cb != NULL);
 
 	/* set up an element */
 	ia_css_circbuf_elem_init(&elem);
@@ -444,9 +330,64 @@ ia_css_circbuf_push(
 	ia_css_circbuf_write(cb, elem);
 }
 
-STORAGE_CLASS_EXTERN uint32_t
-ia_css_circbuf_peek(
+/**
+ * @brief Get the number of free elements.
+ *
+ * @param cb The pointer to the circular buffer.
+ *
+ * @return: The number of free elements.
+ */
+STORAGE_CLASS_INLINE uint32_t ia_css_circbuf_get_free_elems(
+		ia_css_circbuf_t *cb)
+{
+	OP___assert(cb != NULL);
+	OP___assert(cb->desc != NULL);
+
+	return ia_css_circbuf_desc_get_free_elems(cb->desc);
+}
+
+/**
+ * @brief Peek an element in Circular Buffer.
+ *
+ * @param cb	 The pointer to the circular buffer.
+ * @param offset Offset to the element.
+ *
+ * @return the elements value.
+ */
+STORAGE_CLASS_EXTERN uint32_t ia_css_circbuf_peek(
 	ia_css_circbuf_t *cb,
 	int offset);
+
+/**
+ * @brief Get an element in Circular Buffer.
+ *
+ * @param cb	 The pointer to the circular buffer.
+ * @param offset Offset to the element.
+ *
+ * @return the elements value.
+ */
+STORAGE_CLASS_EXTERN uint32_t ia_css_circbuf_peek_from_start(
+	ia_css_circbuf_t *cb,
+	int offset);
+
+/**
+ * @brief Increase Size of a Circular Buffer.
+ * Use 'CAUTION' before using this function, This was added to
+ * support / fix issue with increasing size for tagger only
+ *
+ * @param cb The pointer to the circular buffer.
+ * @param sz_delta delta increase for new size
+ * @param elems (optional) pointers to new additional elements
+ *		cb element array size will not be increased dynamically,
+ * 		but new elements should be added at the end to existing
+ * 		cb element array which if of max_size >= new size
+ *
+ * @return	true on succesfully increasing the size
+ * 			false on failure
+ */
+STORAGE_CLASS_EXTERN bool ia_css_circbuf_increase_size(
+		ia_css_circbuf_t *cb,
+		unsigned int sz_delta,
+		ia_css_circbuf_elem_t *elems);
 
 #endif /*_IA_CSS_CIRCBUF_H */

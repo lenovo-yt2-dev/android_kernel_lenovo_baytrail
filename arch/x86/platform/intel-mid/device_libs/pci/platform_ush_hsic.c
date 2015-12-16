@@ -20,7 +20,10 @@ static struct ush_hsic_pdata hsic_pdata = {
 	.enabled = 0,
 	.aux_gpio = -EINVAL,
 	.wakeup_gpio = -EINVAL,
-	.reenum_delay = USH_REENUM_DELAY
+	.reenum_delay = USH_REENUM_DELAY,
+	.has_hsic = 0,
+	.has_ssic = 0,
+	.ssic_port_num = -EINVAL,
 };
 
 static struct ush_hsic_pdata *get_hsic_platform_data(struct pci_dev *pdev)
@@ -34,6 +37,9 @@ static struct ush_hsic_pdata *get_hsic_platform_data(struct pci_dev *pdev)
 			/* support HSIC */
 			pdata->has_modem = 1;
 			pdata->enabled = 1;
+			pdata->hsic_port_num = 5;
+			pdata->has_hsic = 1;
+			pdata->has_ssic = 0;
 		}
 
 		if (INTEL_MID_BOARD(3, TABLET, BYT, BLK, PRO, 8PR0))
@@ -44,12 +50,49 @@ static struct ush_hsic_pdata *get_hsic_platform_data(struct pci_dev *pdev)
 			pdata->reenum_delay = USH_REENUM_DELAY;
 		break;
 
+	case PCI_DEVICE_ID_INTEL_CHT_USH:
+	case PCI_DEVICE_ID_INTEL_CHT_USH_A1:
+		dev_info(&pdev->dev,
+			" CherryTrail HSIC/SSIC device platform data configured\n");
+		pdata->has_modem = 1;
+		pdata->enabled = 1;
+		pdata->aux_gpio = 78;
+		pdata->wakeup_gpio = 105;
+		pdata->hsic_port_num = 6;
+		pdata->reenum_delay = 600000;
+		pdata->has_hsic = 1;
+		pdata->has_ssic = 1;
+		pdata->ssic_port_num = 5;
+		pdata->ssic_enabled = 1;
+		break;
+
+	case PCI_DEVICE_ID_INTEL_MOOR_SSIC:
+		dev_info(&pdev->dev, " Moorefield SSIC Controller detected\n");
+		pdata->has_modem = 1;
+		pdata->enabled = 1;
+		pdata->has_hsic = 0;
+		pdata->has_ssic = 1;
+		pdata->ssic_port_num = 1;
+		/* Disable SSIC by default. Will enable it after everything is ready.*/
+		pdata->ssic_enabled = 0;
+		break;
+
 	default:
 		return NULL;
 		break;
 	}
 
 	return pdata;
+}
+
+static void ann_ssic_pci_early_quirks(struct pci_dev *pci_dev)
+{
+	pci_dev->dev.platform_data = get_hsic_platform_data(pci_dev);
+
+	dev_dbg(&pci_dev->dev, "set run wake flag\n");
+	device_set_run_wake(&pci_dev->dev, true);
+	/* disable ANN SSIC device pme poll by default */
+	pci_dev->pme_poll = 0;
 }
 
 static void hsic_pci_early_quirks(struct pci_dev *pci_dev)
@@ -62,6 +105,41 @@ static void hsic_pci_early_quirks(struct pci_dev *pci_dev)
 
 DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_BYT_USH,
 			hsic_pci_early_quirks);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CHT_USH,
+			hsic_pci_early_quirks);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CHT_USH_A1,
+			hsic_pci_early_quirks);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_MOOR_SSIC,
+			ann_ssic_pci_early_quirks);
+
+static void ann_ssic_resume_quirks(struct pci_dev *dev)
+{
+	struct ush_hsic_pdata	*pdata = NULL;
+	int			err;
+
+	pdata = dev->dev.platform_data;
+
+	if (pdata == NULL) {
+		dev_err(&dev->dev, "SSIC platform data is NULL\n");
+		return;
+	}
+
+	if (pdata->ssic_enabled) {
+		dev_info(&dev->dev, "Bypass SSIC resume quirk for SSIC enabled\n");
+		return;
+	}
+
+	/* Set Anniedale SSIC power state to D3hot after resume */
+	err = pci_set_power_state(dev, PCI_D3hot);
+
+	if (err < 0) {
+		dev_err(&dev->dev, "set ANN SSIC to D3 failed, err = %d\n", err);
+		return;
+	}
+}
+
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_MOOR_SSIC,
+			ann_ssic_resume_quirks);
 
 static void quirk_byt_ush_d3_delay(struct pci_dev *dev)
 {

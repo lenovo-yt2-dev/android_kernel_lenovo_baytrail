@@ -24,6 +24,7 @@
 
 #include "type_support.h"
 #include "platform_support.h"
+#include "runtime/bufq/interface/ia_css_bufq_comm.h"
 #include <system_types.h>	 /* hrt_vaddress */
 
 /*
@@ -67,13 +68,16 @@ struct ia_css_frame_sp_plane6 {
 	struct ia_css_frame_sp_plane b_at_r;
 };
 
+struct ia_css_sp_resolution {
+	uint16_t width;		/* width of valid data in pixels */
+	uint16_t height;	/* Height of valid data in lines */
+};
 
 /*
  * Frame info struct. This describes the contents of an image frame buffer.
  */
 struct ia_css_frame_sp_info {
-	uint16_t width;		/* width of valid data in pixels */
-	uint16_t height;		/* Height of valid data in lines */
+	struct ia_css_sp_resolution res;
 	uint16_t padded_width;		/* stride of line in memory
 					(in pixels) */
 	unsigned char format;		/* format of the frame data */
@@ -81,12 +85,20 @@ struct ia_css_frame_sp_info {
 					only valid for RAW bayer frames */
 	unsigned char raw_bayer_order;	/* bayer order, only valid
 					for RAW bayer frames */
-	unsigned char padding;
+	unsigned char padding[3];	/* Extend to 32 bit multiple */
 };
 
+struct ia_css_buffer_sp {
+	union {
+		hrt_vaddress xmem_addr;
+		enum sh_css_queue_id queue_id;
+	} buf_src;
+	enum ia_css_buffer_type buf_type;
+};
 
 struct ia_css_frame_sp {
 	struct ia_css_frame_sp_info info;
+	struct ia_css_buffer_sp buf_attr;
 	union {
 		struct ia_css_frame_sp_plane raw;
 		struct ia_css_frame_sp_plane rgb;
@@ -98,6 +110,14 @@ struct ia_css_frame_sp {
 		struct ia_css_frame_sp_binary_plane binary;
 	} planes;
 };
+
+void ia_css_frame_info_to_frame_sp_info(
+	struct ia_css_frame_sp_info *sp_info,
+	const struct ia_css_frame_info *info);
+
+void ia_css_resolution_to_sp_resolution(
+	struct ia_css_sp_resolution *sp_info,
+	const struct ia_css_resolution *info);
 
 #endif /*__IA_CSS_FRAME_COMM_H__*/
 

@@ -25,5 +25,7 @@
 #define NUM_BITS 14
 #define NUM_SLICE_ELEMS 4
 #define ROUNDMODE           ROUND_NEAREST_EVEN
+#define MAX_SHIFT_1W        (NUM_BITS-1)   /* Max number of bits a 1w input can be shifted */
+#define MAX_SHIFT_2W        (2*NUM_BITS-1) /* Max number of bits a 2w input can be shifted */
 
 #endif /* __ISP2400_CONFIG_H_INCLUDED__ */

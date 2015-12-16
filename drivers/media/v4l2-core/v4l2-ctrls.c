@@ -786,6 +786,10 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_VBLANK:			return "Vertical Blanking";
 	case V4L2_CID_HBLANK:			return "Horizontal Blanking";
 	case V4L2_CID_ANALOGUE_GAIN:		return "Analogue Gain";
+	case V4L2_CID_TEST_PATTERN_RED:		return "Red Pixel Value";
+	case V4L2_CID_TEST_PATTERN_GREENR:	return "Green (Red) Pixel Value";
+	case V4L2_CID_TEST_PATTERN_BLUE:	return "Blue Pixel Value";
+	case V4L2_CID_TEST_PATTERN_GREENB:	return "Green (Blue) Pixel Value";
 
 	/* Image processing controls */
 	case V4L2_CID_IMAGE_PROC_CLASS:		return "Image Processing Controls";

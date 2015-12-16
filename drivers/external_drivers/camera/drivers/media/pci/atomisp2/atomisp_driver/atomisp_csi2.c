@@ -21,7 +21,9 @@
 
 #include <media/v4l2-event.h>
 #include <media/v4l2-mediabus.h>
+#include "atomisp_cmd.h"
 #include "atomisp_internal.h"
+#include "atomisp-regs.h"
 
 static struct v4l2_mbus_framefmt *__csi2_get_format(
 	struct atomisp_mipi_csi2_device *csi2, struct v4l2_subdev_fh *fh,
@@ -277,6 +279,126 @@ int atomisp_mipi_csi2_register_entities(struct atomisp_mipi_csi2_device *csi2,
 error:
 	atomisp_mipi_csi2_unregister_entities(csi2);
 	return ret;
+}
+
+static const int LIMIT_SHIFT = 6;	/* Limit numeric range into 31 bits */
+
+static int
+atomisp_csi2_configure_calc(const short int coeffs[2], int mipi_freq, int def)
+{
+	/* Delay counter accuracy, 1/0.0625 for ANN/CHT, 1/0.125 for BXT */
+	static const int accinv = 16;		/* 1 / COUNT_ACC */
+	int r;
+
+	if (mipi_freq >> LIMIT_SHIFT <= 0)
+		return def;
+
+	r = accinv * coeffs[1] * (500000000 >> LIMIT_SHIFT);
+	r /= mipi_freq >> LIMIT_SHIFT;
+	r += accinv * coeffs[0];
+
+	return r;
+}
+
+static void atomisp_csi2_configure_isp2401(struct atomisp_sub_device *asd)
+{
+	/*
+	 * The ISP2401 new input system CSI2+ receiver has several
+	 * parameters affecting the receiver timings. These depend
+	 * on the MIPI bus frequency F in Hz (sensor transmitter rate)
+	 * as follows:
+	 *	register value = (A/1e9 + B * UI) / COUNT_ACC
+	 * where
+	 *	UI = 1 / (2 * F) in seconds
+	 *	COUNT_ACC = counter accuracy in seconds
+	 *	For ANN and CHV, COUNT_ACC = 0.0625 ns
+	 *	For BXT,  COUNT_ACC = 0.125 ns
+	 * A and B are coefficients from the table below,
+	 * depending whether the register minimum or maximum value is
+	 * calculated.
+	 *				       Minimum     Maximum
+	 * Clock lane			       A     B     A     B
+	 * reg_rx_csi_dly_cnt_termen_clane     0     0    38     0
+	 * reg_rx_csi_dly_cnt_settle_clane    95    -8   300   -16
+	 * Data lanes
+	 * reg_rx_csi_dly_cnt_termen_dlane0    0     0    35     4
+	 * reg_rx_csi_dly_cnt_settle_dlane0   85    -2   145    -6
+	 * reg_rx_csi_dly_cnt_termen_dlane1    0     0    35     4
+	 * reg_rx_csi_dly_cnt_settle_dlane1   85    -2   145    -6
+	 * reg_rx_csi_dly_cnt_termen_dlane2    0     0    35     4
+	 * reg_rx_csi_dly_cnt_settle_dlane2   85    -2   145    -6
+	 * reg_rx_csi_dly_cnt_termen_dlane3    0     0    35     4
+	 * reg_rx_csi_dly_cnt_settle_dlane3   85    -2   145    -6
+	 *
+	 * We use the minimum values in the calculations below.
+	 */
+	static const short int coeff_clk_termen[] = { 0, 0 };
+	static const short int coeff_clk_settle[] = { 95, -8 };
+	static const short int coeff_dat_termen[] = { 0, 0 };
+	static const short int coeff_dat_settle[] = { 85, -2 };
+	static const int TERMEN_DEFAULT		  = 0 * 0;
+	static const int SETTLE_DEFAULT		  = 0x480;
+	static const hrt_address csi2_port_base[] = {
+		[ATOMISP_CAMERA_PORT_PRIMARY]     = CSI2_PORT_A_BASE,
+		[ATOMISP_CAMERA_PORT_SECONDARY]   = CSI2_PORT_B_BASE,
+		[ATOMISP_CAMERA_PORT_TERTIARY]    = CSI2_PORT_C_BASE,
+	};
+	/* Number of lanes on each port, excluding clock lane */
+	static const unsigned char csi2_port_lanes[] = {
+		[ATOMISP_CAMERA_PORT_PRIMARY]     = 4,
+		[ATOMISP_CAMERA_PORT_SECONDARY]   = 2,
+		[ATOMISP_CAMERA_PORT_TERTIARY]    = 2,
+	};
+	static const hrt_address csi2_lane_base[] = {
+		CSI2_LANE_CL_BASE,
+		CSI2_LANE_D0_BASE,
+		CSI2_LANE_D1_BASE,
+		CSI2_LANE_D2_BASE,
+		CSI2_LANE_D3_BASE,
+	};
+
+	int clk_termen;
+	int clk_settle;
+	int dat_termen;
+	int dat_settle;
+
+	struct v4l2_control ctrl;
+	struct atomisp_device *isp = asd->isp;
+	struct camera_mipi_info *mipi_info;
+	int mipi_freq = 0;
+	enum atomisp_camera_port port;
+
+	int n;
+
+	mipi_info = atomisp_to_sensor_mipi_info(
+					isp->inputs[asd->input_curr].camera);
+	port = mipi_info->port;
+
+	ctrl.id = V4L2_CID_LINK_FREQ;
+	if (v4l2_subdev_g_ctrl(isp->inputs[asd->input_curr].camera, &ctrl) == 0)
+		mipi_freq = ctrl.value;
+
+	clk_termen = atomisp_csi2_configure_calc(coeff_clk_termen,
+						 mipi_freq, TERMEN_DEFAULT);
+	clk_settle = atomisp_csi2_configure_calc(coeff_clk_settle,
+						 mipi_freq, SETTLE_DEFAULT);
+	dat_termen = atomisp_csi2_configure_calc(coeff_dat_termen,
+						 mipi_freq, TERMEN_DEFAULT);
+	dat_settle = atomisp_csi2_configure_calc(coeff_dat_settle,
+						 mipi_freq, SETTLE_DEFAULT);
+	for (n = 0; n < csi2_port_lanes[port] + 1; n++) {
+		hrt_address base = csi2_port_base[port] + csi2_lane_base[n];
+		atomisp_store_uint32(base + CSI2_REG_RX_CSI_DLY_CNT_TERMEN,
+				     n == 0 ? clk_termen : dat_termen);
+		atomisp_store_uint32(base + CSI2_REG_RX_CSI_DLY_CNT_SETTLE,
+				     n == 0 ? clk_settle : dat_settle);
+	}
+}
+
+void atomisp_csi2_configure(struct atomisp_sub_device *asd)
+{
+	if (IS_HWREVISION(asd->isp, ATOMISP_HW_REVISION_ISP2401))
+		atomisp_csi2_configure_isp2401(asd);
 }
 
 /*

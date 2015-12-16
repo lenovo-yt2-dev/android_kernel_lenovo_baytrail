@@ -65,9 +65,18 @@ int psb_wait_for_register(struct drm_psb_private *dev_priv,
 		if (value == (reg_value & enable))
 			return 0;
 
-		/* Wait a bit */
-		PSB_UDELAY(timeout);
-		/* PSB_UDELAY(5); */
+		if (timeout < 10) {
+			/* Wait a bit */
+			PSB_UDELAY(timeout);
+			/* PSB_UDELAY(5); */
+		}
+		else if (timeout < 20000) {
+			usleep_range(timeout, timeout + timeout / 5);
+		}
+		else {
+			msleep(timeout / 1000);
+		}
+
 		poll_cnt--;
 	}
 	PSB_DEBUG_MSVDX("MSVDX: Timeout while waiting for register %08x:"
@@ -117,7 +126,6 @@ int psb_msvdx_core_reset(struct drm_psb_private *dev_priv)
 {
 	int ret = 0;
 	struct msvdx_private *msvdx_priv = dev_priv->msvdx_private;
-	uint32_t core_rev;
 	/* Enable Clocks */
 	PSB_DEBUG_GENERAL("Enabling clocks\n");
 	psb_msvdx_mtx_set_clocks(dev_priv->dev, clk_enable_all);
@@ -317,9 +325,7 @@ static ssize_t ved_freq_scaling_show(struct device *dev,
 {
 	struct drm_device *drm_dev = dev_get_drvdata(dev);
 	int ret = -EINVAL;
-	int chars;
 	int freq_code;
-	u32 freq_val;
 
 	if (drm_dev == NULL)
                return 0;
@@ -361,7 +367,7 @@ static ssize_t ved_freq_scaling_store(struct device *dev,
 		if ((freq_code ^ IP_FREQ_RESUME_SET) == 0) {
 			psb_set_freq_control_switch(true);
 		} else {
-			printk(KERN_ERR "%s: invalid freq_code %d\n", freq_code);
+			printk(KERN_ERR "%s: invalid freq_code %d\n", __func__, freq_code);
 		}
 	}
 	return size;
@@ -376,13 +382,14 @@ static int32_t msvdx_alloc_ccb_for_rendec(struct drm_device *dev)
 {
 	struct msvdx_private *msvdx_priv = NULL;
 	int32_t ret = 0;
+	struct drm_psb_private *dev_priv;
 
 	PSB_DEBUG_INIT("MSVDX: Setting up RENDEC,allocate CCB 0/1\n");
 
 	if (dev == NULL)
 		return 1;
 
-	struct drm_psb_private *dev_priv = psb_priv(dev);
+	dev_priv = psb_priv(dev);
 	if (dev_priv == NULL)
 		return 1;
 
@@ -426,6 +433,7 @@ err_exit:
 	return 1;
 }
 
+#ifndef CONFIG_SLICE_HEADER_PARSING
 static void msvdx_rendec_init_by_reg(struct drm_device *dev)
 {
 	struct drm_psb_private *dev_priv = psb_priv(dev);
@@ -466,6 +474,7 @@ static void msvdx_rendec_init_by_reg(struct drm_device *dev)
 			1);
 	PSB_WMSVDX32(cmd, MSVDX_RENDEC_CONTROL0_OFFSET);
 }
+#endif
 
 int32_t msvdx_rendec_init_by_msg(struct drm_device *dev)
 {
@@ -625,130 +634,9 @@ void msvdx_init_test(struct drm_device *dev)
 }
 #endif
 
-#ifdef MERRIFIELD
-
-/* FW + FIP + VRL */
-#define PSB_MSVDX_FW_SIZE (84 * 1024 + 296 + 728)
-#define PSB_VEDSSPM0_OFF_STATE 0xb000003
-
-extern struct soft_platform_id spid;
-
-int tng_msvdx_fw_init(uint8_t *name,struct drm_device *dev)
-{
-	struct firmware *fw = NULL;
-	uint8_t *fw_io_base;
-	void *ptr = NULL;
-	int rc, fw_size;
-	uint32_t imrl, imrh;
-	uint64_t imr_base, imr_end;
-	const unsigned long tng_magic_num = 0x44455624;
-	int pwr_mask = 0;
-	int ret = 0;
-	const int FW_NAME_LEN = 30;
-	char fw_name[FW_NAME_LEN];
-	int name_ret;
-
-
-	imrl = intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,
-			TNG_IMR5L_MSG_REGADDR);
-	imrh = intel_mid_msgbus_read32(TNG_IMR_MSG_PORT,
-			TNG_IMR5H_MSG_REGADDR);
-
-	imr_base = (imrl & TNG_IMR_ADDRESS_MASK) << TNG_IMR_ADDRESS_SHIFT;
-	imr_end = (imrh & TNG_IMR_ADDRESS_MASK) << TNG_IMR_ADDRESS_SHIFT;
-
-	DRM_INFO("IMR5 ranges 0x%12lx - 0x%12lx\n", imr_base, imr_end);
-
-	/*      if ((imr_end - imr_base) < PSB_MSVDX_FW_SIZE) {
-		printk("MSVDX: IMR5 size not enough for fw\n");
-		return 1;
-		}
-	 */
-
-	name_ret = snprintf(fw_name, FW_NAME_LEN, "msvdx.bin.%04x.%04x",
-		 (int)spid.platform_family_id, (int)spid.hardware_id);
-	if (name_ret > FW_NAME_LEN) {
-		DRM_ERROR("failed to get fw name, ret %d vs expect %d\n",
-			  name_ret, FW_NAME_LEN);
-		/* no way */
-		return -1;
-	}
-
-	/* try load with spid first */
-	rc = request_firmware(&fw, fw_name, &dev->pdev->dev);
-	if (fw == NULL || rc < 0) {
-		DRM_INFO("failed to load fw: %s, try to load different fw\n",
-			fw_name);
-
-		rc = request_firmware(&fw, name, &dev->pdev->dev);
-	}
-
-	if (fw == NULL || rc < 0) {
-		DRM_ERROR("MSVDX: %s request_firmware failed: Reason %d\n",
-				name, rc);
-		return 1;
-	}
-
-	ptr = (int *)(fw)->data;
-	fw_size =  (int)(fw)->size;
-	if (0 == ptr) {
-		DRM_ERROR("MSVDX: Failed to load %s, fw_size is %d\n", name, fw_size);
-		release_firmware(fw);
-		return 1;
-	}
-	fw_io_base = ioremap(imr_base, fw_size);
-
-	if (!fw_io_base) {
-		release_firmware(fw);
-		DRM_ERROR("MSVDX_FW_PHADDRESS ioremap failed in function msvdx_fw_initialize\r\n");
-		return 1;
-	}
-
-	memcpy(fw_io_base, ptr, fw_size);
-	DRM_INFO("MSVDX_FW copied to IMR5\n");
-	iounmap(fw_io_base);
-	release_firmware(fw);
-
-#ifdef CONFIG_DX_SEP54
-	DRM_INFO("sepapp_image_verify\n");
-
-	DRM_INFO("imr5 L 0x94 = 0x%x\n", intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,0X94));
-	DRM_INFO("imr5 H 0x95 = 0x%x\n", intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,0X95));
-	DRM_INFO("imr5 RAC 0x96 = 0x%x\n", intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,0X96));
-	DRM_INFO("imr5 WAC 0x97 = 0x%x\n", intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,0X97));
-
-
-	ret = sepapp_image_verify(imr_base, fw_size, 15,
-			tng_magic_num);
-	if (ret) {
-		DRM_ERROR("failed to verify VED firmware ret %x\n", ret);
-		return -1;
-	}
-
-	DRM_INFO("fw is verified!!\n");
-	DRM_INFO("imr5 L 0x94 = 0x%x\n", intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,0X94));
-	DRM_INFO("imr5 H 0x95 = 0x%x\n", intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,0X95));
-	DRM_INFO("imr5 RAC 0x96 = 0x%x\n", intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,0X96));
-	DRM_INFO("imr5 WAC 0x97 = 0x%x\n", intel_mid_msgbus_read32(PNW_IMR_MSG_PORT,0X97));
-
-	pwr_mask = intel_mid_msgbus_read32(0x04, 0x32);
-	DRM_INFO("VEDSSPM0 = 0x%x\n", pwr_mask);
-
-	intel_mid_msgbus_write32(0x04, 0x32, PSB_VEDSSPM0_OFF_STATE);
-	udelay(10);
-
-	pwr_mask = intel_mid_msgbus_read32(0x04, 0x32);
-	DRM_INFO("VEDSSPM0 = 0x%x\n", pwr_mask);
-
-#endif
-	return 0;
-}
-#endif
-
 static int msvdx_startup_init(struct drm_device *dev)
 {
 	struct drm_psb_private *dev_priv = psb_priv(dev);
-	int ret;
 	struct msvdx_private *msvdx_priv;
 
 	msvdx_priv = kmalloc(sizeof(struct msvdx_private), GFP_KERNEL);
@@ -911,7 +799,7 @@ int msvdx_mtx_init(struct drm_device *dev, int error_reset)
 	ret = psb_wait_for_register(dev_priv, MSVDX_COMMS_SIGNATURE,
 				    MSVDX_COMMS_SIGNATURE_VALUE,
 				    0xffffffff,
-				    1000, 1000);
+				    1000, 900);
 	if (ret) {
 		PSB_DEBUG_WARN("WARN: Gunit upload fw failure,\n"
 				"MSVDX_COMMS_SIGNATURE reg is 0x%x,"
@@ -931,11 +819,9 @@ int msvdx_mtx_init(struct drm_device *dev, int error_reset)
 #define WDT_CLOCK_DIVIDER 128
 int psb_msvdx_post_boot_init(struct drm_device *dev)
 {
-	struct fw_init_msg init_msg;
 	struct drm_psb_private *dev_priv = psb_priv(dev);
 	struct msvdx_private *msvdx_priv = dev_priv->msvdx_private;
 	uint32_t device_node_flags =
-			DSIABLE_IDLE_GPIO_SIG | DSIABLE_Auto_CLOCK_GATING |
 			RETURN_VDEB_DATA_IN_COMPLETION | NOT_ENABLE_ON_HOST_CONCEALMENT;
 
 	/* DDK set fe_wdt_clks as 0x820 and be_wdt_clks as 0x8200 */
@@ -995,9 +881,7 @@ int psb_msvdx_post_boot_init(struct drm_device *dev)
 int psb_msvdx_init(struct drm_device *dev)
 {
 	struct drm_psb_private *dev_priv = psb_priv(dev);
-	uint32_t cmd;
 	int ret;
-	struct msvdx_private *msvdx_priv;
 
 	if (!dev_priv->msvdx_private) {
 		if (msvdx_startup_init(dev))
@@ -1014,7 +898,7 @@ int psb_msvdx_init(struct drm_device *dev)
         }
 
 #ifdef MERRIFIELD
-	if (!(IS_TNG_B0(dev) || IS_ANN_A0(dev))) {
+	if (!(IS_TNG_B0(dev) || IS_MOFD(dev))) {
 #endif
 		ret = psb_msvdx_post_init(dev);
 		if (ret) {
@@ -1041,7 +925,6 @@ int psb_msvdx_post_init(struct drm_device *dev)
         msvdx_priv = dev_priv->msvdx_private;
 
         msvdx_priv->msvdx_busy = 0;
-        msvdx_priv->msvdx_hw_busy = 1;
 
         if (msvdx_priv->fw_loaded_by_punit) {
                 /* DDK: Configure MSVDX Memory Stalling iwth the min, max and ratio of access */
@@ -1167,11 +1050,10 @@ int psb_msvdx_uninit(struct drm_device *dev)
 #ifdef CONFIG_VIDEO_MRFLD
 		device_remove_file(&dev->pdev->dev, &dev_attr_ved_freq_scaling);
 #endif
+		tasklet_kill(&msvdx_priv->msvdx_tasklet);
 		kfree(msvdx_priv);
 		dev_priv->msvdx_private = NULL;
 	}
-
-	tasklet_kill(&msvdx_priv->msvdx_tasklet);
 
 	return 0;
 }

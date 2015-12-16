@@ -1,5 +1,5 @@
 /*
- *  m1120.c - Linux kernel modules for hall switch 
+ *  m1120.c - Linux kernel modules for hall switch
  *
  *  Copyright (C) 2013 Seunghwan Park <seunghwan.park@magnachip.com>
  *  Copyright (C) 2014 MagnaChip Semiconductor.
@@ -35,9 +35,9 @@
 #include <linux/gpio.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
-#include <linux/m1120.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
+#include "m1120.h"
 
 ///////////
 //
@@ -53,7 +53,7 @@ stscfg_init
 */
 
 /* ********************************************************* */
-/* customer config */ 
+/* customer config */
 /* ********************************************************* */
 //#define M1120_DBG_ENABLE					// for debugging
 #define M1120_DETECTION_MODE				M1120_DETECTION_MODE_INTERRUPT // M1120_DETECTION_MODE_POLLING
@@ -86,8 +86,8 @@ stscfg_init
 #define dbg(fmt, args...)  printk("[M1120-DBG] %s(L%04d) : " fmt "\n", __func__, __LINE__, ##args)
 #define dbgn(fmt, args...)  printk(fmt, ##args)
 #else
-#define dbg(fmt, args...)   
-#define dbgn(fmt, args...)  
+#define dbg(fmt, args...)
+#define dbgn(fmt, args...)
 #endif // M1120_DBG_ENABLE
 #define dbg_func_in()       dbg("[M1120-DBG-F.IN] %s", __func__)
 #define dbg_func_out()      dbg("[M1120-DBG-F.OUT] %s", __func__)
@@ -99,9 +99,9 @@ stscfg_init
 /* error display macro */
 /* ********************************************************* */
 #define mxerr(pdev, fmt, args...)			\
-	dev_err(pdev, "[M1120-ERR] %s(L%04d) : " fmt "\n", __func__, __LINE__, ##args) 
+	dev_err(pdev, "[M1120-ERR] %s(L%04d) : " fmt "\n", __func__, __LINE__, ##args)
 #define mxinfo(pdev, fmt, args...)			\
-	dev_info(pdev, "[M1120-INFO] %s(L%04d) : " fmt "\n", __func__, __LINE__, ##args) 
+	dev_info(pdev, "[M1120-INFO] %s(L%04d) : " fmt "\n", __func__, __LINE__, ##args)
 /* ********************************************************* */
 
 //extern void *m1120_platform_data(void *info);
@@ -223,7 +223,7 @@ static int m1120_i2c_write(struct i2c_client* client, u8 reg, u8* wdata, u8 len)
 		printk("[ERROR] %s : i2c client is NULL.\n", __func__);
 		return -ENODEV;
 	}
-	
+
 	buf[0] = reg;
 	if (len > M1120_I2C_BUF_SIZE) {
 		mxerr(&client->dev, "i2c buffer size must be less than %d", M1120_I2C_BUF_SIZE);
@@ -606,7 +606,7 @@ static int m1120_update_interrupt_threshold(struct device *dev, short raw)
 				m1120_convdata_short_to_2byte(p_data->reg.map.opf, 511, &hthh, &hthl);
 				m1120_convdata_short_to_2byte(p_data->reg.map.opf, 510, &lthh, &lthl);
 				p_data->stscfg_init = 0;
-/*	
+/*
  *	} else {
 				if (m1120_get_result_status(p_data, (int)raw) == p_data->stscfg[0].type) {
 					m1120_convdata_short_to_2byte(p_data->reg.map.opf, 511, &hthh, &hthl);
@@ -924,7 +924,7 @@ static int m1120_set_calibration(struct device *dev)
 			cnt_s++;
 		}
 	}
-	cal_store /= cnt_s; 
+	cal_store /= cnt_s;
 	p_data->calibrated_data = cal_store;
 	cal_data = cal_store;
 	if(!m1120_get_enable(dev)) m1120_set_operation_mode(dev, OPERATION_MODE_POWERDOWN);
@@ -1003,7 +1003,7 @@ static int m1120_get_result_status(m1120_data_t* p_data, int raw)
 	}
 	if(status_loop > 6)
 		status = M1120_RESULT_STATUS_UNKNOWN;
-		
+
 	dbg("Result is status [0x%02X]", status);
 #else
 	if(p_data->thrhigh <= raw) {
@@ -1035,11 +1035,6 @@ static int m1120_get_result_status(m1120_data_t* p_data, int raw)
 #endif
 	return status;
 }
-
-
-
-
-
 
 /* *************************************************
    input device interface
@@ -1095,10 +1090,6 @@ static void m1120_input_dev_terminate(m1120_data_t *p_data)
 	input_unregister_device(dev);
 	input_free_device(dev);
 }
-
-
-
-
 
 /* *************************************************
    misc device interface
@@ -1249,11 +1240,6 @@ static unsigned int m1120_misc_dev_poll( struct file *filp, struct poll_table_st
 	return 0;
 }
 
-
-
-
-
-
 /* *************************************************
    sysfs attributes
    ************************************************* */
@@ -1287,7 +1273,7 @@ static ssize_t m1120_enable_store(struct device *dev,
 	if(IS_ERR(fp)){
 		printk("open, file error.\n");
 	}else{
-		
+
 	fs = get_fs();
 	set_fs(KERNEL_DS);
 	pos = 0;
@@ -1295,7 +1281,7 @@ static ssize_t m1120_enable_store(struct device *dev,
 	printk("read: %s\n", cal_data);
 	filp_close(fp, NULL);
 	set_fs(fs);
-	
+
 	if(cal_data != NULL){
 	loop3 = 0;
 	for(loop1 = 0;(cal_data[loop1] != '\0');loop1++){
@@ -1303,7 +1289,7 @@ static ssize_t m1120_enable_store(struct device *dev,
 				s_data[loop2] = cal_data[loop1];
 			if(cal_data[loop1] == '\0')
 				break;
-			loop1++;		
+			loop1++;
 		}
 		s_data[loop2] = '\0';
 		sscanf(s_data,"%d", &(c_data[loop3++]));
@@ -1312,9 +1298,9 @@ static ssize_t m1120_enable_store(struct device *dev,
 		close = c_data[0];
 		stand = c_data[1];
 		lift = c_data[2];
-	}else 
+	}else
 		return count;
-	
+
 	printk("---------------- %d %d %d\n", close, stand, lift);
 	}
 }
@@ -1477,16 +1463,24 @@ static ssize_t m1120_calibration_store(struct device *dev,
 static ssize_t m1120_cal_result_show(struct device *dev,
 				  struct device_attribute *attr, char *buf)
 {
+	/*
 	int cal_result = 0;
-		
+
 	if((close - stand) < 45)
 		cal_result += 1;
 	if((stand - lift) < 80)
 		cal_result += 2;
 
-	
-	return sprintf(buf, "%d\n", cal_result);
 
+	return sprintf(buf, "%d\n", cal_result);
+	*/
+	/* oujf1 */
+	int err = -1;
+
+	if ((close > 0) && (lift < 0) && (close > stand) && (stand > lift))
+		err = 0;
+
+	return sprintf(buf, "%d\n", err);
 }
 static ssize_t m1120_hall_status_show(struct device *dev,
 				  struct device_attribute *attr, char *buf)
@@ -1570,7 +1564,7 @@ int m1120_i2c_drv_probe(struct i2c_client *client, const struct i2c_device_id *i
 	if(p_data->igpio != -1) {
 		err = gpio_request(p_data->igpio, "m1120_irq");
 		if (err){
-			mxerr(&client->dev, "gpio_request was failed(%d)", err); 
+			mxerr(&client->dev, "gpio_request was failed(%d)", err);
 			goto error_1;
 		}
 		mxinfo(&client->dev, "gpio_request was success");
@@ -1583,7 +1577,7 @@ int m1120_i2c_drv_probe(struct i2c_client *client, const struct i2c_device_id *i
 		err = request_irq(p_data->irq, &m1120_irq_handler, IRQF_TRIGGER_FALLING, M1120_IRQ_NAME, 0);
 		irq_status = 1;
 	}
-	
+
 
 	/* (6) reset and init device */
 	err = m1120_init_device(&p_data->client->dev);

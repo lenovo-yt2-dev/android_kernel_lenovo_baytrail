@@ -1128,6 +1128,7 @@ struct drm_intel_sprite_colorkey {
 	__u32 flags;
 };
 
+#define I915_WAIT_WRITES		(1<<0) /* if the flag is set wait for the last write (wait for the last read otherwise) */
 struct drm_i915_gem_wait {
 	/** Handle of BO we shall wait on */
 	__u32 bo_handle;

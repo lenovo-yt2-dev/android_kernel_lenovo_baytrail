@@ -33,38 +33,57 @@
 #include "lenovo_lcd_panel.h"
 
 //CABC command
+static u8 page0_cmd1[] = {0x83, 0x00};
+static u8 page0_cmd2[] = {0x84, 0x00};
+
 static u8 cabcpage_cmd1[] = {0x83, 0xBB};
 static u8 cabcpage_cmd2[] = {0x84, 0x22};
 static u8 cabcoff_cmd1[]  = {0x90, 0xC0};
-static u8 cabcon_cmd1[]	  = {0x90, 0x40};
+static u8 cabcon_cmd1[]	  = {0x90, 0x00};
 //Color Enhance command
 static u8 cepage_cmd1[]   = {0x83, 0xCC};
 static u8 cepage_cmd2[]   = {0x84, 0x33};
 static u8 ceoff_cmd1[]    = {0x90, 0x10};
+static u8 ceoff_cmd2[]    = {0xAD, 0x03};
 static u8 ceon_cmd1[]     = {0x90, 0x1F};
+static u8 ceon_cmd2[]     = {0xAD, 0x07};
 
 static struct lcd_cmd cabcoff_cmds[] = {
 	{cabcpage_cmd1, ARRAY_SIZE(cabcpage_cmd1)},
 	{cabcpage_cmd2, ARRAY_SIZE(cabcpage_cmd2)},
 	{cabcoff_cmd1, ARRAY_SIZE(cabcoff_cmd1)},
+	{page0_cmd1, ARRAY_SIZE(page0_cmd1)},
+	{page0_cmd2, ARRAY_SIZE(page0_cmd2)},
 };
 
 static struct lcd_cmd cabcon_cmds[] = {
 	{cabcpage_cmd1, ARRAY_SIZE(cabcpage_cmd1)},
 	{cabcpage_cmd2, ARRAY_SIZE(cabcpage_cmd2)},
 	{cabcon_cmd1, ARRAY_SIZE(cabcon_cmd1)},
+	{page0_cmd1, ARRAY_SIZE(page0_cmd1)},
+	{page0_cmd2, ARRAY_SIZE(page0_cmd2)},
 };
 
 static struct lcd_cmd ceoff_cmds[]  = {
 	{cepage_cmd1, ARRAY_SIZE(cepage_cmd1)},
 	{cepage_cmd2, ARRAY_SIZE(cepage_cmd2)},
 	{ceoff_cmd1,  ARRAY_SIZE(ceoff_cmd1)},
+	{cabcpage_cmd1, ARRAY_SIZE(cabcpage_cmd1)},
+	{cabcpage_cmd2, ARRAY_SIZE(cabcpage_cmd2)},
+	{ceoff_cmd2, ARRAY_SIZE(ceoff_cmd2)},
+	{page0_cmd1, ARRAY_SIZE(page0_cmd1)},
+	{page0_cmd2, ARRAY_SIZE(page0_cmd2)},
 };
 
 static struct lcd_cmd ceon_cmds[] = {
 	{cepage_cmd1, ARRAY_SIZE(cepage_cmd1)},
 	{cepage_cmd2, ARRAY_SIZE(cepage_cmd2)},
 	{ceon_cmd1,   ARRAY_SIZE(ceon_cmd1)},
+	{cabcpage_cmd1, ARRAY_SIZE(cabcpage_cmd1)},
+	{cabcpage_cmd2, ARRAY_SIZE(cabcpage_cmd2)},
+	{ceon_cmd2, ARRAY_SIZE(ceon_cmd2)},
+	{page0_cmd1, ARRAY_SIZE(page0_cmd1)},
+	{page0_cmd2, ARRAY_SIZE(page0_cmd2)},
 };
 
 static struct lcd_effect_cmd cabc_effect_cmds[] = {

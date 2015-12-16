@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_YNR2_TYPES_H
 #define __IA_CSS_YNR2_TYPES_H
 
+/** @file
+* CSS-API header file for Y(Luma) Noise Reduction.
+*/
+
 /** Y(Luma) Noise Reduction configuration.
  *
  *  ISP block: YNR2 & YEE2

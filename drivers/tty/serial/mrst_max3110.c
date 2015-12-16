@@ -755,10 +755,11 @@ static int serial_m3110_resume(struct device *dev)
 	struct spi_device *spi = to_spi_device(dev);
 	struct uart_max3110 *max = spi_get_drvdata(spi);
 
-	max3110_out(max, max->cur_conf);
-	uart_resume_port(&serial_m3110_reg, &max->port);
+	/* Enable IRQ before max3110 write */
 	if (max->irq > 0)
 		enable_irq(max->irq);
+	max3110_out(max, max->cur_conf);
+	uart_resume_port(&serial_m3110_reg, &max->port);
 	return 0;
 }
 

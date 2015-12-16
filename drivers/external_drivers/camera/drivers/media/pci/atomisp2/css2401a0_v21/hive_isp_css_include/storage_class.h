@@ -22,6 +22,11 @@
 #ifndef __STORAGE_CLASS_H_INCLUDED__
 #define __STORAGE_CLASS_H_INCLUDED__
 
+/**
+* @file
+* Platform specific includes and functionality.
+*/
+
 #define STORAGE_CLASS_EXTERN extern
 
 #if defined(_MSC_VER)
@@ -31,5 +36,8 @@
 #else
 #define STORAGE_CLASS_INLINE static inline
 #endif
+
+#define STORAGE_CLASS_EXTERN_DATA extern const
+#define STORAGE_CLASS_INLINE_DATA static const
 
 #endif /* __STORAGE_CLASS_H_INCLUDED__ */

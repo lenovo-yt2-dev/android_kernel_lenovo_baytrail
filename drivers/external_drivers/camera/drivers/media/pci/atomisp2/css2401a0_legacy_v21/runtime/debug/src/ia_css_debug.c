@@ -22,20 +22,40 @@
 #include "debug.h"
 #include "memory_access.h"
 
+#ifndef __INLINE_INPUT_SYSTEM__
+#define __INLINE_INPUT_SYSTEM__
+#endif
+#ifndef __INLINE_IBUF_CTRL__
+#define __INLINE_IBUF_CTRL__
+#endif
+#ifndef __INLINE_CSI_RX__
+#define __INLINE_CSI_RX__
+#endif
+#ifndef __INLINE_PIXELGEN__
+#define __INLINE_PIXELGEN__
+#endif
+#ifndef __INLINE_STREAM2MMIO__
+#define __INLINE_STREAM2MMIO__
+#endif
+
 #include "ia_css_debug.h"
 #include "ia_css_debug_pipe.h"
+#include "ia_css_irq.h"
 #include "ia_css_stream.h"
 #include "ia_css_pipeline.h"
 #include "ia_css_isp_param.h"
 #include "sh_css_params.h"
+#include "ia_css_bufq.h"
 
 #include "ia_css_isp_params.h"
 
+#include "system_local.h"
 #include "assert_support.h"
 #include "print_support.h"
 #include "string_support.h"
 
 #include "fifo_monitor.h"
+
 #if !defined(HAS_NO_INPUT_FORMATTER)
 #include "input_formatter.h"
 #endif
@@ -45,6 +65,7 @@
 #include "sp.h"
 #include "isp.h"
 #include "type_support.h"
+#include "math_support.h" /* CEIL_DIV */
 #if defined(HAS_INPUT_FORMATTER_VERSION_2) || defined(USE_INPUT_SYSTEM_VERSION_2401)
 #include "input_system.h"	/* input_formatter_reg_load */
 #include "gp_device.h"		/* gp_device_reg_load */
@@ -56,6 +77,11 @@
 #endif
 #include "sh_css_sp.h"		/* sh_css_sp_get_debug_state() */
 
+#include "css_trace.h"      /* tracer */
+
+#include "device_access.h"	/* for ia_css_device_load_uint32 */
+
+#if !defined(IS_ISP_2500_SYSTEM)
 /* Include all kernel host interfaces for ISP1 */
 #include "anr/anr_1.0/ia_css_anr.host.h"
 #include "cnr/cnr_1.0/ia_css_cnr.host.h"
@@ -81,43 +107,14 @@
 #include "gc/gc_2/ia_css_gc2.host.h"
 #include "ynr/ynr_2/ia_css_ynr2.host.h"
 
+#endif
 /* snprintf is a C99 feature, MS visual studio defines _snprintf */
 #if defined(_MSC_VER)
 #include <stdio.h>
 #endif
 
 /* Global variable to store the dtrace verbosity level */
-unsigned int ia_css_debug_trace_level;
-
-static const char *format2str[] = {
-	/*[IA_CSS_FRAME_FORMAT_NV11]          = */ "NV11",
-	/*[IA_CSS_FRAME_FORMAT_NV12]          = */ "NV12",
-	/*[IA_CSS_FRAME_FORMAT_NV16]          = */ "NV16",
-	/*[IA_CSS_FRAME_FORMAT_NV21]          = */ "NV21",
-	/*[IA_CSS_FRAME_FORMAT_NV61]          = */ "NV61",
-	/*[IA_CSS_FRAME_FORMAT_YV12]          = */ "YV12",
-	/*[IA_CSS_FRAME_FORMAT_YV16]          = */ "YV16",
-	/*[IA_CSS_FRAME_FORMAT_YUV420]        = */ "YUV420",
-	/*[IA_CSS_FRAME_FORMAT_YUV420_16]     = */ "YUV420_16",
-	/*[IA_CSS_FRAME_FORMAT_YUV422]        = */ "YUV422",
-	/*[IA_CSS_FRAME_FORMAT_YUV422_16]     = */ "YUV422_16",
-	/*[IA_CSS_FRAME_FORMAT_UYVY]          = */ "UYVY",
-	/*[IA_CSS_FRAME_FORMAT_YUYV]          = */ "YUYV",
-	/*[IA_CSS_FRAME_FORMAT_YUV444]        = */ "YUV444",
-	/*[IA_CSS_FRAME_FORMAT_YUV_LINE]      = */ "YUV_LINE",
-	/*[IA_CSS_FRAME_FORMAT_RAW]           = */ "RAW",
-	/*[IA_CSS_FRAME_FORMAT_RGB565]        = */ "RGB565",
-	/*[IA_CSS_FRAME_FORMAT_PLANAR_RGB888] = */ "PLANAR_RGB888",
-	/*[IA_CSS_FRAME_FORMAT_RGBA888]       = */ "RGBA888",
-	/*[IA_CSS_FRAME_FORMAT_QPLANE6]       = */ "QPLANE6",
-	/*[IA_CSS_FRAME_FORMAT_BINARY_8]      = */ "BINARY_8",
-	/*[IA_CSS_FRAME_FORMAT_MIPI]          = */ "MIPI",
-	/*[IA_CSS_FRAME_FORMAT_RAW_PACKED]    = */ "RAW_PACKED",
-	/*[IA_CSS_FRAME_FORMAT_CSI_MIPI_YUV420_8]        = */ "CSI_MIPI_YUV420_8",
-	/*[IA_CSS_FRAME_FORMAT_CSI_MIPI_LEGACY_YUV420_8] = */ "CSI_MIPI_LEGACY_YUV420_8",
-	/*[IA_CSS_FRAME_FORMAT_CSI_MIPI_YUV420_10]       = */ "CSI_MIPI_YUV420_10",
-	/*[N_IA_CSS_FRAME_FORMAT]             = */ "INVALID"
-};
+unsigned int ia_css_debug_trace_level = IA_CSS_DEBUG_WARNING;
 
 /* Assumes that IA_CSS_STREAM_FORMAT_BINARY_8 is last */
 #define N_IA_CSS_STREAM_FORMAT (IA_CSS_STREAM_FORMAT_BINARY_8+1)
@@ -125,8 +122,13 @@ static const char *format2str[] = {
 #define DPG_START "ia_css_debug_pipe_graph_dump_start "
 #define DPG_END   " ia_css_debug_pipe_graph_dump_end\n"
 
-#define ENABLE_LINE1_MAX_LENGHT1 (24)
-#define ENABLE_LINE2_MAX_LENGHT2 (22)
+#define ENABLE_LINE_MAX_LENGTH (25)
+
+/*
+ * TODO:SH_CSS_MAX_SP_THREADS is not the max number of sp threads
+ * future rework should fix this and remove the define MAX_THREAD_NUM
+ */
+#define MAX_THREAD_NUM (SH_CSS_MAX_SP_THREADS + SH_CSS_MAX_SP_INTERNAL_THREADS)
 
 static struct pipe_graph_class {
 	bool do_init;
@@ -137,70 +139,272 @@ static struct pipe_graph_class {
 	enum ia_css_stream_format stream_format;
 } pg_inst = {true, 0, 0, 0, 0, N_IA_CSS_STREAM_FORMAT};
 
-static const char* stream_format2str[] = {
-	/*[IA_CSS_STREAM_FORMAT_YUV420_8_LEGACY] =*/ "yuv420-8-legacy",
-	/*[IA_CSS_STREAM_FORMAT_YUV420_8]        =*/ "yuv420-8",
-	/*[IA_CSS_STREAM_FORMAT_YUV420_10]       =*/ "yuv420-10",
-	/*[IA_CSS_STREAM_FORMAT_YUV422_8]        =*/ "yuv422-8",
-	/*[IA_CSS_STREAM_FORMAT_YUV422_10]       =*/ "yuv422-10",
-	/*[IA_CSS_STREAM_FORMAT_RGB_444]         =*/ "rgb444",
-	/*[IA_CSS_STREAM_FORMAT_RGB_555]         =*/ "rgb555",
-	/*[IA_CSS_STREAM_FORMAT_RGB_565]         =*/ "rgb565",
-	/*[IA_CSS_STREAM_FORMAT_RGB_666]         =*/ "rgb666",
-	/*[IA_CSS_STREAM_FORMAT_RGB_888]         =*/ "rgb888",
-	/*[IA_CSS_STREAM_FORMAT_RAW_6]           =*/ "raw6",
-	/*[IA_CSS_STREAM_FORMAT_RAW_7]           =*/ "raw7",
-	/*[IA_CSS_STREAM_FORMAT_RAW_8]           =*/ "raw8",
-	/*[IA_CSS_STREAM_FORMAT_RAW_10]          =*/ "raw10",
-	/*[IA_CSS_STREAM_FORMAT_RAW_12]          =*/ "raw12",
-	/*[IA_CSS_STREAM_FORMAT_RAW_14]          =*/ "raw14",
-	/*[IA_CSS_STREAM_FORMAT_RAW_16]          =*/ "raw16",
-	/*[IA_CSS_STREAM_FORMAT_BINARY_8]        =*/ "binary8",
-	/*[IA_CSS_STREAM_FORMAT_GENERIC_SHORT1]  =*/ "generic-short1",
-	/*[IA_CSS_STREAM_FORMAT_GENERIC_SHORT2]  =*/ "generic-short2",
-	/*[IA_CSS_STREAM_FORMAT_GENERIC_SHORT3]  =*/ "generic-short3",
-	/*[IA_CSS_STREAM_FORMAT_GENERIC_SHORT4]  =*/ "generic-short4",
-	/*[IA_CSS_STREAM_FORMAT_GENERIC_SHORT5]  =*/ "generic-short5",
-	/*[IA_CSS_STREAM_FORMAT_GENERIC_SHORT6]  =*/ "generic-short6",
-	/*[IA_CSS_STREAM_FORMAT_GENERIC_SHORT7]  =*/ "generic-short7",
-	/*[IA_CSS_STREAM_FORMAT_GENERIC_SHORT8]  =*/ "generic-short8",
-	/*[IA_CSS_STREAM_FORMAT_YUV420_8_SHIFT]  =*/ "yuv420-8",
-	/*[IA_CSS_STREAM_FORMAT_YUV420_10_SHIFT] =*/ "yuv420-8",
-	/*[IA_CSS_STREAM_FORMAT_EMBEDDED]        =*/ "embedded-8",
-	/*[IA_CSS_STREAM_FORMAT_USER_DEF1]       =*/ "user-def-8-type-1",
-	/*[IA_CSS_STREAM_FORMAT_USER_DEF2]       =*/ "user-def-8-type-2",
-	/*[IA_CSS_STREAM_FORMAT_USER_DEF3]       =*/ "user-def-8-type-3",
-	/*[IA_CSS_STREAM_FORMAT_USER_DEF4]       =*/ "user-def-8-type-4",
-	/*[IA_CSS_STREAM_FORMAT_USER_DEF5]       =*/ "user-def-8-type-5",
-	/*[IA_CSS_STREAM_FORMAT_USER_DEF6]       =*/ "user-def-8-type-6",
-	/*[IA_CSS_STREAM_FORMAT_USER_DEF7]       =*/ "user-def-8-type-7",
-	/*[IA_CSS_STREAM_FORMAT_USER_DEF8]       =*/ "user-def-8-type-8",
-	/*[N_IA_CSS_STREAM_FORMAT]               =*/ "not_set"
+static const char * const queue_id_to_str[] = {
+	/* [SH_CSS_QUEUE_A_ID]     =*/ "queue_A",
+	/* [SH_CSS_QUEUE_B_ID]     =*/ "queue_B",
+	/* [SH_CSS_QUEUE_C_ID]     =*/ "queue_C",
+	/* [SH_CSS_QUEUE_D_ID]     =*/ "queue_D",
+	/* [SH_CSS_QUEUE_E_ID]     =*/ "queue_E",
+	/* [SH_CSS_QUEUE_F_ID]     =*/ "queue_F",
+	/* [SH_CSS_QUEUE_G_ID]     =*/ "queue_G",
+	/* [SH_CSS_QUEUE_H_ID]     =*/ "queue_H"
 };
 
-static const char *qi2str[] = {
-	/*[sh_css_frame_in]     =*/ "in",
-	/*[sh_css_frame_out]    =*/ "out",
-	/*[sh_css_frame_out_vf] =*/ "out_vf",
-	/*[sh_css_frame_s3a]    =*/ "s3a",
-	/*[sh_css_frame_dis]    =*/ "dis"
+static const char * const pipe_id_to_str[] = {
+	/* [IA_CSS_PIPE_ID_PREVIEW]   =*/ "preview",
+	/* [IA_CSS_PIPE_ID_COPY]      =*/ "copy",
+	/* [IA_CSS_PIPE_ID_VIDEO]     =*/ "video",
+	/* [IA_CSS_PIPE_ID_CAPTURE]   =*/ "capture",
+	/* [IA_CSS_PIPE_ID_YUVPP]     =*/ "yuvpp",
+	/* [IA_CSS_PIPE_ID_ACC]       =*/ "accelerator"
 };
 
-static const char *pi2str[] = {
-	/*[IA_CSS_PIPE_ID_PREVIEW]     =*/ "preview",
-	/*[IA_CSS_PIPE_ID_COPY]        =*/ "copy",
-	/*[IA_CSS_PIPE_ID_VIDEO]       =*/ "video",
-	/*[IA_CSS_PIPE_ID_CAPTURE]     =*/ "capture",
-	/*[IA_CSS_PIPE_ID_ACC]         =*/ "accelerator"
-};
-
-static char dot_id_input_bin[20];
+static char dot_id_input_bin[SH_CSS_MAX_BINARY_NAME+10];
 static char ring_buffer[200];
+
+#if !defined(C_RUN) && !defined(HRT_UNSCHED)
+static void debug_dump_long_array_formatted(
+	const sp_ID_t sp_id,
+	hrt_address stack_sp_addr,
+	unsigned stack_size)
+{
+	unsigned int i;
+	uint32_t val;
+	uint32_t addr = (uint32_t) stack_sp_addr;
+	uint32_t stack_size_words = CEIL_DIV(stack_size, sizeof(uint32_t));
+
+	/* When size is not multiple of four, last word is only relevant for
+	 * remaining bytes */
+	for (i = 0; i < stack_size_words; i++) {
+		val = sp_dmem_load_uint32(sp_id, (hrt_address)addr);
+		if ((i%8) == 0)
+			ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "\n");
+
+		ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "0x%08x ", val);
+		addr += sizeof(uint32_t);
+	}
+
+	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "\n");
+}
+
+static void debug_dump_sp_stack_info(
+	const sp_ID_t sp_id)
+{
+	const struct ia_css_fw_info *fw;
+	unsigned int HIVE_ADDR_sp_threads_stack;
+	unsigned int HIVE_ADDR_sp_threads_stack_size;
+	uint32_t stack_sizes[MAX_THREAD_NUM];
+	uint32_t stack_sp_addr[MAX_THREAD_NUM];
+	unsigned int i;
+
+	fw = &sh_css_sp_fw;
+
+	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "sp_id(%u) stack info\n", sp_id);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE,
+		"from objects stack_addr_offset:0x%x stack_size_offset:0x%x\n",
+		fw->info.sp.threads_stack,
+		fw->info.sp.threads_stack_size);
+
+	HIVE_ADDR_sp_threads_stack = fw->info.sp.threads_stack;
+	HIVE_ADDR_sp_threads_stack_size = fw->info.sp.threads_stack_size;
+
+	if (fw->info.sp.threads_stack == 0 ||
+		fw->info.sp.threads_stack_size == 0)
+		return;
+
+	(void) HIVE_ADDR_sp_threads_stack;
+	(void) HIVE_ADDR_sp_threads_stack_size;
+
+	sp_dmem_load(sp_id,
+		(unsigned int)sp_address_of(sp_threads_stack),
+		&stack_sp_addr, sizeof(stack_sp_addr));
+	sp_dmem_load(sp_id,
+		(unsigned int)sp_address_of(sp_threads_stack_size),
+		&stack_sizes, sizeof(stack_sizes));
+
+	for (i = 0 ; i < MAX_THREAD_NUM; i++) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE,
+			"thread: %u stack_addr: 0x%08x stack_size: %u\n",
+			i, stack_sp_addr[i], stack_sizes[i]);
+		debug_dump_long_array_formatted(sp_id, (hrt_address)stack_sp_addr[i],
+			stack_sizes[i]);
+	}
+}
+
+void ia_css_debug_dump_sp_stack_info(void)
+{
+	debug_dump_sp_stack_info(SP0_ID);
+}
+#else
+/* Empty def for crun */
+void ia_css_debug_dump_sp_stack_info(void)
+{
+}
+#endif /* #if __HIVECC */
+
 
 void ia_css_debug_set_dtrace_level(const unsigned int trace_level)
 {
 	ia_css_debug_trace_level = trace_level;
 	return;
+}
+
+unsigned int ia_css_debug_get_dtrace_level(void)
+{
+	return ia_css_debug_trace_level;
+}
+
+static const char *debug_stream_format2str(const enum ia_css_stream_format stream_format)
+{
+	switch (stream_format) {
+	case IA_CSS_STREAM_FORMAT_YUV420_8_LEGACY:
+		return "yuv420-8-legacy";
+	case IA_CSS_STREAM_FORMAT_YUV420_8:
+		return "yuv420-8";
+	case IA_CSS_STREAM_FORMAT_YUV420_10:
+		return "yuv420-10";
+	case IA_CSS_STREAM_FORMAT_YUV420_16:
+		return "yuv420-16";
+	case IA_CSS_STREAM_FORMAT_YUV422_8:
+		return "yuv422-8";
+	case IA_CSS_STREAM_FORMAT_YUV422_10:
+		return "yuv422-10";
+	case IA_CSS_STREAM_FORMAT_YUV422_16:
+		return "yuv422-16";
+	case IA_CSS_STREAM_FORMAT_RGB_444:
+		return "rgb444";
+	case IA_CSS_STREAM_FORMAT_RGB_555:
+		return "rgb555";
+	case IA_CSS_STREAM_FORMAT_RGB_565:
+		return "rgb565";
+	case IA_CSS_STREAM_FORMAT_RGB_666:
+		return "rgb666";
+	case IA_CSS_STREAM_FORMAT_RGB_888:
+		return "rgb888";
+	case IA_CSS_STREAM_FORMAT_RAW_6:
+		return "raw6";
+	case IA_CSS_STREAM_FORMAT_RAW_7:
+		return "raw7";
+	case IA_CSS_STREAM_FORMAT_RAW_8:
+		return "raw8";
+	case IA_CSS_STREAM_FORMAT_RAW_10:
+		return "raw10";
+	case IA_CSS_STREAM_FORMAT_RAW_12:
+		return "raw12";
+	case IA_CSS_STREAM_FORMAT_RAW_14:
+		return "raw14";
+	case IA_CSS_STREAM_FORMAT_RAW_16:
+		return "raw16";
+	case IA_CSS_STREAM_FORMAT_BINARY_8:
+		return "binary8";
+	case IA_CSS_STREAM_FORMAT_GENERIC_SHORT1:
+		return "generic-short1";
+	case IA_CSS_STREAM_FORMAT_GENERIC_SHORT2:
+		return "generic-short2";
+	case IA_CSS_STREAM_FORMAT_GENERIC_SHORT3:
+		return "generic-short3";
+	case IA_CSS_STREAM_FORMAT_GENERIC_SHORT4:
+		return "generic-short4";
+	case IA_CSS_STREAM_FORMAT_GENERIC_SHORT5:
+		return "generic-short5";
+	case IA_CSS_STREAM_FORMAT_GENERIC_SHORT6:
+		return "generic-short6";
+	case IA_CSS_STREAM_FORMAT_GENERIC_SHORT7:
+		return "generic-short7";
+	case IA_CSS_STREAM_FORMAT_GENERIC_SHORT8:
+		return "generic-short8";
+	case IA_CSS_STREAM_FORMAT_YUV420_8_SHIFT:
+		return "yuv420-8-shift";
+	case IA_CSS_STREAM_FORMAT_YUV420_10_SHIFT:
+		return "yuv420-10-shift";
+	case IA_CSS_STREAM_FORMAT_EMBEDDED:
+		return "embedded-8";
+	case IA_CSS_STREAM_FORMAT_USER_DEF1:
+		return "user-def-8-type-1";
+	case IA_CSS_STREAM_FORMAT_USER_DEF2:
+		return "user-def-8-type-2";
+	case IA_CSS_STREAM_FORMAT_USER_DEF3:
+		return "user-def-8-type-3";
+	case IA_CSS_STREAM_FORMAT_USER_DEF4:
+		return "user-def-8-type-4";
+	case IA_CSS_STREAM_FORMAT_USER_DEF5:
+		return "user-def-8-type-5";
+	case IA_CSS_STREAM_FORMAT_USER_DEF6:
+		return "user-def-8-type-6";
+	case IA_CSS_STREAM_FORMAT_USER_DEF7:
+		return "user-def-8-type-7";
+	case IA_CSS_STREAM_FORMAT_USER_DEF8:
+		return "user-def-8-type-8";
+
+	default:
+		assert(!"Unknown stream format");
+		return "unknown-stream-format";
+	}
+};
+
+static const char *debug_frame_format2str(const enum ia_css_frame_format frame_format)
+{
+	switch (frame_format) {
+
+	case IA_CSS_FRAME_FORMAT_NV11:
+		return "NV11";
+	case IA_CSS_FRAME_FORMAT_NV12:
+		return "NV12";
+	case IA_CSS_FRAME_FORMAT_NV12_TILEY:
+		return "NV12_TILEY";
+	case IA_CSS_FRAME_FORMAT_NV16:
+		return "NV16";
+	case IA_CSS_FRAME_FORMAT_NV21:
+		return "NV21";
+	case IA_CSS_FRAME_FORMAT_NV61:
+		return "NV61";
+	case IA_CSS_FRAME_FORMAT_YV12:
+		return "YV12";
+	case IA_CSS_FRAME_FORMAT_YV16:
+		return "YV16";
+	case IA_CSS_FRAME_FORMAT_YUV420:
+		return "YUV420";
+	case IA_CSS_FRAME_FORMAT_YUV420_16:
+		return "YUV420_16";
+	case IA_CSS_FRAME_FORMAT_YUV422:
+		return "YUV422";
+	case IA_CSS_FRAME_FORMAT_YUV422_16:
+		return "YUV422_16";
+	case IA_CSS_FRAME_FORMAT_UYVY:
+		return "UYVY";
+	case IA_CSS_FRAME_FORMAT_YUYV:
+		return "YUYV";
+	case IA_CSS_FRAME_FORMAT_YUV444:
+		return "YUV444";
+	case IA_CSS_FRAME_FORMAT_YUV_LINE:
+		return "YUV_LINE";
+	case IA_CSS_FRAME_FORMAT_RAW:
+		return "RAW";
+	case IA_CSS_FRAME_FORMAT_RGB565:
+		return "RGB565";
+	case IA_CSS_FRAME_FORMAT_PLANAR_RGB888:
+		return "PLANAR_RGB888";
+	case IA_CSS_FRAME_FORMAT_RGBA888:
+		return "RGBA888";
+	case IA_CSS_FRAME_FORMAT_QPLANE6:
+		return "QPLANE6";
+	case IA_CSS_FRAME_FORMAT_BINARY_8:
+		return "BINARY_8";
+	case IA_CSS_FRAME_FORMAT_MIPI:
+		return "MIPI";
+	case IA_CSS_FRAME_FORMAT_RAW_PACKED:
+		return "RAW_PACKED";
+	case IA_CSS_FRAME_FORMAT_CSI_MIPI_YUV420_8:
+		return "CSI_MIPI_YUV420_8";
+	case IA_CSS_FRAME_FORMAT_CSI_MIPI_LEGACY_YUV420_8:
+		return "CSI_MIPI_LEGACY_YUV420_8";
+	case IA_CSS_FRAME_FORMAT_CSI_MIPI_YUV420_10:
+		return "CSI_MIPI_YUV420_10";
+
+	default:
+		assert(!"Unknown frame format");
+		return "unknown-frame-format";
+	}
 }
 
 static void debug_print_sp_state(const sp_state_t *state, const char *cell)
@@ -257,8 +461,7 @@ void ia_css_debug_dump_isp_state(void)
 #endif
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n", "[2] dma_FIFO stalled",
 				    stall.fifo2);
-#if defined(HAS_ISP_2400_MAMOIADA) || defined(HAS_ISP_2401_MAMOIADA) || \
-    defined(HAS_ISP_2500_SKYCAM)
+#if defined(HAS_ISP_2400_MAMOIADA) || defined(HAS_ISP_2401_MAMOIADA) || defined(IS_ISP_2500_SYSTEM)
 
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n", "[3] gdc0_FIFO stalled",
 				    stall.fifo3);
@@ -271,8 +474,7 @@ void ia_css_debug_dump_isp_state(void)
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n", "[6] sp_FIFO stalled",
 				    stall.fifo6);
 #else
-#error "ia_css_debug: ISP cell must be \
-	one of {2400_MAMOIADA,, 2401_MAMOIADA, 2500_SKYCAM}"
+#error "ia_css_debug: ISP cell must be one of {2400_MAMOIADA,, 2401_MAMOIADA, 2500_SKYCAM}"
 #endif
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n",
 				    "status & control stalled",
@@ -304,7 +506,7 @@ void ia_css_debug_dump_sp_state(void)
 	sp_get_state(SP0_ID, &state, &stall);
 	debug_print_sp_state(&state, "SP");
 	if (state.is_stalling) {
-#if defined(HAS_SP_2400) || defined(HAS_SP_2500)
+#if defined(HAS_SP_2400) || defined(IS_ISP_2500_SYSTEM)
 #if !defined(HAS_NO_INPUT_SYSTEM)
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n", "isys_FIFO stalled",
 				    stall.fifo0);
@@ -329,15 +531,14 @@ void ia_css_debug_dump_sp_state(void)
 #endif
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n", "gdc0_FIFO stalled",
 				    stall.fifo8);
-#if !defined(IS_ISP2500_SYSTEM)
+#if !defined(IS_ISP_2500_SYSTEM)
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n", "gdc1_FIFO stalled",
 				    stall.fifo9);
 #endif
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n", "irq FIFO stalled",
 				    stall.fifoa);
 #else
-#error "ia_css_debug: SP cell must be \
-	one of {SP2400, SP2500}"
+#error "ia_css_debug: SP cell must be one of {SP2400, SP2500}"
 #endif
 		ia_css_debug_dtrace(2, "\t%-32s: %d\n", "dmem stalled",
 				    stall.dmem);
@@ -348,11 +549,63 @@ void ia_css_debug_dump_sp_state(void)
 				    "i-cache master stalled",
 				    stall.icache_master);
 	}
+	ia_css_debug_dump_trace();
+	return;
+}
+
+static void debug_print_fifo_channel_state(const fifo_channel_state_t *state,
+					   const char *descr)
+{
+	assert(state != NULL);
+	assert(descr != NULL);
+
+	ia_css_debug_dtrace(2, "FIFO channel: %s\n", descr);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "source valid",
+			    state->src_valid);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "fifo accept",
+			    state->fifo_accept);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "fifo valid",
+			    state->fifo_valid);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "sink accept",
+			    state->sink_accept);
 	return;
 }
 
 #if !defined(HAS_NO_INPUT_FORMATTER) && defined(USE_INPUT_SYSTEM_VERSION_2)
-static void debug_print_if_state(input_formatter_state_t *state)
+void ia_css_debug_dump_pif_a_isp_fifo_state(void)
+{
+	fifo_channel_state_t pif_to_isp, isp_to_pif;
+	fifo_channel_get_state(FIFO_MONITOR0_ID,
+			       FIFO_CHANNEL_IF0_TO_ISP0, &pif_to_isp);
+	fifo_channel_get_state(FIFO_MONITOR0_ID,
+			       FIFO_CHANNEL_ISP0_TO_IF0, &isp_to_pif);
+	debug_print_fifo_channel_state(&pif_to_isp, "Primary IF A to ISP");
+	debug_print_fifo_channel_state(&isp_to_pif, "ISP to Primary IF A");
+}
+
+void ia_css_debug_dump_pif_b_isp_fifo_state(void)
+{
+	fifo_channel_state_t pif_to_isp, isp_to_pif;
+	fifo_channel_get_state(FIFO_MONITOR0_ID,
+			       FIFO_CHANNEL_IF1_TO_ISP0, &pif_to_isp);
+	fifo_channel_get_state(FIFO_MONITOR0_ID,
+			       FIFO_CHANNEL_ISP0_TO_IF1, &isp_to_pif);
+	debug_print_fifo_channel_state(&pif_to_isp, "Primary IF B to ISP");
+	debug_print_fifo_channel_state(&isp_to_pif, "ISP to Primary IF B");
+}
+
+void ia_css_debug_dump_str2mem_sp_fifo_state(void)
+{
+	fifo_channel_state_t s2m_to_sp, sp_to_s2m;
+	fifo_channel_get_state(FIFO_MONITOR0_ID,
+			       FIFO_CHANNEL_STREAM2MEM0_TO_SP0, &s2m_to_sp);
+	fifo_channel_get_state(FIFO_MONITOR0_ID,
+			       FIFO_CHANNEL_SP0_TO_STREAM2MEM0, &sp_to_s2m);
+	debug_print_fifo_channel_state(&s2m_to_sp, "Stream-to-memory to SP");
+	debug_print_fifo_channel_state(&sp_to_s2m, "SP to stream-to-memory");
+}
+
+static void debug_print_if_state(input_formatter_state_t *state, const char *id)
 {
 	unsigned int val;
 
@@ -386,7 +639,7 @@ static void debug_print_if_state(input_formatter_state_t *state)
 	int st_block_fifo_when_no_req = state->block_fifo_when_no_req;
 
 	assert(state != NULL);
-	ia_css_debug_dtrace(2, "InputFormatter State:\n");
+	ia_css_debug_dtrace(2, "InputFormatter State (%s):\n", id);
 
 	ia_css_debug_dtrace(2, "\tConfiguration:\n");
 
@@ -648,19 +901,52 @@ static void debug_print_if_state(input_formatter_state_t *state)
 	return;
 }
 
+static void debug_print_if_bin_state(input_formatter_bin_state_t *state)
+{
+	ia_css_debug_dtrace(2, "Stream-to-memory state:\n");
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "reset", state->reset);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "input endianness",
+			    state->input_endianness);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "output endianness",
+			    state->output_endianness);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "bitswap", state->bitswap);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "block_synch",
+			    state->block_synch);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "packet_synch",
+			    state->packet_synch);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "readpostwrite_sync",
+			    state->readpostwrite_synch);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "is_2ppc", state->is_2ppc);
+	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "en_status_update",
+			    state->en_status_update);
+}
+
 void ia_css_debug_dump_if_state(void)
 {
-	input_formatter_state_t state;
-	input_formatter_get_state(INPUT_FORMATTER0_ID, &state);
-	debug_print_if_state(&state);
-	ia_css_debug_dump_pif_isp_fifo_state();
-	return;
+	input_formatter_state_t if_state;
+	input_formatter_bin_state_t if_bin_state;
+
+	input_formatter_get_state(INPUT_FORMATTER0_ID, &if_state);
+	debug_print_if_state(&if_state, "Primary IF A");
+	ia_css_debug_dump_pif_a_isp_fifo_state();
+
+	input_formatter_get_state(INPUT_FORMATTER1_ID, &if_state);
+	debug_print_if_state(&if_state, "Primary IF B");
+	ia_css_debug_dump_pif_b_isp_fifo_state();
+
+	input_formatter_bin_get_state(INPUT_FORMATTER3_ID, &if_bin_state);
+	debug_print_if_bin_state(&if_bin_state);
+	ia_css_debug_dump_str2mem_sp_fifo_state();
 }
 #endif
 
 void ia_css_debug_dump_dma_state(void)
 {
-	dma_state_t state;
+	/* note: the var below is made static as it is quite large;
+	   if it is not static it ends up on the stack which could
+	   cause issues for drivers
+	*/
+	static dma_state_t state;
 	int i, ch_id;
 
 	const char *fsm_cmd_st_lbl = "FSM Command flag state";
@@ -925,36 +1211,6 @@ void ia_css_debug_dump_dma_state(void)
 	return;
 }
 
-static void debug_print_fifo_channel_state(const fifo_channel_state_t *state,
-					   const char *descr)
-{
-	assert(state != NULL);
-	assert(descr != NULL);
-
-	ia_css_debug_dtrace(2, "FIFO channel: %s\n", descr);
-	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "source valid",
-			    state->src_valid);
-	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "fifo accept",
-			    state->fifo_accept);
-	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "fifo valid",
-			    state->fifo_valid);
-	ia_css_debug_dtrace(2, "\t%-32s: %d\n", "sink accept",
-			    state->sink_accept);
-	return;
-}
-
-void ia_css_debug_dump_pif_isp_fifo_state(void)
-{
-	fifo_channel_state_t pif_to_isp, isp_to_pif;
-	fifo_channel_get_state(FIFO_MONITOR0_ID,
-			       FIFO_CHANNEL_IF0_TO_ISP0, &pif_to_isp);
-	fifo_channel_get_state(FIFO_MONITOR0_ID,
-			       FIFO_CHANNEL_ISP0_TO_IF0, &isp_to_pif);
-	debug_print_fifo_channel_state(&pif_to_isp, "Primary IF A to ISP");
-	debug_print_fifo_channel_state(&isp_to_pif, "ISP to Primary IF A)");
-	return;
-}
-
 void ia_css_debug_dump_dma_sp_fifo_state(void)
 {
 	fifo_channel_state_t dma_to_sp, sp_to_dma;
@@ -1020,26 +1276,27 @@ static void debug_binary_info_print(const struct ia_css_binary_xinfo *info)
 {
 	assert(info != NULL);
 	ia_css_debug_dtrace(2, "id = %d\n", info->sp.id);
-	ia_css_debug_dtrace(2, "mode = %d\n", info->sp.mode);
-	ia_css_debug_dtrace(2, "max_input_width = %d\n", info->sp.max_input_width);
+	ia_css_debug_dtrace(2, "mode = %d\n", info->sp.pipeline.mode);
+	ia_css_debug_dtrace(2, "max_input_width = %d\n", info->sp.input.max_width);
 	ia_css_debug_dtrace(2, "min_output_width = %d\n",
-			    info->sp.min_output_width);
+			    info->sp.output.min_width);
 	ia_css_debug_dtrace(2, "max_output_width = %d\n",
-			    info->sp.max_output_width);
-	ia_css_debug_dtrace(2, "top_cropping = %d\n", info->sp.top_cropping);
-	ia_css_debug_dtrace(2, "left_cropping = %d\n", info->sp.left_cropping);
+			    info->sp.output.max_width);
+	ia_css_debug_dtrace(2, "top_cropping = %d\n", info->sp.pipeline.top_cropping);
+	ia_css_debug_dtrace(2, "left_cropping = %d\n", info->sp.pipeline.left_cropping);
 	ia_css_debug_dtrace(2, "xmem_addr = %d\n", info->xmem_addr);
 	ia_css_debug_dtrace(2, "enable_vf_veceven = %d\n",
 			    info->sp.enable.vf_veceven);
 	ia_css_debug_dtrace(2, "enable_dis = %d\n", info->sp.enable.dis);
 	ia_css_debug_dtrace(2, "enable_uds = %d\n", info->sp.enable.uds);
 	ia_css_debug_dtrace(2, "enable ds = %d\n", info->sp.enable.ds);
-	ia_css_debug_dtrace(2, "s3atbl_use_dmem = %d\n", info->sp.s3atbl_use_dmem);
+	ia_css_debug_dtrace(2, "s3atbl_use_dmem = %d\n", info->sp.s3a.s3atbl_use_dmem);
 	return;
 }
 
 void ia_css_debug_binary_print(const struct ia_css_binary *bi)
 {
+	unsigned int i;
 	debug_binary_info_print(bi->info);
 	ia_css_debug_dtrace(2,
 			    "input:  %dx%d, format = %d, padded width = %d\n",
@@ -1053,12 +1310,17 @@ void ia_css_debug_binary_print(const struct ia_css_binary *bi)
 			    bi->internal_frame_info.res.height,
 			    bi->internal_frame_info.format,
 			    bi->internal_frame_info.padded_width);
-	ia_css_debug_dtrace(2,
-			    "out:    %dx%d, format = %d, padded width = %d\n",
-			    bi->out_frame_info.res.width,
-			    bi->out_frame_info.res.height,
-			    bi->out_frame_info.format,
-			    bi->out_frame_info.padded_width);
+	for (i = 0; i < IA_CSS_BINARY_MAX_OUTPUT_PORTS; i++) {
+		if (bi->out_frame_info[i].res.width != 0) {
+			ia_css_debug_dtrace(2,
+				    "out%d:    %dx%d, format = %d, padded width = %d\n",
+					i,
+				    bi->out_frame_info[i].res.width,
+				    bi->out_frame_info[i].res.height,
+				    bi->out_frame_info[i].format,
+				    bi->out_frame_info[i].padded_width);
+		}
+	}
 	ia_css_debug_dtrace(2,
 			    "vf out: %dx%d, format = %d, padded width = %d\n",
 			    bi->vf_frame_info.res.width,
@@ -1072,13 +1334,13 @@ void ia_css_debug_binary_print(const struct ia_css_binary *bi)
 	ia_css_debug_dtrace(2, "vf_downscale_log2 = %d\n",
 			    bi->vf_downscale_log2);
 	ia_css_debug_dtrace(2, "dis_deci_factor_log2 = %d\n",
-			    bi->dis_deci_factor_log2);
+			    bi->dis.deci_factor_log2);
 	ia_css_debug_dtrace(2, "dis hor coef num = %d\n",
-			    bi->dis_hor_coef_num_isp);
+			    bi->dis.coef.pad.width);
 	ia_css_debug_dtrace(2, "dis ver coef num = %d\n",
-			    bi->dis_ver_coef_num_isp);
+			    bi->dis.coef.pad.height);
 	ia_css_debug_dtrace(2, "dis hor proj num = %d\n",
-			    bi->dis_ver_proj_num_isp);
+			    bi->dis.proj.pad.height);
 	ia_css_debug_dtrace(2, "sctbl_width_per_color = %d\n",
 			    bi->sctbl_width_per_color);
 	ia_css_debug_dtrace(2, "s3atbl_width = %d\n", bi->s3atbl_width);
@@ -1116,6 +1378,7 @@ void ia_css_debug_frame_print(const struct ia_css_frame *frame,
 	case IA_CSS_FRAME_FORMAT_YUYV:
 	case IA_CSS_FRAME_FORMAT_UYVY:
 	case IA_CSS_FRAME_FORMAT_CSI_MIPI_YUV420_8:
+	case IA_CSS_FRAME_FORMAT_CSI_MIPI_LEGACY_YUV420_8:
 	case IA_CSS_FRAME_FORMAT_YUV_LINE:
 		ia_css_debug_dtrace(2, "  YUYV = %p\n",
 				    data + frame->planes.yuyv.offset);
@@ -1375,7 +1638,7 @@ void ia_css_debug_print_sp_debug_state(const struct sh_css_sp_debug_state
  *
  * Adjust this to your trace case!
  */
-	static char const *id2filename[8] = {
+	static char const * const id2filename[8] = {
 		"param_buffer.sp.c | tagger.sp.c | pipe_data.sp.c",
 		"isp_init.sp.c",
 		"sp_raw_copy.hive.c",
@@ -1476,8 +1739,40 @@ void ia_css_debug_print_sp_debug_state(const struct sh_css_sp_debug_state
 static void debug_print_rx_mipi_port_state(mipi_port_state_t *state)
 {
 	int i;
+	unsigned int bits, infos;
 
 	assert(state != NULL);
+
+	bits = state->irq_status;
+	infos = ia_css_isys_rx_translate_irq_infos(bits);
+
+	ia_css_debug_dtrace(2, "\t\t%-32s: (irq reg = 0x%X)\n",
+			    "receiver errors", bits);
+
+	if (infos & IA_CSS_RX_IRQ_INFO_BUFFER_OVERRUN)
+		ia_css_debug_dtrace(2, "\t\t\tbuffer overrun\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_SOT)
+		ia_css_debug_dtrace(2, "\t\t\tstart-of-transmission error\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_SOT_SYNC)
+		ia_css_debug_dtrace(2, "\t\t\tstart-of-transmission sync error\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_CONTROL)
+		ia_css_debug_dtrace(2, "\t\t\tcontrol error\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_ECC_DOUBLE)
+		ia_css_debug_dtrace(2, "\t\t\t2 or more ECC errors\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_CRC)
+		ia_css_debug_dtrace(2, "\t\t\tCRC mismatch\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_UNKNOWN_ID)
+		ia_css_debug_dtrace(2, "\t\t\tunknown error\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_FRAME_SYNC)
+		ia_css_debug_dtrace(2, "\t\t\tframe sync error\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_FRAME_DATA)
+		ia_css_debug_dtrace(2, "\t\t\tframe data error\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_DATA_TIMEOUT)
+		ia_css_debug_dtrace(2, "\t\t\tdata timeout\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_UNKNOWN_ESC)
+		ia_css_debug_dtrace(2, "\t\t\tunknown escape command entry\n");
+	if (infos & IA_CSS_RX_IRQ_INFO_ERR_LINE_SYNC)
+		ia_css_debug_dtrace(2, "\t\t\tline sync error\n");
 
 	ia_css_debug_dtrace(2, "\t\t%-32s: %d\n",
 			    "device_ready", state->device_ready);
@@ -1640,45 +1935,12 @@ static void debug_print_rx_state(receiver_state_t *state)
 #if !defined(HAS_NO_INPUT_SYSTEM) && defined(USE_INPUT_SYSTEM_VERSION_2)
 void ia_css_debug_dump_rx_state(void)
 {
-#if defined(HAS_INPUT_FORMATTER_VERSION_2)
-	receiver_state_t state;
-#endif
-	unsigned int infos = 0, bits;
-	bits = ia_css_isys_rx_get_interrupt_reg();
-	ia_css_rx_get_irq_info(&infos);
-
-	ia_css_debug_dtrace(2, "CSI Receiver errors: (irq reg = 0x%X)\n", bits);
-
-	if (infos & IA_CSS_RX_IRQ_INFO_BUFFER_OVERRUN)
-		ia_css_debug_dtrace(2, "\tbuffer overrun\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_SOT)
-		ia_css_debug_dtrace(2, "\tstart-of-transmission error\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_SOT_SYNC)
-		ia_css_debug_dtrace(2, "\tstart-of-transmission sync error\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_CONTROL)
-		ia_css_debug_dtrace(2, "\tcontrol error\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_ECC_DOUBLE)
-		ia_css_debug_dtrace(2, "\t2 or more ECC errors\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_CRC)
-		ia_css_debug_dtrace(2, "\tCRC mismatch\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_UNKNOWN_ID)
-		ia_css_debug_dtrace(2, "\tunknown error\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_FRAME_SYNC)
-		ia_css_debug_dtrace(2, "\tframe sync error\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_FRAME_DATA)
-		ia_css_debug_dtrace(2, "\tframe data error\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_DATA_TIMEOUT)
-		ia_css_debug_dtrace(2, "\tdata timeout\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_UNKNOWN_ESC)
-		ia_css_debug_dtrace(2, "\tunknown escape command entry\n");
-	if (infos & IA_CSS_RX_IRQ_INFO_ERR_LINE_SYNC)
-		ia_css_debug_dtrace(2, "\tline sync error\n");
-
 #if defined(HAS_INPUT_FORMATTER_VERSION_2) && !defined(HAS_NO_INPUT_FORMATTER)
+	receiver_state_t state;
+
 	receiver_get_state(RX0_ID, &state);
 	debug_print_rx_state(&state);
 #endif
-	return;
 }
 #endif
 
@@ -1690,6 +1952,8 @@ void ia_css_debug_dump_sp_sw_debug_info(void)
 	sh_css_sp_get_debug_state(&state);
 	ia_css_debug_print_sp_debug_state(&state);
 #endif
+	ia_css_bufq_dump_queue_info();
+	ia_css_pipeline_dump_thread_map_info();
 	return;
 }
 
@@ -2027,10 +2291,11 @@ void ia_css_debug_dump_debug_info(const char *context)
 	return;
 }
 
-/* this function is for debug use, it can make SP go to sleep
+/** this function is for debug use, it can make SP go to sleep
   state after each frame, then user can dump the stable SP dmem.
-  this function can be called after sh_css_start()
-  and before sh_css_init_buffer_queues() */
+  this function can be called after ia_css_start_sp()
+  and before sh_css_init_buffer_queues()
+*/
 void ia_css_debug_enable_sp_sleep_mode(enum ia_css_sp_sleep_mode mode)
 {
 	const struct ia_css_fw_info *fw;
@@ -2054,11 +2319,10 @@ void ia_css_debug_wake_up_sp(void)
 
 #if !defined(IS_ISP_2500_SYSTEM)
 #define FIND_DMEM_PARAMS_TYPE(stream, kernel, type) \
-  (struct HRTCAT(HRTCAT(sh_css_isp_,type),_params) *) \
-  findf_dmem_params(stream, offsetof(struct ia_css_memory_offsets, dmem.kernel))
+	(struct HRTCAT(HRTCAT(sh_css_isp_, type), _params) *) \
+	findf_dmem_params(stream, offsetof(struct ia_css_memory_offsets, dmem.kernel))
 
-#define FIND_DMEM_PARAMS(stream, kernel) \
-  FIND_DMEM_PARAMS_TYPE(stream, kernel, kernel)
+#define FIND_DMEM_PARAMS(stream, kernel) FIND_DMEM_PARAMS_TYPE(stream, kernel, kernel)
 
 /* Find a stage that support the kernel and return the parameters for that kernel */
 static char *
@@ -2071,11 +2335,13 @@ findf_dmem_params(struct ia_css_stream *stream, short idx)
 		struct ia_css_pipeline_stage *stage;
 		for (stage = pipeline->stages; stage; stage = stage->next) {
 			struct ia_css_binary *binary = stage->binary;
-			short *offsets = (short*)&binary->info->mem_offsets.offsets.param->dmem;
+			short *offsets = (short *)&binary->info->mem_offsets.offsets.param->dmem;
 			short dmem_offset = offsets[idx];
 			const struct ia_css_host_data *isp_data =
-				ia_css_isp_param_get_mem_init(&binary->mem_params, IA_CSS_PARAM_CLASS_PARAM, IA_CSS_ISP_DMEM0);
-			if (dmem_offset < 0) continue;
+				ia_css_isp_param_get_mem_init(&binary->mem_params,
+							IA_CSS_PARAM_CLASS_PARAM, IA_CSS_ISP_DMEM0);
+			if (dmem_offset < 0)
+				continue;
 			return &isp_data->address[dmem_offset];
 		}
 	}
@@ -2086,95 +2352,68 @@ findf_dmem_params(struct ia_css_stream *stream, short idx)
 void ia_css_debug_dump_isp_params(struct ia_css_stream *stream,
 				  unsigned int enable)
 {
+	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "ISP PARAMETERS:\n");
 #if defined(IS_ISP_2500_SYSTEM)
 	(void)enable;
 	(void)stream;
-#endif
+#else
 
 	assert(stream != NULL);
-	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "ISP PARAMETERS:\n");
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_FPN)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_fpn_dump(FIND_DMEM_PARAMS(stream, fpn), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_OB)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_ob_dump(FIND_DMEM_PARAMS(stream, ob), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_SC)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_sc_dump(FIND_DMEM_PARAMS(stream, sc), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_WB)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_wb_dump(FIND_DMEM_PARAMS(stream, wb), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_DP)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_dp_dump(FIND_DMEM_PARAMS(stream, dp), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_BNR)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_bnr_dump(FIND_DMEM_PARAMS(stream, bnr), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_S3A)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_s3a_dump(FIND_DMEM_PARAMS(stream, s3a), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_DE)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_de_dump(FIND_DMEM_PARAMS(stream, de), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_YNR)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_nr_dump(FIND_DMEM_PARAMS_TYPE(stream, nr, ynr),  IA_CSS_DEBUG_VERBOSE);
 		ia_css_yee_dump(FIND_DMEM_PARAMS(stream, yee), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_CSC)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_csc_dump(FIND_DMEM_PARAMS(stream, csc), IA_CSS_DEBUG_VERBOSE);
 		ia_css_yuv2rgb_dump(FIND_DMEM_PARAMS_TYPE(stream, yuv2rgb, csc), IA_CSS_DEBUG_VERBOSE);
 		ia_css_rgb2yuv_dump(FIND_DMEM_PARAMS_TYPE(stream, rgb2yuv, csc), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_GC)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_gc_dump(FIND_DMEM_PARAMS(stream, gc), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_TNR)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_tnr_dump(FIND_DMEM_PARAMS(stream, tnr), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_ANR)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_anr_dump(FIND_DMEM_PARAMS(stream, anr), IA_CSS_DEBUG_VERBOSE);
 	}
-#endif
-#if !defined(IS_ISP_2500_SYSTEM)
 	if ((enable & IA_CSS_DEBUG_DUMP_CE)
 	    || (enable & IA_CSS_DEBUG_DUMP_ALL)) {
 		ia_css_ce_dump(FIND_DMEM_PARAMS(stream, ce), IA_CSS_DEBUG_VERBOSE);
@@ -2219,7 +2458,7 @@ void ia_css_debug_dump_isp_binary(void)
 	unsigned int HIVE_ADDR_pipeline_sp_curr_binary_id;
 	uint32_t curr_binary_id;
 	static uint32_t prev_binary_id = 0xFFFFFFFF;
-	static uint32_t sample_count = 0;
+	static uint32_t sample_count;
 
 	fw = &sh_css_sp_fw;
 	HIVE_ADDR_pipeline_sp_curr_binary_id = fw->info.sp.curr_binary_id;
@@ -2234,14 +2473,14 @@ void ia_css_debug_dump_isp_binary(void)
 	/* do the handling */
 	sample_count++;
 	if (prev_binary_id != curr_binary_id) {
-	    ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE,
-				"sh_css_dump_isp_binary() "
-				"pipe_id=%d, binary_id=%d, sample_count=%d\n",
-				(curr_binary_id >> 16),
-				(curr_binary_id & 0x0ffff),
-				sample_count);
-	    sample_count = 0;
-	    prev_binary_id = curr_binary_id;
+		ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE,
+				    "sh_css_dump_isp_binary() "
+				    "pipe_id=%d, binary_id=%d, sample_count=%d\n",
+				    (curr_binary_id >> 16),
+				    (curr_binary_id & 0x0ffff),
+				    sample_count);
+		sample_count = 0;
+		prev_binary_id = curr_binary_id;
 	}
 }
 
@@ -2251,13 +2490,12 @@ void ia_css_debug_dump_perf_counters(void)
 	const struct ia_css_fw_info *fw;
 	int i;
 	unsigned int HIVE_ADDR_ia_css_isys_sp_error_cnt;
-	int32_t ia_css_sp_input_system_error_cnt[N_MIPI_PORT_ID + 1]; // 3 Capture Units and 1 Acquire Unit.
+	int32_t ia_css_sp_input_system_error_cnt[N_MIPI_PORT_ID + 1]; /* 3 Capture Units and 1 Acquire Unit. */
 
 	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "Input System Error Counters:\n");
 
 	fw = &sh_css_sp_fw;
-	HIVE_ADDR_ia_css_isys_sp_error_cnt =
-	    fw->info.sp.perf_counter_input_system_error;
+	HIVE_ADDR_ia_css_isys_sp_error_cnt = fw->info.sp.perf_counter_input_system_error;
 
 	(void)HIVE_ADDR_ia_css_isys_sp_error_cnt;
 
@@ -2267,7 +2505,7 @@ void ia_css_debug_dump_perf_counters(void)
 		     sizeof(ia_css_sp_input_system_error_cnt));
 
 	for (i = 0; i < N_MIPI_PORT_ID + 1; i++) {
-	    ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "\tport[%d] = %d\n",
+		ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "\tport[%d] = %d\n",
 				i, ia_css_sp_input_system_error_cnt[i]);
 	}
 #endif
@@ -2304,15 +2542,11 @@ void ia_css_debug_dump_ddr_debug_queue(void)
 {
 	int i;
 	sh_css_load_ddr_debug_queue();
-#ifdef __KERNEL__
-	for (i = 0; i < DEBUG_BUF_SIZE; i++)
-		printk(KERN_DEBUG, "ddr_debug_queue[%d] = 0x%x\n",
-				i, debug_data_ptr->buf[i]);
-#else
-	for (i = 0; i < DEBUG_BUF_SIZE; i++)
-		printf("ddr_debug_queue[%d] = 0x%x\n",
-				i, debug_data_ptr->buf[i]);
-#endif
+	for (i = 0; i < DEBUG_BUF_SIZE; i++) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE,
+			"ddr_debug_queue[%d] = 0x%x\n",
+			i, debug_data_ptr->buf[i]);
+	}
 }
 */
 
@@ -2360,9 +2594,15 @@ ia_css_debug_mode_enable_dma_channel(int dma_id,
 STORAGE_CLASS_INLINE void dtrace_dot(const char *fmt, ...)
 {
 	va_list ap;
+#ifdef HRT_CSIM
+	va_list ap2;
+#endif
 
 	assert(fmt != NULL);
 	va_start(ap, fmt);
+#ifdef HRT_CSIM
+	va_start(ap2, fmt);
+#endif
 
 	ia_css_debug_dtrace(IA_CSS_DEBUG_INFO, "%s", DPG_START);
 	ia_css_debug_vdtrace(IA_CSS_DEBUG_INFO, fmt, ap);
@@ -2372,8 +2612,10 @@ STORAGE_CLASS_INLINE void dtrace_dot(const char *fmt, ...)
 	 * As post processing, we remove incomplete lines and make lines uniq.
 	 * */
 	ia_css_debug_dtrace(IA_CSS_DEBUG_INFO, "%s", DPG_START);
-	ia_css_debug_vdtrace(IA_CSS_DEBUG_INFO, fmt, ap);
-	ia_css_debug_dtrace(IA_CSS_DEBUG_INFO, "%s", DPG_END);
+	ia_css_debug_vdtrace(IA_CSS_DEBUG_INFO, fmt, ap2);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_INFO, "%s", DPG_END);\
+
+	va_end(ap2);
 #endif
 	va_end(ap);
 }
@@ -2383,7 +2625,7 @@ void sh_css_dump_thread_wait_info(void)
 	const struct ia_css_fw_info *fw;
 	int i;
 	unsigned int HIVE_ADDR_sp_thread_wait;
-	int32_t sp_thread_wait[5];
+	int32_t sp_thread_wait[MAX_THREAD_NUM];
 	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "SEM WAITS:\n");
 
 	fw = &sh_css_sp_fw;
@@ -2396,7 +2638,7 @@ void sh_css_dump_thread_wait_info(void)
 		(unsigned int)sp_address_of(sp_thread_wait),
 		     &sp_thread_wait,
 		     sizeof(sp_thread_wait));
-	for (i=0; i < 5; i++) {
+	for (i = 0; i < MAX_THREAD_NUM; i++) {
 		ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE,
 			"\twait[%d] = 0x%X\n",
 			i, sp_thread_wait[i]);
@@ -2409,7 +2651,7 @@ void sh_css_dump_pipe_stage_info(void)
 	const struct ia_css_fw_info *fw;
 	int i;
 	unsigned int HIVE_ADDR_sp_pipe_stage;
-	int32_t sp_pipe_stage[5];
+	int32_t sp_pipe_stage[MAX_THREAD_NUM];
 	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "PIPE STAGE:\n");
 
 	fw = &sh_css_sp_fw;
@@ -2422,7 +2664,7 @@ void sh_css_dump_pipe_stage_info(void)
 		(unsigned int)sp_address_of(sp_pipe_stage),
 		     &sp_pipe_stage,
 		     sizeof(sp_pipe_stage));
-	for (i=0; i < 5; i++) {
+	for (i = 0; i < MAX_THREAD_NUM; i++) {
 		ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE,
 			"\tstage[%d] = %d\n",
 			i, sp_pipe_stage[i]);
@@ -2435,7 +2677,7 @@ void sh_css_dump_pipe_stripe_info(void)
 	const struct ia_css_fw_info *fw;
 	int i;
 	unsigned int HIVE_ADDR_sp_pipe_stripe;
-	int32_t sp_pipe_stripe[5];
+	int32_t sp_pipe_stripe[MAX_THREAD_NUM];
 	ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE, "PIPE STRIPE:\n");
 
 	fw = &sh_css_sp_fw;
@@ -2448,7 +2690,7 @@ void sh_css_dump_pipe_stripe_info(void)
 		(unsigned int)sp_address_of(sp_pipe_stripe),
 		     &sp_pipe_stripe,
 		     sizeof(sp_pipe_stripe));
-	for (i=0; i < 5; i++) {
+	for (i = 0; i < MAX_THREAD_NUM; i++) {
 		ia_css_debug_dtrace(IA_CSS_DEBUG_VERBOSE,
 			"\tstripe[%d] = %d\n",
 			i, sp_pipe_stripe[i]);
@@ -2467,25 +2709,26 @@ ia_css_debug_pipe_graph_dump_frame(
 {
 	char bufinfo[100];
 
-	if (frame->dynamic_data_index == -1) {
+	if (frame->dynamic_queue_id == SH_CSS_INVALID_QUEUE_ID) {
 		snprintf(bufinfo, sizeof(bufinfo), "Internal");
 	} else {
 		snprintf(bufinfo, sizeof(bufinfo), "Queue: %s %s",
-			pi2str[id],
-			qi2str[frame->dynamic_data_index]);
+			pipe_id_to_str[id],
+			queue_id_to_str[frame->dynamic_queue_id]);
 	}
 	dtrace_dot(
 		"node [shape = box, "
 		"fixedsize=true, width=2, height=0.7]; \"0x%08lx\" "
-		"[label = \"%s\\n%d(%d) x %d\\n%s\"];",
+		"[label = \"%s\\n%d(%d) x %d, %dbpp\\n%s\"];",
 		HOST_ADDRESS(frame),
-		format2str[frame->info.format],
+		debug_frame_format2str(frame->info.format),
 		frame->info.res.width,
 		frame->info.padded_width,
 		frame->info.res.height,
+		frame->info.raw_bit_depth,
 		bufinfo);
 
-	if (in_frame){
+	if (in_frame) {
 		dtrace_dot(
 			"\"0x%08lx\"->\"%s(pipe%d)\" "
 			"[label = %s_frame];",
@@ -2504,8 +2747,8 @@ ia_css_debug_pipe_graph_dump_frame(
 void
 ia_css_debug_pipe_graph_dump_prologue(void)
 {
-	dtrace_dot("digraph sh_css_pipe_graph {" );
-	dtrace_dot("rankdir=LR;" );
+	dtrace_dot("digraph sh_css_pipe_graph {");
+	dtrace_dot("rankdir=LR;");
 
 	dtrace_dot("fontsize=9;");
 	dtrace_dot("label = \"\\nEnable options: rp=reduced pipe, vfve=vf_veceven, "
@@ -2534,23 +2777,23 @@ void ia_css_debug_pipe_graph_dump_epilogue(void)
 
 		dtrace_dot(
 			"node [shape = doublecircle, "
-			"fixedsize=true, width=2]; \"input_system\" "
+			"fixedsize=true, width=2.5]; \"input_system\" "
 			"[label = \"Input system\"];");
 
 		dtrace_dot(
 			"\"input_system\"->\"%s\" "
 			"[label = \"%s\"];",
-			dot_id_input_bin, stream_format2str[pg_inst.stream_format]);
+			dot_id_input_bin, debug_stream_format2str(pg_inst.stream_format));
 
 		dtrace_dot(
 			"node [shape = doublecircle, "
-			"fixedsize=true, width=2]; \"sensor\" "
+			"fixedsize=true, width=2.5]; \"sensor\" "
 			"[label = \"Sensor\"];");
 
 		dtrace_dot(
 			"\"sensor\"->\"input_system\" "
 			"[label = \"%s\\n%d x %d\\n(%d x %d)\"];",
-			stream_format2str[pg_inst.stream_format],
+			debug_stream_format2str(pg_inst.stream_format),
 			pg_inst.width, pg_inst.height,
 			pg_inst.eff_width, pg_inst.eff_height);
 	}
@@ -2574,9 +2817,8 @@ ia_css_debug_pipe_graph_dump_stage(
 	struct ia_css_pipeline_stage *stage,
 	enum ia_css_pipe_id id)
 {
-
-	char const *blob_name = "<unknow name>";
-	char const *bin_type = "<unknow type>";
+	char blob_name[SH_CSS_MAX_BINARY_NAME+10] = "<unknown type>";
+	char const *bin_type = "<unknown type>";
 	int i;
 
 	assert(stage != NULL);
@@ -2591,11 +2833,11 @@ ia_css_debug_pipe_graph_dump_stage(
 	if (stage->binary) {
 		bin_type = "binary";
 		if (stage->binary->info->blob)
-			blob_name = stage->binary->info->blob->name;
+			snprintf(blob_name, sizeof(blob_name), "%s_stage%d",
+				stage->binary->info->blob->name, stage->stage_num);
 	} else if (stage->firmware) {
 		bin_type = "firmware";
-		blob_name =
-		    (char const *)IA_CSS_EXT_ISP_PROG_NAME(stage->firmware);
+		strncpy_s(blob_name, sizeof(blob_name), IA_CSS_EXT_ISP_PROG_NAME(stage->firmware), sizeof(blob_name));
 	}
 
 	/* Guard in case of binaries that don't have any binary_info */
@@ -2604,13 +2846,13 @@ ia_css_debug_pipe_graph_dump_stage(
 		char enable_info2[100];
 		char enable_info3[100];
 		char enable_info[200];
-		struct ia_css_binary_info* bi = stage->binary_info;
+		struct ia_css_binary_info *bi = stage->binary_info;
 
 		/* Split it in 2 function-calls to keep the amount of
 		 * parameters per call "reasonable"
 		 */
-		snprintf( enable_info1, sizeof(enable_info1),
-			"%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+		snprintf(enable_info1, sizeof(enable_info1),
+			"%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
 			bi->enable.reduced_pipe ?	"rp," : "",
 			bi->enable.vf_veceven ?		"vfve," : "",
 			bi->enable.dis ?		"dis," : "",
@@ -2619,33 +2861,27 @@ ia_css_debug_pipe_graph_dump_stage(
 			bi->enable.dvs_6axis ?		"dvs6," : "",
 			bi->enable.block_output ?	"bo," : "",
 			bi->enable.ds ?			"ds," : "",
-			bi->enable.fixed_bayer_ds ?	"fbds," : "",
 			bi->enable.bayer_fir_6db ?	"bf6," : "",
 			bi->enable.raw_binning ?	"rawb," : "",
 			bi->enable.continuous ?		"cont," : "",
 			bi->enable.s3a ?		"s3a," : "",
 			bi->enable.fpnr ?		"fpnr," : "",
-			bi->enable.sc ?			"sc," : "",
-			bi->enable.dis_crop ?		"disc," : ""
+			bi->enable.sc ?			"sc," : ""
 			);
 
-		snprintf( enable_info2, sizeof(enable_info2),
-			"%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+		snprintf(enable_info2, sizeof(enable_info2),
+			"%s%s%s%s%s%s%s%s%s%s%s",
 			bi->enable.macc ?		"macc," : "",
 			bi->enable.output ?		"outp," : "",
 			bi->enable.ref_frame ?		"reff," : "",
 			bi->enable.tnr ?		"tnr," : "",
 			bi->enable.xnr ?		"xnr," : "",
-			bi->enable.raw ?		"raw," : "",
 			bi->enable.params ?		"par," : "",
-			bi->enable.gamma ?		"gam," : "",
-			bi->enable.ctc ?		"ctc," : "",
 			bi->enable.ca_gdc ?		"cagdc," : "",
 			bi->enable.isp_addresses ?	"ispa," : "",
 			bi->enable.in_frame ?		"inf," : "",
 			bi->enable.out_frame ?		"outf," : "",
-			bi->enable.high_speed ?		"hs," : "",
-			bi->enable.input_chunking ?	"inpc," : ""
+			bi->enable.high_speed ?		"hs," : ""
 			);
 
 		/* And merge them into one string */
@@ -2653,15 +2889,15 @@ ia_css_debug_pipe_graph_dump_stage(
 						enable_info1, enable_info2);
 		{
 			int l, p;
-			char *ei=enable_info;
+			char *ei = enable_info;
 
-			l=strlen(ei);
+			l = strlen(ei);
 
 			/* Replace last ',' with \0 if present */
 			if (l && enable_info[l-1] == ',')
 				enable_info[--l] = '\0';
 
-			if (l<=ENABLE_LINE1_MAX_LENGHT1) {
+			if (l <= ENABLE_LINE_MAX_LENGTH) {
 				/* It fits on one line, copy string and init */
 				/* other helper strings with empty string */
 				strcpy_s(enable_info,
@@ -2669,56 +2905,82 @@ ia_css_debug_pipe_graph_dump_stage(
 					ei);
 			} else {
 				/* Too big for one line, find last comma */
-				p=ENABLE_LINE1_MAX_LENGHT1;
+				p = ENABLE_LINE_MAX_LENGTH;
 				while (ei[p] != ',')
 					p--;
 				/* Last comma found, copy till that comma */
 				strncpy_s(enable_info1,
 					sizeof(enable_info1),
 					ei, p);
-				enable_info1[p]='\0';
+				enable_info1[p] = '\0';
 
-				ei+=p+1;
-				l=strlen(ei);
+				ei += p+1;
+				l = strlen(ei);
 
-				if (l<=ENABLE_LINE2_MAX_LENGHT2) {
+				if (l <= ENABLE_LINE_MAX_LENGTH) {
 					/* The 2nd line fits */
 					/* we cannot use ei as argument because
 					 * it is not guarenteed dword aligned
 					 */
-					strcpy_s(enable_info2,
+					strncpy_s(enable_info2,
 						sizeof(enable_info2),
-						ei);
-					snprintf(enable_info, 200, "%s\\n%s",
+						ei, l);
+					enable_info2[l] = '\0';
+					snprintf(enable_info, sizeof(enable_info), "%s\\n%s",
 						enable_info1, enable_info2);
 
 				} else {
 					/* 2nd line is still too long */
-					p=ENABLE_LINE2_MAX_LENGHT2;
+					p = ENABLE_LINE_MAX_LENGTH;
 					while (ei[p] != ',')
 						p--;
 					strncpy_s(enable_info2,
 						sizeof(enable_info2),
 						ei, p);
-					enable_info2[p]='\0';
-					ei+=p+1;
-					strcpy_s(enable_info3,
-						sizeof(enable_info3), ei);
-					snprintf(enable_info, 200,
-						"%s\\n%s\\n%s",
-						enable_info1, enable_info2,
-						enable_info3);
+					enable_info2[p] = '\0';
+					ei += p+1;
+					l = strlen(ei);
+
+					if (l <= ENABLE_LINE_MAX_LENGTH) {
+						/* The 3rd line fits */
+						/* we cannot use ei as argument because
+						* it is not guarenteed dword aligned
+						*/
+						strcpy_s(enable_info3,
+							sizeof(enable_info3), ei);
+						enable_info3[l] = '\0';
+						snprintf(enable_info, sizeof(enable_info),
+							"%s\\n%s\\n%s",
+							enable_info1, enable_info2,
+							enable_info3);
+					} else {
+						/* 3rd line is still too long */
+						p = ENABLE_LINE_MAX_LENGTH;
+						while (ei[p] != ',')
+							p--;
+						strncpy_s(enable_info3,
+							sizeof(enable_info3),
+							ei, p);
+						enable_info3[p] = '\0';
+						ei += p+1;
+						strcpy_s(enable_info3,
+							sizeof(enable_info3), ei);
+						snprintf(enable_info, sizeof(enable_info),
+							"%s\\n%s\\n%s",
+							enable_info1, enable_info2,
+							enable_info3);
+					}
 				}
 			}
 		}
 
-		dtrace_dot("node [shape = circle, fixedsize=true, width=2, "
+		dtrace_dot("node [shape = circle, fixedsize=true, width=2.5, "
 			"label=\"%s\\n%s\\n\\n%s\"]; \"%s(pipe%d)\"",
 			bin_type, blob_name, enable_info, blob_name, id);
 
 	}
 	else {
-		dtrace_dot("node [shape = circle, fixedsize=true, width=2, "
+		dtrace_dot("node [shape = circle, fixedsize=true, width=2.5, "
 			"label=\"%s\\n%s\\n\"]; \"%s(pipe%d)\"",
 			bin_type, blob_name, blob_name, id);
 	}
@@ -2737,14 +2999,7 @@ ia_css_debug_pipe_graph_dump_stage(
 		}
 	}
 
-	/* CC is a bit of special case, it used to be the alternating IN */
-	/* when continuous capture was still used in a double buffer scheme. */
-	/* Now consider it just as another IN */
-	if (stage->args.cc_frame) {
-		ia_css_debug_pipe_graph_dump_frame(
-			stage->args.cc_frame, id, blob_name,
-			"in", true);
-	} else if (stage->args.in_frame) {
+	if (stage->args.in_frame) {
 		ia_css_debug_pipe_graph_dump_frame(
 			stage->args.in_frame, id, blob_name,
 			"in", true);
@@ -2758,7 +3013,7 @@ ia_css_debug_pipe_graph_dump_stage(
 		}
 	}
 
-	for (i = 0; i < NUM_VIDEO_REF_FRAMES; i++) {
+	for (i = 0; i < MAX_NUM_VIDEO_DELAY_FRAMES; i++) {
 		if (stage->args.delay_frames[i]) {
 			ia_css_debug_pipe_graph_dump_frame(
 					stage->args.delay_frames[i], id,
@@ -2766,10 +3021,12 @@ ia_css_debug_pipe_graph_dump_stage(
 		}
 	}
 
-	if (stage->args.out_frame) {
-		ia_css_debug_pipe_graph_dump_frame(
-			stage->args.out_frame, id, blob_name,
-			"out", false);
+	for (i = 0; i < IA_CSS_BINARY_MAX_OUTPUT_PORTS; i++) {
+		if (stage->args.out_frame[i]) {
+			ia_css_debug_pipe_graph_dump_frame(
+				stage->args.out_frame[i], id, blob_name,
+				"out", false);
+		}
 	}
 
 	if (stage->args.out_vf_frame) {
@@ -2783,14 +3040,13 @@ void
 ia_css_debug_pipe_graph_dump_sp_raw_copy(
 	struct ia_css_frame *out_frame)
 {
-
 	assert(out_frame != NULL);
 	if (pg_inst.do_init) {
 		ia_css_debug_pipe_graph_dump_prologue();
 		pg_inst.do_init = false;
 	}
 
-	dtrace_dot("node [shape = circle, fixedsize=true, width=2, "
+	dtrace_dot("node [shape = circle, fixedsize=true, width=2.5, "
 		"label=\"%s\\n%s\"]; \"%s(pipe%d)\"",
 		"sp-binary", "sp_raw_copy", "sp_raw_copy", 1);
 
@@ -2799,7 +3055,7 @@ ia_css_debug_pipe_graph_dump_sp_raw_copy(
 		"fixedsize=true, width=2, height=0.7]; \"0x%08lx\" "
 		"[label = \"%s\\n%d(%d) x %d\\nRingbuffer\"];",
 		HOST_ADDRESS(out_frame),
-		format2str[out_frame->info.format],
+		debug_frame_format2str(out_frame->info.format),
 		out_frame->info.res.width,
 		out_frame->info.padded_width,
 		out_frame->info.res.height);
@@ -2812,18 +3068,330 @@ ia_css_debug_pipe_graph_dump_sp_raw_copy(
 		"sp_raw_copy", 1, HOST_ADDRESS(out_frame));
 
 	snprintf(dot_id_input_bin, sizeof(dot_id_input_bin), "%s(pipe%d)", "sp_raw_copy", 1);
-
 }
 
 void
-ia_css_debug_pipe_graph_dump_stream_config
-(const struct ia_css_stream_config *stream_config)
+ia_css_debug_pipe_graph_dump_stream_config(
+	const struct ia_css_stream_config *stream_config)
 {
-	pg_inst.width = stream_config->input_res.width;
-	pg_inst.height = stream_config->input_res.height;
-	pg_inst.eff_width = stream_config->effective_res.width;
-	pg_inst.eff_height = stream_config->effective_res.height;
-	pg_inst.stream_format = stream_config->format;
+	pg_inst.width = stream_config->input_config.input_res.width;
+	pg_inst.height = stream_config->input_config.input_res.height;
+	pg_inst.eff_width = stream_config->input_config.effective_res.width;
+	pg_inst.eff_height = stream_config->input_config.effective_res.height;
+	pg_inst.stream_format = stream_config->input_config.format;
+}
+
+void
+ia_css_debug_dump_resolution(
+	const struct ia_css_resolution *res,
+	const char *label)
+{
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s: =%d x =%d\n",
+			label, res->width, res->height);
+}
+
+void
+ia_css_debug_dump_frame_info(
+	const struct ia_css_frame_info *info,
+	const char *label)
+{
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s\n", label);
+	ia_css_debug_dump_resolution(&info->res, "res");
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "padded_width: %d\n",
+			info->padded_width);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "format: %d\n", info->format);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "raw_bit_depth: %d\n",
+			info->raw_bit_depth);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "raw_bayer_order: %d\n",
+			info->raw_bayer_order);
+}
+
+void
+ia_css_debug_dump_capture_config(
+	const struct ia_css_capture_config *config)
+{
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s\n", __func__);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "mode: %d\n", config->mode);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "enable_xnr:  %d\n",
+			config->enable_xnr);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "enable_raw_output: %d\n",
+			config->enable_raw_output);
+}
+
+void
+ia_css_debug_dump_pipe_extra_config(
+	const struct ia_css_pipe_extra_config *extra_config)
+{
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s\n", __func__);
+	if (extra_config) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE,
+				"enable_raw_binning: %d\n",
+				extra_config->enable_raw_binning);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "enable_yuv_ds: %d\n",
+				extra_config->enable_yuv_ds);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE,
+				"enable_high_speed:  %d\n",
+				extra_config->enable_high_speed);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE,
+				"enable_dvs_6axis: %d\n",
+				extra_config->enable_dvs_6axis);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE,
+				"enable_reduced_pipe: %d\n",
+				extra_config->enable_reduced_pipe);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE,
+				"enable_fractional_ds: %d\n",
+				extra_config->enable_fractional_ds);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "disable_vf_pp: %d\n",
+				extra_config->disable_vf_pp);
+	}
+}
+
+void
+ia_css_debug_dump_pipe_config(
+	const struct ia_css_pipe_config *config)
+{
+	unsigned int i;
+
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s()\n", __func__);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "mode: %d\n", config->mode);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "isp_pipe_version: %d\n",
+			config->isp_pipe_version);
+	ia_css_debug_dump_resolution(&config->bayer_ds_out_res,
+			"bayer_ds_out_res");
+	ia_css_debug_dump_resolution(&config->capt_pp_in_res,
+			"capt_pp_in_res");
+	ia_css_debug_dump_resolution(&config->vf_pp_in_res, "vf_pp_in_res");
+	ia_css_debug_dump_resolution(&config->dvs_crop_out_res,
+			"dvs_crop_out_res");
+	for (i = 0; i < IA_CSS_PIPE_MAX_OUTPUT_STAGE; i++) {
+		ia_css_debug_dump_frame_info(&config->output_info[i], "output_info");
+		ia_css_debug_dump_frame_info(&config->vf_output_info[i],
+				"vf_output_info");
+	}
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "acc_extension: 0x%x\n",
+			config->acc_extension);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "num_acc_stages: %d\n",
+			config->num_acc_stages);
+	ia_css_debug_dump_capture_config(&config->default_capture_config);
+	ia_css_debug_dump_resolution(&config->dvs_envelope, "dvs_envelope");
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "dvs_frame_delay: %d\n",
+			config->dvs_frame_delay);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "acc_num_execs: %d\n",
+			config->acc_num_execs);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "enable_dz: %d\n",
+			config->enable_dz);
+}
+
+void
+ia_css_debug_dump_stream_config_source(
+	const struct ia_css_stream_config *config)
+{
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s()\n", __func__);
+	switch (config->mode) {
+	case IA_CSS_INPUT_MODE_SENSOR:
+	case IA_CSS_INPUT_MODE_BUFFERED_SENSOR:
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "source.port\n");
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "port: %d\n",
+				config->source.port.port);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "num_lanes: %d\n",
+				config->source.port.num_lanes);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "timeout: %d\n",
+				config->source.port.timeout);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "compression: %d\n",
+				config->source.port.compression);
+		break;
+	case IA_CSS_INPUT_MODE_TPG:
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "source.tpg\n");
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "id: %d\n",
+				config->source.tpg.id);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "mode: %d\n",
+				config->source.tpg.mode);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "x_mask: 0x%x\n",
+				config->source.tpg.x_mask);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "x_delta: %d\n",
+				config->source.tpg.x_delta);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "y_mask: 0x%x\n",
+				config->source.tpg.y_mask);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "y_delta: %d\n",
+				config->source.tpg.y_delta);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "xy_mask: 0x%x\n",
+				config->source.tpg.xy_mask);
+		break;
+	case IA_CSS_INPUT_MODE_PRBS:
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "source.prbs\n");
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "id: %d\n",
+				config->source.prbs.id);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "h_blank: %d\n",
+				config->source.prbs.h_blank);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "v_blank: %d\n",
+				config->source.prbs.v_blank);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "seed: 0x%x\n",
+				config->source.prbs.seed);
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "seed1: 0x%x\n",
+				config->source.prbs.seed1);
+		break;
+	default:
+	case IA_CSS_INPUT_MODE_FIFO:
+	case IA_CSS_INPUT_MODE_MEMORY:
+		break;
+	}
+}
+
+void
+ia_css_debug_dump_mipi_buffer_config(
+	const struct ia_css_mipi_buffer_config *config)
+{
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s()\n", __func__);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "size_mem_words: %d\n",
+			config->size_mem_words);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "nof_mipi_buffers: %d\n",
+			config->nof_mipi_buffers);
+}
+
+void
+ia_css_debug_dump_metadata_config(
+	const struct ia_css_metadata_config *config)
+{
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s()\n", __func__);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "data_type: %d\n",
+			config->data_type);
+	ia_css_debug_dump_resolution(&config->resolution, "resolution");
+}
+
+void
+ia_css_debug_dump_stream_config(
+	const struct ia_css_stream_config *config,
+	int num_pipes)
+{
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "%s()\n", __func__);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "num_pipes: %d\n", num_pipes);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "mode: %d\n", config->mode);
+	ia_css_debug_dump_stream_config_source(config);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "channel_id: %d\n",
+			config->channel_id);
+	ia_css_debug_dump_resolution(&config->input_config.input_res, "input_res");
+	ia_css_debug_dump_resolution(&config->input_config.effective_res, "effective_res");
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "format: %d\n",
+			config->input_config.format);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "bayer_order: %d\n",
+			config->input_config.bayer_order);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "sensor_binning_factor: %d\n",
+			config->sensor_binning_factor);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "two_pixels_per_clock: %d\n",
+			config->two_pixels_per_clock);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "pixels_per_clock: %d\n",
+			config->pixels_per_clock);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "online: %d\n",
+			config->online);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "init_num_cont_raw_buf: %d\n",
+			config->init_num_cont_raw_buf);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE,
+			"target_num_cont_raw_buf: %d\n",
+			config->target_num_cont_raw_buf);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "pack_raw_pixels: %d\n",
+			config->pack_raw_pixels);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "continuous: %d\n",
+			config->continuous);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "flash_gpio_pin: %d\n",
+			config->flash_gpio_pin);
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "left_padding: %d\n",
+			config->left_padding);
+	ia_css_debug_dump_mipi_buffer_config(&config->mipi_buffer_config);
+	ia_css_debug_dump_metadata_config(&config->metadata_config);
+}
+
+/*
+    Trace support.
+
+    This tracer is using a buffer to trace the flow of the FW and dump misc values (see below for details).
+    Currently, support is only for SKC.
+    To enable support for other platforms:
+     - Allocate a buffer for tracing in DMEM. The longer the better.
+     - Use the DBG_init routine in sp.hive.c to initiatilize the tracer with the address and size selected.
+     - Add trace points in the SP code wherever needed.
+     - Enable the dump below with the required address and required adjustments.
+	   Dump is called at the end of ia_css_debug_dump_sp_state().
+*/
+
+/*
+ dump_trace() : dump the trace points from DMEM2.
+ for every trace point, the following are printed: index, major:minor and the 16-bit attached value.
+ The routine looks for the first 0, and then prints from it cyclically.
+ Data forma in DMEM2:
+  first 4 DWORDS: header
+   DWORD 0: data description
+    byte 0: version
+    byte 1: number of threads (for future use)
+    byte 2+3: number ot TPs
+   DWORD 1: command byte + data (for future use)
+    byte 0: command
+    byte 1-3: command signature
+   DWORD 2-3: additional data (for future use)
+  Following data is 4-byte oriented:
+    byte 0:   major
+	byte 1:   minor
+	byte 2-3: data
+*/
+
+#define TRACE_MAX_SIZE     4096			/* max points - sanity check */
+
+static void debug_dump_one_trace(const char *text, uint32_t start_addr)
+{
+#if !defined(HAS_TRACER_V1)
+	(void) text;
+	(void) start_addr;
+#else
+	uint32_t tmp;
+	int i, j, point_num, limit = -1;
+	/* using a static buffer here as the driver has issues allocating memory */
+	static uint32_t trace_read_buf[TRACE_MAX_SIZE];
+	/* read the header and parse it */
+	tmp = ia_css_device_load_uint32(start_addr);
+	point_num = (tmp >> 16) & 0xFFFF;
+	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "~~~ Tracer %s ver %d %d points\n", text, tmp & 0xFF, point_num);
+	if ((tmp & 0xFF) != 1) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "\t\tUnknown version - exiting\n");
+		return;
+	}
+	if (point_num > TRACE_MAX_SIZE) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "\t\tToo many points - exiting\n");
+		return;
+	}
+	/* copy the TPs and find the first 0 */
+	for (i = 0; i < point_num; i++) {
+		trace_read_buf[i] = ia_css_device_load_uint32(start_addr + sizeof(struct trace_header_t) + i * sizeof(struct trace_item_t));
+		if ((limit == (-1)) && (trace_read_buf[i] == 0))
+			limit = i;
+	}
+	/* two 0s in the beginning: empty buffer */
+	if ((trace_read_buf[0] == 0) && (trace_read_buf[1] == 0)) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "\t\tEmpty tracer - exiting\n");
+		return;
+	}
+	/* no overrun: start from 0 */
+	if ((limit == point_num-1) ||         /* first 0 is at the end - border case */
+	    (trace_read_buf[limit+1] == 0))   /* did not make a full cycle after the memset */
+		limit = 0;
+	/* overrun: limit is the first non-zero after the first zero */
+	else
+		limit++;
+	/* print the TPs */
+	for (i = 0; i < point_num; i++) {
+		j = (limit + i) % point_num;
+		if (trace_read_buf[j])
+			ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "\t\t%d %d:%d %d\n",
+								j,
+								trace_read_buf[j] & 0xFF,
+								(trace_read_buf[j] >> 8) & 0xFF,
+								(trace_read_buf[j] >> 16) & 0xFFFF);
+	}
+#endif /* IS_ISP_2500_SYSTEM */
+}
+
+void ia_css_debug_dump_trace(void)
+{
+	debug_dump_one_trace("SP0", TRACE_BUFF_ADDR);
+	debug_dump_one_trace("SP1", TRACE_BUFF_ADDR + SP1_TRACER_OFFSET);
 }
 
 #if defined(HRT_SCHED) || defined(SH_CSS_DEBUG_SPMEM_DUMP_SUPPORT)

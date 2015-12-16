@@ -69,6 +69,9 @@
 #define STM_TRB_LEN		0x100	   /* address length */
 #define STM_TRB_NUM		16         /* number of TRBs */
 
+#define STM_MST_L_OFFSET(x) (STM_MASMSK0 + ((x)/32)*4)
+#define STM_MST_L_MASK(x)   (1<<((x)%32))
+
 /*
  * This protects R/W to stm registers
  */
@@ -84,6 +87,69 @@ static inline u32 stm_readl(void __iomem *base, u32 offset)
 static inline void stm_writel(void __iomem *base, u32 offset, u32 value)
 {
 	writel(value, base + offset);
+}
+
+struct master_list_entry {
+	u8 id;
+	bool disabled;
+	const char *short_name;
+	const char *long_name;
+};
+
+enum mids {
+	MID_PSH = 64,
+	MID_AUDIO,
+	MID_POWER,
+	MID_PUNIT,
+	MID_IAFW,
+	MID_SCU,
+	MID_CHAABI,
+	MID_MODEM,
+};
+
+static struct master_list_entry master_list[] = {
+	{MID_PSH,	false, "psh",		"PSH"},
+	{MID_AUDIO,	false, "audio",		"Audio"},
+	{MID_POWER,	false, "power",		"Power Management"},
+	{MID_PUNIT,	false, "punit",		"P-unit"},
+	{MID_IAFW,	false, "iafw",		"Core IA Firmware"},
+	{MID_SCU,	false, "scu",		"SCU Firmware"},
+	{MID_CHAABI,	false, "chaabi",	"Chaabi Security Engine"},
+	{MID_MODEM,	false, "modem",		"Modem Messages"},
+
+	/*This should always be last (loop untill el.short_name == NULL) */
+	{}
+};
+
+static u8 stm_set_master_output(u8 master_id, bool disable, bool update_table)
+{
+	u32 reg;
+	/*basic out of bounds test */
+	if (master_id > 127)
+		return -1;
+	/*if the stm is not initialized yet, just update the table and make
+	 * the changes when ready */
+	if (stm_is_enabled()) {
+		reg = stm_readl(_dev_stm->stm_ioaddr,
+				STM_MST_L_OFFSET(master_id));
+
+		if (disable)
+			reg |= STM_MST_L_MASK(master_id);
+		else
+			reg &= ~STM_MST_L_MASK(master_id);
+
+		stm_writel(_dev_stm->stm_ioaddr,
+			   STM_MST_L_OFFSET(master_id), reg);
+		pr_debug("Set mid %d %d", master_id, disable);
+	}
+	if (update_table) {
+		struct master_list_entry *entr;
+		for (entr = master_list; entr->short_name; entr++) {
+			if (entr->id == master_id)
+				entr->disabled = disable;
+		}
+	}
+	return 0;
 }
 
 /**
@@ -267,11 +333,6 @@ static int stm_xfer_start(void)
 
 	/* REVERTME : filter PUNIT and SCU MasterID when switching to USB */
 	if (intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE) {
-		pr_info("%s\n REVERTME : filter PUNIT and SCU MasterID\n", __func__);
-		reg_word = stm_readl(stm->stm_ioaddr, (u32)STM_MASMSK1);
-		reg_word |= 0x28;
-		stm_writel(stm->stm_ioaddr, (u32)STM_MASMSK1, reg_word);
-
 		pr_info("%s\n REVERTME : USBTO\n", __func__);
 		reg_word = stm_readl(stm->stm_ioaddr, (u32)STM_USBTO);
 		reg_word |= 0x01;
@@ -386,6 +447,7 @@ int stm_dev_init(struct pci_dev *pdev,
 {
 	int retval = 0;
 	int pci_bar = 0;
+	struct master_list_entry *entr;
 
 	if (!cpu_has_debug_feature(DEBUG_FEATURE_PTI))
 		return -ENODEV;
@@ -430,6 +492,12 @@ int stm_dev_init(struct pci_dev *pdev,
 	dwc3_register_io_ebc(&stm_ebc_io_ops);
 	dwc3_register_io_ebc(&exi_in_ebc_io_ops);
 	dwc3_register_io_ebc(&exi_out_ebc_io_ops);
+
+	/*setup the mid filter */
+	for (entr = master_list; entr->short_name; entr++) {
+		if (entr->disabled)
+			stm_set_master_output(entr->id, true, false);
+	}
 
 	pr_info("successfully registered ebc io ops\n");
 
@@ -481,6 +549,54 @@ EXPORT_SYMBOL_GPL(stm_dev_clean);
 
 module_param_call(stm_out, stm_set_out, stm_get_out, NULL, 0644);
 MODULE_PARM_DESC(stm_out, "configure System Trace Macro output");
+
+static int mid_disabled_set(const char *val, const struct kernel_param *kp)
+{
+	struct master_list_entry *entr;
+
+	for (entr = master_list; entr->short_name; entr++) {
+		if (strstr(val, entr->short_name)) {
+			if (!entr->disabled) {
+				pr_info("Disable %s (%s) master output",
+					entr->long_name, entr->short_name);
+				entr->disabled = true;
+				stm_set_master_output(entr->id,
+						      entr->disabled, false);
+			}
+		} else {
+			if (entr->disabled) {
+				pr_info("Enable %s (%s) master output",
+					entr->long_name, entr->short_name);
+				entr->disabled = false;
+				stm_set_master_output(entr->id,
+						      entr->disabled, false);
+			}
+		}
+	}
+
+	return 0;
+}
+
+static int mid_disabled_get(char *buffer, const struct kernel_param *kp)
+{
+	char *current_b = buffer;
+	struct master_list_entry *entr;
+
+	for (entr = master_list; entr->short_name; entr++) {
+		if (entr->disabled)
+			current_b += sprintf(current_b, "%s,",
+					     entr->short_name);
+	}
+	return strlen(buffer);
+}
+
+static struct kernel_param_ops mid_disabled_ops = {
+	.set = mid_disabled_set,
+	.get = mid_disabled_get,
+};
+
+module_param_cb(mid_disabled, &mid_disabled_ops, NULL, 0644);
+MODULE_PARM_DESC(mid_disabled, "Disable Stm output for a list of masters");
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Florent Pirou");

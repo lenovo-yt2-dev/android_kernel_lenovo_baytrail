@@ -58,6 +58,15 @@ void sepinit_get_fw_props(struct sep_drvdata *drvdata);
  *
  * Returns int 0 on success
  */
-int sepinit_do_fw_init(struct sep_drvdata *drvdata);
+int sepinit_do_fw_init(struct sep_drvdata *drvdata, int init_flag);
+
+/**
+ * sepinit_reload_driver_state() - Wait for FW to update Sep state to reloaded
+ * driver state.
+ * @drvdata:
+ *
+ * Returns int
+ */
+int sepinit_reload_driver_state(struct sep_drvdata *drvdata);
 
 #endif /*__SEP_INIT_H__*/

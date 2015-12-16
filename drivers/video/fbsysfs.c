@@ -405,20 +405,7 @@ static ssize_t show_name(struct device *device,
 
 	return snprintf(buf, PAGE_SIZE, "%s\n", fb_info->fix.id);
 }
-#if 0
-static ssize_t show_lcd_name(struct device *device,
-			 struct device_attribute *attr, char *buf)
-{
-	struct fb_info *fb_info = dev_get_drvdata(device);
-	struct drm_fb_helper *drm_helper = (struct drm_fb_helper *)fb_info->par;
-	struct drm_device *dev = drm_helper->dev;
-	struct drm_i915_private *dev_priv = dev->dev_private;
-	int mipi_panel_id = dev_priv->mipi_panel_id;
 
-	printk("[LCD]: %s, panel id: 0x%x\n",__func__, mipi_panel_id);
-	return snprintf(buf, sizeof(mipi_panel_id), "%x\n", mipi_panel_id);
-}
-#endif
 static ssize_t store_fbstate(struct device *device,
 			     struct device_attribute *attr,
 			     const char *buf, size_t count)

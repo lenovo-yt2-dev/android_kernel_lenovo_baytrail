@@ -279,6 +279,9 @@ i915_gem_userptr_ioctl(struct drm_device *dev,
 						I915_USERPTR_UNSYNCHRONIZED))
 		return -EINVAL;
 
+	if (!args->user_ptr)
+		return -EINVAL;
+
 	first_data_page = args->user_ptr / PAGE_SIZE;
 	last_data_page = (args->user_ptr + args->user_size - 1) / PAGE_SIZE;
 	num_pages = last_data_page - first_data_page + 1;

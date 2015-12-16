@@ -125,7 +125,6 @@ static int hmm_reserved_pool_init(void **pool, unsigned int pool_size)
 	struct page *pages;
 	int j;
 	struct hmm_reserved_pool_info *repool_info;
-
 	if (pool_size == 0)
 		return 0;
 
@@ -138,19 +137,30 @@ static int hmm_reserved_pool_init(void **pool, unsigned int pool_size)
 	pgnr = pool_size;
 
 	i = 0;
-	order = 0;
+	order = MAX_ORDER;
 
 	while (pgnr) {
+		blk_pgnr = 1U << order;
+		while (blk_pgnr > pgnr) {
+			order--;
+			blk_pgnr >>= 1U;
+		}
+		BUG_ON(order > MAX_ORDER);
+
 		pages = alloc_pages(GFP_KERNEL | __GFP_NOWARN, order);
 		if (unlikely(!pages)) {
-			fail_number++;
-			dev_err(atomisp_dev, "%s: alloc_pages failed: %d\n",
-					__func__, fail_number);
-			/* if fail five times, will goto end */
+			if (order == 0) {
+				fail_number++;
+				dev_err(atomisp_dev, "%s: alloc_pages failed: %d\n",
+						__func__, fail_number);
+				/* if fail five times, will goto end */
 
-			/* FIXME: whether is the mechanism is ok? */
-			if (fail_number == ALLOC_PAGE_FAIL_NUM)
-				goto end;
+				/* FIXME: whether is the mechanism is ok? */
+				if (fail_number == ALLOC_PAGE_FAIL_NUM)
+					goto end;
+			} else {
+				order--;
+			}
 		} else {
 			blk_pgnr = 1U << order;
 

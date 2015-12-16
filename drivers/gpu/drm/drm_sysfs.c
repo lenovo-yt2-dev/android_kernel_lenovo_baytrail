@@ -493,6 +493,20 @@ void drm_sysfs_connector_remove(struct drm_connector *connector)
 }
 EXPORT_SYMBOL(drm_sysfs_connector_remove);
 
+#ifdef CONFIG_DLP
+extern struct drm_device *gdev; 
+void drm_sysfs_power_key_up()
+{
+    struct drm_device *dev  = gdev;
+	char *event_string = "POWERKEYUP=1";
+	char *envp[] = { event_string, NULL };
+
+	DRM_DEBUG("generating powerkey up\n");
+
+	kobject_uevent_env(&dev->primary->kdev.kobj, KOBJ_CHANGE, envp);
+}
+#endif
+
 /**
  * drm_sysfs_hotplug_event - generate a DRM uevent
  * @dev: DRM device
@@ -503,8 +517,13 @@ EXPORT_SYMBOL(drm_sysfs_connector_remove);
  */
 void drm_sysfs_hotplug_event(struct drm_device *dev)
 {
+    #ifndef CONFIG_DLP
 	char *event_string = "HOTPLUG=1";
-	char *envp[] = { event_string, NULL };
+    #else
+	char *event_string = "HOTPLUG=2";
+    #endif
+	
+    char *envp[] = { event_string, NULL };
 
 	DRM_DEBUG("generating hotplug event\n");
 

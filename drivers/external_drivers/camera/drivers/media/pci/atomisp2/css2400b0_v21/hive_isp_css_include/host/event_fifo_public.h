@@ -22,12 +22,7 @@
 #ifndef __EVENT_FIFO_PUBLIC_H
 #define __EVENT_FIFO_PUBLIC_H
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stdbool.h>
-#endif
-
+#include <type_support.h>
 #include "system_types.h"
 
 /*! Blocking read from an event source EVENT[ID]

@@ -44,7 +44,7 @@ static int cy8c_i2c_read_byte(struct i2c_client *client, u8 addr, u8 *data)
 {
     u8 buf;
     int ret = 0;
-    
+
     buf = addr;
     ret = i2c_master_send(client, (const char*)&buf, 1);
 
@@ -123,13 +123,13 @@ static ssize_t cap_switch_fwversion_show(struct device *dev,
 
 static DEVICE_ATTR(fwversion, S_IRUGO, cap_switch_fwversion_show, NULL);
 
-static ssize_t cap_switch_mode_store(struct device *dev, 
+static ssize_t cap_switch_mode_store(struct device *dev,
                      struct device_attribute *attr, const char *buf, size_t count)
 {
     struct i2c_client *client = switch_data->client;
     int ret;
     int i;
-    
+
     printk("%s, count=%d\n", __func__, count);
 
     for(i=0; i<count; i++)
@@ -145,7 +145,7 @@ static ssize_t cap_switch_mode_store(struct device *dev,
        printk("%s client is NULL\n",__func__);
 
     return count;
-    
+
 }
 
 static DEVICE_ATTR(mode, S_IWUSR | S_IWGRP, NULL, cap_switch_mode_store);
@@ -183,7 +183,7 @@ static int cap_switch_probe(struct i2c_client *client, const struct i2c_device_i
     printk(KERN_INFO "%s\n", __FUNCTION__);
 
     switch_data = kzalloc(sizeof(struct cap_switch_data), GFP_KERNEL);
-    
+
     if (!switch_data)
         return -ENOMEM;
 
@@ -199,7 +199,7 @@ static int cap_switch_probe(struct i2c_client *client, const struct i2c_device_i
         goto err_set_gpio_input;
 
     switch_data->irq = gpio_to_irq(switch_data->irq_gpio);
-    
+
     if (switch_data->irq < 0) {
         ret = switch_data->irq;
         goto err_detect_irq_num_failed;
@@ -296,7 +296,7 @@ static void __exit cap_ap_switch_exit(void)
     i2c_del_driver(&cap_switch_driver);
 }
 
-module_init(cap_ap_switch_init);
+fs_initcall(cap_ap_switch_init);
 module_exit(cap_ap_switch_exit);
 
 MODULE_AUTHOR("Lenovo");

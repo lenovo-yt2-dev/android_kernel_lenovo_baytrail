@@ -53,7 +53,7 @@
 #define EXIT_ZERO_CNT_MAX	0x3F
 #define CLK_ZERO_CNT_MAX	0xFF
 #define TRAIL_CNT_MAX		0x1F
-
+/*
 static inline u32 ceil_div(u32 numerator, u32 denominator)
 {
 	u32 result = numerator / denominator;
@@ -62,7 +62,7 @@ static inline u32 ceil_div(u32 numerator, u32 denominator)
 
 	return result;
 }
-
+*/
 typedef u8 * (*FN_MIPI_ELEM_EXEC)(struct intel_dsi *intel_dsi, u8 *data);
 
 struct gpio_table {

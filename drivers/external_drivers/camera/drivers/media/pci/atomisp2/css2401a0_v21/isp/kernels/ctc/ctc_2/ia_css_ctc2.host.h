@@ -29,7 +29,8 @@
 void
 ia_css_ctc_encode(
 	struct sh_css_isp_ctc_params *to,
-	const struct ia_css_ctc_config *from);
+	const struct ia_css_ctc_config *from,
+	unsigned size);
 
 void
 ia_css_ctc_dump(

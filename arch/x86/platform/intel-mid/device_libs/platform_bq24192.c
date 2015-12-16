@@ -190,8 +190,7 @@ static void dump_batt_chrg_profile(struct ps_pse_mod_prof *bcprof,
 
 static void platform_get_sfi_batt_table(void *table, bool fpo_override_bit)
 {
-	struct sfi_table_simple *sb =
-			 (struct sfi_table_simple *)get_oem0_table();
+	struct sfi_table_simple *sb = NULL;
 	struct platform_batt_profile *batt_prof;
 	u8 *bprof_ptr;
 
@@ -199,6 +198,9 @@ static void platform_get_sfi_batt_table(void *table, bool fpo_override_bit)
 
 	pr_debug("%s\n", __func__);
 
+#ifdef CONFIG_SFI
+	sb = (struct sfi_table_simple *)get_oem0_table();
+#endif
 	if (sb == NULL) {
 		pr_debug("Invalid Battery detected\n");
 		return;
@@ -483,28 +485,31 @@ static int platform_get_irq_number(void)
 
 static int platform_drive_vbus(bool onoff)
 {
-	/*switch USB MUX here*/
-	int usb_mux_gpio = BQ24192_CHRG_USB_MUX_GPIO, ret = 0;
+	int chrg_otg_gpio = BQ24192_CHRG_OTG_GPIO, ret = 0;
 	static bool is_gpio_request;
+
+	pr_debug("%s:%d:\n", __func__, __LINE__);
+
 	if (!is_gpio_request) {
-		ret = gpio_request(usb_mux_gpio, "USB_MUX");
+		ret = gpio_request(chrg_otg_gpio, "CHRG_OTG");
 		if (ret) {
 			pr_warn("%s:Failed to request gpio: error %d\n",
 				__func__, ret);
 			return ret;
 		} else {
-			pr_info("request gpio %d for USB_MUX pin\n",
-						usb_mux_gpio);
+			pr_info("request gpio %d for CHRG_OTG pin\n",
+							chrg_otg_gpio);
 			is_gpio_request = true;
 		}
 	}
 
-	/* assert the usb_mux gpio now */
+	/* assert the chrg_otg gpio now */
 	if (onoff)
-		gpio_direction_output(usb_mux_gpio, 1);
+		gpio_direction_output(chrg_otg_gpio, 1);
 	else {
-		/* de-assert the usb_mux gpio now */
-		gpio_direction_output(usb_mux_gpio, 0);
+		/* de-assert the chrg_otg gpio now */
+		gpio_direction_output(chrg_otg_gpio, 0);
+		gpio_direction_input(chrg_otg_gpio);
 	}
 	return ret;
 }
@@ -682,19 +687,19 @@ static void *platform_byt_get_batt_charge_profile(void)
 	temp_mon_range[1].maint_chrg_vol_ul = 4352;
 	temp_mon_range[1].maint_chrg_cur = 1800;
 
-	temp_mon_range[2].temp_up_lim = 20;
-	temp_mon_range[2].full_chrg_vol = 4352;
+	temp_mon_range[2].temp_up_lim = 23;
+	temp_mon_range[2].full_chrg_vol = 4350;
 	temp_mon_range[2].full_chrg_cur = 1800;
 	temp_mon_range[2].maint_chrg_vol_ll = 4300;
 	temp_mon_range[2].maint_chrg_vol_ul = 4352;
 	temp_mon_range[2].maint_chrg_cur = 1800;
 
 	temp_mon_range[3].temp_up_lim = 10;
-	temp_mon_range[3].full_chrg_vol = 4352;
-	temp_mon_range[3].full_chrg_cur = 1200;
+	temp_mon_range[3].full_chrg_vol = 4350;
+	temp_mon_range[3].full_chrg_cur = 1000;
 	temp_mon_range[3].maint_chrg_vol_ll = 4300;
-	temp_mon_range[3].maint_chrg_vol_ul = 4352;
-	temp_mon_range[3].maint_chrg_cur = 1200;
+	temp_mon_range[3].maint_chrg_vol_ul = 4350;
+	temp_mon_range[3].maint_chrg_cur = 1000;
 
 	temp_mon_range[4].temp_up_lim = 0;
 	temp_mon_range[4].full_chrg_vol = 0;
@@ -718,30 +723,10 @@ static void *platform_byt_get_batt_charge_profile(void)
 					&byt_ps_batt_chrg_prof);
 	return &byt_ps_batt_chrg_prof;
 }
-#if 0
-static bool is_blade2_8(void)
-{
-	bool blade2_8 = true;
-	int ret = 0;
-	ret = gpio_get_value_cansleep(210);
-	if(ret == 1)
-		blade2_8 = false;/*blade2 10*/
-	else
-		blade2_8 = true;/*blade2 8*/
-	return blade2_8;
 
-}
-#endif
 static void platform_byt_init_chrg_params(
 	struct bq24192_platform_data *pdata)
 {
-/*
-	bool yt2_8 = true;
-	yt2_8 = is_blade2_8();
-	if(!yt2_8){
-		byt_throttle_states[2].throttle_val = 900;
-	}
-*/
 	pdata->throttle_states = byt_throttle_states;
 	pdata->supplied_to = bq24192_supplied_to;
 	pdata->num_throttle_states = ARRAY_SIZE(byt_throttle_states);
@@ -752,7 +737,7 @@ static void platform_byt_init_chrg_params(
 	pdata->sfi_tabl_present = true;
 
 	pdata->slave_mode = false;
-	pdata->drive_vbus = platform_drive_vbus;
+	//pdata->drive_vbus = platform_drive_vbus;  //liulc1
 	
 	pdata->max_cc = 1800;	/* 1800 mA */
 	pdata->max_cv = 4350;	/* 4350 mV */
@@ -788,7 +773,7 @@ static void platform_clvp_init_chrg_params(
 	pdata->supported_cables = POWER_SUPPLY_CHARGER_TYPE_USB;
 	pdata->init_platform_data = initialize_platform_data;
 	pdata->get_irq_number = platform_get_irq_number;
-	pdata->drive_vbus = platform_drive_vbus;
+	//pdata->drive_vbus = platform_drive_vbus;  //liulc1 modify
 	pdata->get_battery_pack_temp = NULL;
 	pdata->query_otg = NULL;
 	pdata->free_platform_data = platform_free_data;

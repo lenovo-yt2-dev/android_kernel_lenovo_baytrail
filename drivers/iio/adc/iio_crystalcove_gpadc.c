@@ -144,7 +144,7 @@ static irqreturn_t gpadc_isr(int irq, void *data)
 	pending0 = intel_mid_pmic_readb(ADCIRQ0);
 	pending1 = intel_mid_pmic_readb(ADCIRQ1);
 	intel_mid_pmic_writeb(ADCIRQ0, pending0);
-	intel_mid_pmic_writeb(ADCIRQ0, pending1);
+	intel_mid_pmic_writeb(ADCIRQ1, pending1);
 	info->irq_pending |= pending0 + (pending1 << 8);
 	wake_up(&info->wait);
 	return IRQ_HANDLED;

@@ -1026,7 +1026,7 @@ void dlp_net_dev_setup(struct net_device *dev)
 	dev->type = ARPHRD_NONE;
 	dev->mtu = ETH_DATA_LEN;
 	dev->tx_queue_len = 10;
-	dev->flags = IFF_POINTOPOINT | IFF_NOARP | IFF_MULTICAST;
+	dev->flags = IFF_BROADCAST | IFF_NOARP | IFF_MULTICAST;
 }
 
 /****************************************************************************

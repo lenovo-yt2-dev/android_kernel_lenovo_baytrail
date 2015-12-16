@@ -817,6 +817,8 @@ static struct ov9760_reg const ov9760_init_config[] = {
 	{OV9760_8BIT, {0x5184}, 0x04},
 	{OV9760_8BIT, {0x5185}, 0x00},
 	{OV9760_8BIT, {0x5186}, 0x01},
+	{OV9760_8BIT, {0x5781}, 0x17},
+	{OV9760_8BIT, {0x5792}, 0x00},
 	{OV9760_8BIT, {0x5002}, 0x41},
 	{OV9760_8BIT, {0x3503}, 0x07},
 	{OV9760_8BIT, {0x3501}, 0x07},

@@ -127,6 +127,7 @@ spidev_sync(struct spidev_data *spidev, struct spi_message *message)
 		if (status == 0)
 			status = message->actual_length;
 	}
+	message->context = NULL;
 	return status;
 }
 

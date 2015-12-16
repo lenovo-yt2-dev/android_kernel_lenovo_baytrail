@@ -41,9 +41,6 @@ struct stream2mmio_cfg_s {
  * Stream2MMIO 2 has 4 SIDs that are indexed by
  * [STREAM2MMIO_SID0_ID...STREAM2MMIO_SID3_ID].
  */
-static const stream2mmio_sid_ID_t N_STREAM2MMIO_SID_PROCS[N_STREAM2MMIO_ID] = {
-	N_STREAM2MMIO_SID_ID,
-	STREAM2MMIO_SID4_ID,
-	STREAM2MMIO_SID4_ID
-};
+extern const stream2mmio_sid_ID_t N_STREAM2MMIO_SID_PROCS[N_STREAM2MMIO_ID];
+
 #endif /* __ISYS_STREAM2MMIO_GLOBAL_H_INCLUDED__ */

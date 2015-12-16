@@ -29,7 +29,9 @@
  * "errno.h"
  */
 #define EINVAL  22
+#define EBADE   52
 #define ENODATA 61
+#define ENOTCONN 107
 #define ENOTSUP 252
 #define ENOBUFS 233
 
@@ -64,5 +66,19 @@
  */
 
 #endif
+
+#define verifexit(cond,error_tag)  \
+do {                               \
+	if (!(cond)){              \
+		goto EXIT;         \
+	}                          \
+} while(0)
+
+#define verifjmpexit(cond)         \
+do {                               \
+	if (!(cond)){              \
+		goto EXIT;         \
+	}                          \
+} while(0)
 
 #endif /* __ERROR_SUPPORT_H_INCLUDED__ */

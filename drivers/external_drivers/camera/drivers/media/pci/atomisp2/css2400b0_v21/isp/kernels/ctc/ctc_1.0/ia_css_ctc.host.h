@@ -32,7 +32,8 @@ extern const struct ia_css_ctc_config default_ctc_config;
 void
 ia_css_ctc_vamem_encode(
 	struct sh_css_isp_ctc_vamem_params *to,
-	const struct ia_css_ctc_table *from);
+	const struct ia_css_ctc_table *from,
+	unsigned size);
 
 void
 ia_css_ctc_debug_dtrace(

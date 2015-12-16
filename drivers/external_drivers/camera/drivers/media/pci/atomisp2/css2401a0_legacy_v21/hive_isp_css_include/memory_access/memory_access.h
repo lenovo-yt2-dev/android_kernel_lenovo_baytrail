@@ -51,12 +51,7 @@
  * a page table information mapping function
  */
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stdint.h>
-#endif
-#include <stddef.h>
+#include <type_support.h>
 
 /*
  * User provided file that defines the (sub)system address types:

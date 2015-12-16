@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_CONTROL_H
 #define __IA_CSS_CONTROL_H
 
+/** @file
+ * This file contains functionality for starting and controlling CSS
+ */
+
 #include <type_support.h>
 #include <ia_css_env.h>
 #include <ia_css_firmware.h>
@@ -69,32 +73,44 @@ enum ia_css_err ia_css_init(
 void
 ia_css_uninit(void);
 
-/** @brief Suspend CSS API for power down (NOT IMPLEMENTED YET).
+/** @brief Suspend CSS API for power down
+ * @return	success or faulure code
  *
- * IMPORTANT NOTE: This function is a place-holder for a future implementation
- * and it is not used at the moment. Below is the information what this
- * function should do when implemented.
+ * suspend shuts down the system by:
+ *  unloading all the streams
+ *  stopping SP
+ *  performing uninit
  *
- * This function prepares the CSS API for a power down of the CSS hardware.
- * This will make sure the hardware is idle. After this function is called,
- * always call ia_css_resume before calling any other CSS functions.
- * This assumes that all buffers allocated in DDR will remain alive during
- * power down. If this is not the case, use ia_css_unit() followed by
- * ia_css_init() at power up.
+ *  Currently stream memory is deallocated because of rmmgr issues.
+ *  Need to come up with a bypass that will leave the streams intact.
  */
-void
+enum ia_css_err
 ia_css_suspend(void);
 
 /** @brief Resume CSS API from power down
- *
- * @return	None
+ * @return	success or failure code
  *
  * After a power cycle, this function will bring the CSS API back into
- * a state where it can be started. This will re-initialize the hardware.
+ * a state where it can be started.
+ * This will re-initialize the hardware and all the streams.
  * Call this function only after ia_css_suspend() has been called.
  */
-void
+enum ia_css_err
 ia_css_resume(void);
+
+/** @brief Enable use of a separate queue for ISYS events.
+ *
+ * @param[in]	enable: enable or disable use of separate ISYS event queues.
+ * @return		error if called when SP is running.
+ *
+ * @deprecated{This is a temporary function that allows drivers to migrate to
+ * the use of the separate ISYS event queue. Once all drivers supports this, it
+ * will be made the default and this function will be removed.
+ * This function should only be called when the SP is not running, calling it
+ * when the SP is running will result in an error value being returned. }
+ */
+enum ia_css_err
+ia_css_enable_isys_event_queue(bool enable);
 
 /** @brief Test whether the ISP has started.
  *

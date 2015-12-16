@@ -4,16 +4,31 @@
 #include <linux/usb.h>
 #include <linux/wakelock.h>
 
+/* CHT ID MUX register in USH MMIO */
+#define DUAL_ROLE_CFG0			0x80D8
+#define SW_IDPIN_EN			(1 << 21)
+#define SW_IDPIN			(1 << 20)
+
+#define DUAL_ROLE_CFG1			0x80DC
+#define SUS				(1 << 29)
+
 #define HSIC_HUB_RESET_TIME   10
 #define HSIC_ENABLE_SIZE      2
 #define HSIC_DURATION_SIZE    7
 #define HSIC_DELAY_SIZE       8
-#define HSIC_USH_PORT         5
 
 #define HSIC_AUTOSUSPEND                     0
 #define HSIC_PORT_INACTIVITYDURATION              500
 #define HSIC_BUS_INACTIVITYDURATION              500
 #define HSIC_REMOTEWAKEUP                       1
+/* Default U1 timeout is 127us */
+#define SSIC_DEFAULT_U1_TIMEOUT		127
+#define SSIC_MAX_U1_TIMEOUT			127
+/* Default U2 timeout is 1ms*/
+#define SSIC_DEFAULT_U2_TIMEOUT		1
+#define SSIC_MAX_U2_TIMEOUT			64
+
+
 
 #define USH_PCI_ID                     0x0F35
 #define USH_REENUM_DELAY_FFRD8_PR0     600000
@@ -64,7 +79,8 @@ struct ush_hsic_priv {
 	struct notifier_block       hsic_s3_entry_nb;
 	struct wake_lock            s3_wake_lock;
 	enum wlock_state            s3_wlock_state;
-	enum wlock_state            s3_rt_state;
+	enum s3_state               s3_rt_state;
+	int		hsic_port_num;
 };
 
 enum {
@@ -78,6 +94,11 @@ struct ush_hsic_pdata {
 	int                     aux_gpio;
 	int                     wakeup_gpio;
 	int                     reenum_delay;
+	int			hsic_port_num;
+	int			has_hsic;
+	int			has_ssic;
+	int			ssic_port_num;
+	int			ssic_enabled;
 };
 
 static int hsic_notify(struct notifier_block *self,

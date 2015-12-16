@@ -186,6 +186,9 @@ union drm_psb_extension_arg {
 	struct drm_psb_extension_rep rep;
 };
 
+#define PSB_NOT_FENCE                (1 << 0)
+#define PSB_MEM_CLFLUSH                (1 << 1)
+
 struct psb_validate_req {
 	uint64_t set_flags;
 	uint64_t clear_flags;
@@ -683,6 +686,70 @@ struct drm_psb_stolen_memory_arg {
 #define VSYNC_DISABLE                   (1 << 1)
 #define VSYNC_WAIT                      (1 << 2)
 #define GET_VSYNC_COUNT                 (1 << 3)
+
+/* Polyphase filter coefficients */
+#define N_HORIZ_Y_TAPS 5
+#define N_VERT_Y_TAPS 3
+#define N_HORIZ_UV_TAPS 3
+#define N_VERT_UV_TAPS 3
+#define N_PHASES 17
+#define MAX_TAPS 5
+
+struct overlay_ctrl_blk {
+	uint32_t OBUF_0Y;
+	uint32_t OBUF_1Y;
+	uint32_t OBUF_0U;
+	uint32_t OBUF_0V;
+	uint32_t OBUF_1U;
+	uint32_t OBUF_1V;
+	uint32_t OSTRIDE;
+	uint32_t YRGB_VPH;
+	uint32_t UV_VPH;
+	uint32_t HORZ_PH;
+	uint32_t INIT_PHS;
+	uint32_t DWINPOS;
+	uint32_t DWINSZ;
+	uint32_t SWIDTH;
+	uint32_t SWIDTHSW;
+	uint32_t SHEIGHT;
+	uint32_t YRGBSCALE;
+	uint32_t UVSCALE;
+	uint32_t OCLRC0;
+	uint32_t OCLRC1;
+	uint32_t DCLRKV;
+	uint32_t DCLRKM;
+	uint32_t SCHRKVH;
+	uint32_t SCHRKVL;
+	uint32_t SCHRKEN;
+	uint32_t OCONFIG;
+	uint32_t OCMD;
+	uint32_t RESERVED1;
+	uint32_t OSTART_0Y;
+	uint32_t OSTART_1Y;
+	uint32_t OSTART_0U;
+	uint32_t OSTART_0V;
+	uint32_t OSTART_1U;
+	uint32_t OSTART_1V;
+	uint32_t OTILEOFF_0Y;
+	uint32_t OTILEOFF_1Y;
+	uint32_t OTILEOFF_0U;
+	uint32_t OTILEOFF_0V;
+	uint32_t OTILEOFF_1U;
+	uint32_t OTILEOFF_1V;
+	uint32_t FASTHSCALE;
+	uint32_t UVSCALEV;
+
+	uint32_t RESERVEDC[(0x200 - 0xA8) / 4];
+	uint16_t Y_VCOEFS[N_VERT_Y_TAPS * N_PHASES];
+	uint16_t RESERVEDD[0x100 / 2 - N_VERT_Y_TAPS * N_PHASES];
+	uint16_t Y_HCOEFS[N_HORIZ_Y_TAPS * N_PHASES];
+	uint16_t RESERVEDE[0x200 / 2 - N_HORIZ_Y_TAPS * N_PHASES];
+	uint16_t UV_VCOEFS[N_VERT_UV_TAPS * N_PHASES];
+	uint16_t RESERVEDF[0x100 / 2 - N_VERT_UV_TAPS * N_PHASES];
+	uint16_t UV_HCOEFS[N_HORIZ_UV_TAPS * N_PHASES];
+	uint16_t RESERVEDG[0x100 / 2 - N_HORIZ_UV_TAPS * N_PHASES];
+};
+
 struct intel_overlay_context {
 	uint32_t index;
 	uint32_t pipe;
@@ -794,6 +861,8 @@ struct drm_psb_register_rw_arg {
 		uint32_t b_wait_vblank;
 		uint32_t b_wms;
 		uint32_t buffer_handle;
+		uint32_t backbuf_index;
+		uint32_t backbuf_addr;
 	} overlay;
 
 	uint32_t vsync_operation_mask;
@@ -834,11 +903,18 @@ struct drm_psb_register_rw_arg {
 	uint32_t plane_enable_mask;
 	uint32_t plane_disable_mask;
 
+	uint32_t get_plane_state_mask;
+
 	struct {
 		uint32_t type;
 		uint32_t index;
 		uint32_t ctx;
 	} plane;
+};
+
+enum {
+	PSB_DC_PLANE_ENABLED,
+	PSB_DC_PLANE_DISABLED,
 };
 
 enum {
@@ -857,14 +933,14 @@ struct psb_gtt_mapping_arg {
 	uint32_t bcd_buffer_id;
 	uint32_t bcd_buffer_count;
 	uint32_t bcd_buffer_stride;
-	uint32_t vaddr;
+	unsigned long vaddr;
 	uint32_t size;
 };
 
 struct drm_psb_getpageaddrs_arg {
-	uint32_t handle;
-	unsigned long *page_addrs;
-	unsigned long gtt_offset;
+	uint64_t handle;
+	uint64_t page_addrs;
+	uint64_t gtt_offset;
 };
 
 
@@ -998,7 +1074,11 @@ typedef struct tagHDMITESTREGREADWRITE {
 
 /**** END HDMI TEST IOCTLS ****/
 
+/* GET PANEL ORIENTATION INFO */
+#define DRM_PSB_PANEL_ORIENTATION       0x3B
 
+/* Update cursor position, input is intel_dc_cursor_ctx */
+#define DRM_PSB_UPDATE_CURSOR_POS       0x3C
 
 /* Do not use IOCTL between 0x40 and 0x4F */
 /* These will be reserved for OEM to use */
@@ -1006,6 +1086,11 @@ typedef struct tagHDMITESTREGREADWRITE {
 #define DRM_OEM_RESERVED_START          0x40
 #define DRM_OEM_RESERVED_END            0x4F
 
+//ASUS_BSP: [DDS] +++
+//#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+#define DRM_PSB_PANEL_SWITCH         0x100
+//#endif
+//ASUS_BSP: [DDS] ---
 
 /*
  * TTM execbuf extension.
@@ -1029,7 +1114,7 @@ typedef struct tagHDMITESTREGREADWRITE {
 struct drm_psb_csc_matrix {
 	int pipe;
 	int64_t matrix[9];
-};
+}__attribute__((packed));
 
 struct psb_drm_dpu_rect {
 	int x, y;
@@ -1123,7 +1208,7 @@ struct drm_psb_csc_gamma_setting {
 		struct csc_setting csc_data;
 		struct gamma_setting gamma_data;
 	} data;
-};
+}__attribute__((packed));
 struct drm_psb_buffer_data {
 	void *h_buffer;
 };
@@ -1167,6 +1252,7 @@ typedef enum intel_dc_plane_types {
 	DC_SPRITE_PLANE = 1,
 	DC_OVERLAY_PLANE,
 	DC_PRIMARY_PLANE,
+	DC_CURSOR_PLANE,
 	DC_PLANE_MAX,
 } DC_MRFLD_PLANE_TYPE;
 
@@ -1184,6 +1270,14 @@ typedef struct intel_dc_overlay_ctx {
 	uint32_t pipe;
 	uint32_t ovadd;
 } DC_MRFLD_OVERLAY_CONTEXT;
+
+typedef struct intel_dc_cursor_ctx {
+	uint32_t index;
+	uint32_t pipe;
+	uint32_t cntr;
+	uint32_t surf;
+	uint32_t pos;
+} DC_MRFLD_CURSOR_CONTEXT;
 
 typedef struct intel_dc_sprite_ctx {
 	uint32_t update_mask;
@@ -1232,11 +1326,13 @@ typedef struct intel_dc_plane_zorder {
 typedef struct intel_dc_plane_ctx {
 	enum intel_dc_plane_types type;
 	struct intel_dc_plane_zorder zorder;
+	uint64_t gtt_key;
 	union {
 		struct intel_dc_overlay_ctx ov_ctx;
 		struct intel_dc_sprite_ctx sp_ctx;
 		struct intel_dc_primary_ctx prim_ctx;
+		struct intel_dc_cursor_ctx cs_ctx;
 	} ctx;
-} DC_MRFLD_SURF_CUSTOM;
+} __attribute__((packed)) DC_MRFLD_SURF_CUSTOM;
 
 #endif

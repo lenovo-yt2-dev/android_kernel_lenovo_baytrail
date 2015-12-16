@@ -750,4 +750,256 @@ struct hsu_dma_ops intel_dma_ops = {
 	.context_op =	intel_dma_context_op,
 };
 
+/* LPSS DMA ops */
+#ifdef CONFIG_LPSS_DMA
+static int hsu_lpss_dma_init(struct uart_hsu_port *up)
+{
+	void *idma = up->dma_priv;
+	struct hsu_dma_buffer *dbuf;
 
+	/* Allocate the RX buffer */
+	dbuf = &up->rxbuf;
+	dbuf->buf = lpss_dma_alloc(HSU_DMA_BUF_SIZE);
+	if (!dbuf->buf) {
+		up->use_dma = 0;
+		dev_err(up->dev, "allocate DMA buffer failed!!\n");
+		return -ENOMEM;
+	}
+	lpss_dma_resume(idma);
+
+	up->dma_inited = 1;
+	return 0;
+}
+
+
+static int hsu_lpss_dma_exit(struct uart_hsu_port *up)
+{
+	void *idma = up->dma_priv;
+	struct hsu_dma_buffer *dbuf;
+
+	lpss_dma_suspend(idma);
+
+	/* Free the RX buffer */
+	dbuf = &up->rxbuf;
+	lpss_dma_free(dbuf->buf);
+
+	up->dma_inited = 0;
+	return 0;
+}
+
+static void lpss_dma_tx_done(void *arg)
+{
+	struct uart_hsu_port *up = arg;
+	void *idma = up->dma_priv;
+	struct circ_buf *xmit = &up->port.state->xmit;
+	unsigned long flags;
+	int count = 0;
+
+	count = lpss_dma_get_tx_count(idma);
+
+	/* Update the circ buf info */
+	xmit->tail += count;
+	xmit->tail &= UART_XMIT_SIZE - 1;
+	up->port.icount.tx += count;
+
+	clear_bit(flag_tx_on, &up->flags);
+
+	if (!uart_circ_empty(xmit) && !uart_tx_stopped(&up->port)) {
+		spin_lock_irqsave(&up->port.lock, flags);
+		serial_sched_cmd(up, qcmd_start_tx);
+		spin_unlock_irqrestore(&up->port.lock, flags);
+	}
+
+	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
+		uart_write_wakeup(&up->port);
+}
+
+static void hsu_lpss_dma_start_tx(struct uart_hsu_port *up)
+{
+	void *idma = up->dma_priv;
+	struct circ_buf *xmit = &up->port.state->xmit;
+	int count;
+
+	if (uart_circ_empty(xmit) || uart_tx_stopped(&up->port)) {
+		if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
+			uart_write_wakeup(&up->port);
+		return;
+	}
+
+	set_bit(flag_tx_on, &up->flags);
+	count = CIRC_CNT_TO_END(xmit->head, xmit->tail, UART_XMIT_SIZE);
+
+	if (count >= 2000)
+		count = 2000;
+
+	if (!count) {
+		pr_err("we see a case of TX Len == 0!!!\n\n");
+		dump_stack();
+		clear_bit(flag_tx_on, &up->flags);
+		return;
+	}
+
+	lpss_dma_start_tx(idma, xmit->buf + xmit->tail, count);
+}
+
+static void hsu_lpss_dma_stop_tx(struct uart_hsu_port *up)
+{
+	void *idma = up->dma_priv;
+
+	if (!test_bit(flag_tx_on, &up->flags))
+		return;
+
+	lpss_dma_stop_tx(idma);
+	clear_bit(flag_tx_on, &up->flags);
+}
+
+static void lpss_dma_rx_done(void *arg)
+{
+	struct uart_hsu_port *up = arg;
+	void *idma = up->dma_priv;
+	struct hsu_dma_buffer *dbuf = &up->rxbuf;
+	struct uart_port *port = &up->port;
+	struct tty_struct *tty;
+	struct tty_port *tport = &port->state->port;
+	unsigned long flags;
+	int count;
+
+	tty = tty_port_tty_get(&up->port.state->port);
+	if (!tty)
+		return;
+
+	count = lpss_dma_get_rx_count(idma);
+
+	tty_insert_flip_string(tport, dbuf->buf, count);
+	port->icount.rx += count;
+
+	tty_flip_buffer_push(tport);
+	tty_kref_put(tty);
+
+	clear_bit(flag_rx_on, &up->flags);
+
+	spin_lock_irqsave(&up->port.lock, flags);
+	if (test_bit(flag_rx_pending, &up->flags))
+		serial_sched_cmd(up, qcmd_start_rx);
+	spin_unlock_irqrestore(&up->port.lock, flags);
+}
+
+static void hsu_lpss_dma_start_rx(struct uart_hsu_port *up)
+{
+	void *idma = up->dma_priv;
+	struct hsu_dma_buffer *dbuf = &up->rxbuf;
+
+	if (test_and_set_bit(flag_rx_on, &up->flags)) {
+		set_bit(flag_rx_pending, &up->flags);
+		return;
+	}
+
+	dbuf->ofs = 2048 - 64;
+
+	lpss_dma_start_rx(idma, dbuf->buf, dbuf->ofs);
+}
+
+static void hsu_lpss_dma_stop_rx(struct uart_hsu_port *up)
+{
+	void *idma = up->dma_priv;
+
+	if (!test_bit(flag_rx_on, &up->flags)) {
+		clear_bit(flag_rx_pending, &up->flags);
+		return;
+	}
+
+	clear_bit(flag_rx_pending, &up->flags);
+	lpss_dma_stop_rx(idma);
+	clear_bit(flag_rx_on, &up->flags);
+
+}
+
+static int hsu_lpss_dma_resume(struct uart_hsu_port *up)
+{
+	void *idma = up->dma_priv;
+
+	if (!up->dma_inited)
+		return 0;
+
+	lpss_dma_resume(idma);
+
+	return 0;
+}
+
+static int hsu_lpss_dma_suspend(struct uart_hsu_port *up)
+{
+	void *idma = up->dma_priv;
+
+	if (!up->dma_inited)
+		return 0;
+
+	if (test_bit(flag_rx_on, &up->flags) ||
+		test_bit(flag_rx_pending, &up->flags)) {
+		dev_warn(up->dev, "ignore suspend for rx dma is running\n");
+		return -1;
+	}
+
+	lpss_dma_suspend(idma);
+
+	return 0;
+}
+
+struct lpss_dma_info dma_info = {
+	.dma_buswidth = LPSS_DMA_BUSWIDTH_1_BYTE,
+	.dma_burstsize = LPSS_DMA_MSIZE_8,
+	.tx_callback = lpss_dma_tx_done,
+	.rx_callback = lpss_dma_rx_done,
+};
+
+#define LPSS_IDMA_OFFSET	0x800
+int hsu_lpss_dma_setup(struct uart_hsu_port *up)
+{
+	int ret;
+
+	/* setup lpss dma */
+	dma_info.pdev = up->port.dev;
+	dma_info.membase = up->port.membase + LPSS_IDMA_OFFSET;
+	dma_info.irq = up->port.irq;
+	snprintf(dma_info.name, sizeof(dma_info.name) - 1, "%s_%d", "hs_uart", up->index);
+	dma_info.per_tx_addr = up->port.mapbase + UART_TX;
+	dma_info.per_rx_addr = up->port.mapbase + UART_RX;
+	dma_info.callback_param = up;
+
+	/* get baytrail or cherrytrail lpss dma info */
+	ret = lpss_get_controller_info(lpss_hsu_dma, up->index, &dma_info);
+	if (ret < 0) {
+		pr_warn("%s: can't get lpss dma info, use poll mode\n", __func__);
+		up->use_dma = 0;
+	}
+
+	up->dma_priv = lpss_dma_register(&dma_info);
+	if (up->dma_priv == NULL) {
+		pr_warn("%s: can't get lpss dma, use poll mode\n", __func__);
+		up->use_dma = 0;
+	}
+
+	return 0;
+}
+
+int hsu_lpss_dma_remove(struct uart_hsu_port *up)
+{
+	void *lpss_dma = up->dma_priv;
+
+	lpss_dma_unregister(lpss_dma);
+
+	return 0;
+}
+
+struct hsu_dma_ops lpss_dma_ops = {
+	.setup =	hsu_lpss_dma_setup,
+	.remove =	hsu_lpss_dma_remove,
+	.init =		hsu_lpss_dma_init,
+	.exit =		hsu_lpss_dma_exit,
+	.suspend =	hsu_lpss_dma_suspend,
+	.resume	=	hsu_lpss_dma_resume,
+	.start_tx =	hsu_lpss_dma_start_tx,
+	.stop_tx =	hsu_lpss_dma_stop_tx,
+	.start_rx =	hsu_lpss_dma_start_rx,
+	.stop_rx =	hsu_lpss_dma_stop_rx,
+};
+#endif

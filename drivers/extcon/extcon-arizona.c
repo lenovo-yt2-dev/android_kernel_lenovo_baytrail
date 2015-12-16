@@ -72,7 +72,6 @@ struct arizona_extcon_info {
 	struct input_dev *input;
 
 	u16 last_jackdet;
-	u32 hp_impedance;
 
 	int micd_mode;
 	const struct arizona_micd_config *micd_modes;
@@ -508,7 +507,7 @@ static int arizona_hpdet_read(struct arizona_extcon_info *info)
 		}
 	}
 
-	info->hp_impedance = val;
+	arizona->hp_impedance = val;
 	dev_dbg(arizona->dev, "HP impedance %d ohms\n", val);
 	return val;
 }
@@ -720,9 +719,8 @@ err:
 			   ARIZONA_ACCDET_MODE_MASK, ARIZONA_ACCDET_MODE_MIC);
 
 	/* Just report headphone */
-	ret = extcon_update_state(&info->edev,
-				  1 << ARIZONA_CABLE_HEADPHONE,
-				  1 << ARIZONA_CABLE_HEADPHONE);
+	ret = extcon_set_cable_state_(&info->edev,
+			ARIZONA_CABLE_HEADPHONE, true);
 	if (ret != 0)
 		dev_err(arizona->dev, "Failed to report headphone: %d\n", ret);
 
@@ -779,9 +777,8 @@ err:
 			   ARIZONA_ACCDET_MODE_MASK, ARIZONA_ACCDET_MODE_MIC);
 
 	/* Just report headphone */
-	ret = extcon_update_state(&info->edev,
-				  1 << ARIZONA_CABLE_HEADPHONE,
-				  1 << ARIZONA_CABLE_HEADPHONE);
+	ret = extcon_set_cable_state_(&info->edev,
+			ARIZONA_CABLE_HEADPHONE, true);
 	if (ret != 0)
 		dev_err(arizona->dev, "Failed to report headphone: %d\n", ret);
 
@@ -892,8 +889,17 @@ static void arizona_micd_detect(struct work_struct *work)
 	if (!(val & ARIZONA_MICD_STS)) {
 		dev_warn(arizona->dev, "Detected open circuit\n");
 		info->mic = arizona->pdata.micd_open_circuit_declare;
-		if (!info->mic)
+		if (!info->mic) {
 			arizona_stop_mic(info);
+		} else {
+			/* Don't need to regulate for button detection */
+			ret = regulator_allow_bypass(info->micvdd, true);
+			if (ret != 0) {
+				dev_err(arizona->dev,
+					"Failed to bypass MICVDD: %d\n",
+					ret);
+			}
+		}
 		arizona_identify_headphone(info);
 		info->detecting = false;
 		goto handled;
@@ -903,16 +909,15 @@ static void arizona_micd_detect(struct work_struct *work)
 	if (info->detecting && (val & ARIZONA_MICD_LVL_8)) {
 		arizona_identify_headphone(info);
 
-		ret = extcon_update_state(&info->edev,
-					  1 << ARIZONA_CABLE_MICROPHONE,
-					  1 << ARIZONA_CABLE_MICROPHONE);
+		ret = extcon_set_cable_state_(&info->edev,
+				ARIZONA_CABLE_MICROPHONE, true);
 
 		if (ret != 0)
 			dev_err(arizona->dev, "Headset report failed: %d\n",
 				ret);
 
 		/* Don't need to regulate for button detection */
-		ret = regulator_allow_bypass(info->micvdd, false);
+		ret = regulator_allow_bypass(info->micvdd, true);
 		if (ret != 0) {
 			dev_err(arizona->dev, "Failed to bypass MICVDD: %d\n",
 				ret);
@@ -1128,7 +1133,7 @@ static irqreturn_t arizona_jackdet(int irq, void *data)
 		info->mic = false;
 		info->hpdet_done = false;
 		info->hpdet_retried = false;
-		info->hp_impedance = 0;
+		arizona->hp_impedance = 0;
 
 		for (i = 0; i < info->num_micd_ranges; i++)
 			input_report_key(info->input,
@@ -1187,6 +1192,7 @@ static void arizona_micd_set_level(struct arizona *arizona, int index,
 	regmap_update_bits(arizona->regmap, reg, mask, level);
 }
 
+#ifdef CONFIG_OF
 static int arizona_extcon_get_pdata(struct arizona *arizona)
 {
 	struct arizona_pdata *pdata = &arizona->pdata;
@@ -1234,6 +1240,12 @@ static int arizona_extcon_get_pdata(struct arizona *arizona)
 
 	return 0;
 }
+#else
+static inline int arizona_extcon_get_pdata(struct arizona *arizona)
+{
+	return 0;
+}
+#endif
 
 static ssize_t arizona_extcon_show(struct device *dev,
 				   struct device_attribute *attr,
@@ -1242,7 +1254,7 @@ static ssize_t arizona_extcon_show(struct device *dev,
 	struct platform_device *pdev = to_platform_device(dev);
 	struct arizona_extcon_info *info = platform_get_drvdata(pdev);
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", info->hp_impedance);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", info->arizona->hp_impedance);
 }
 
 static int arizona_extcon_probe(struct platform_device *pdev)
@@ -1266,7 +1278,7 @@ static int arizona_extcon_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	info->micvdd = regulator_get(arizona->dev, "MICVDD");
+	info->micvdd = devm_regulator_get(arizona->dev, "MICVDD");
 	if (IS_ERR(info->micvdd)) {
 		ret = PTR_ERR(info->micvdd);
 		dev_err(arizona->dev, "Failed to get MICVDD: %d\n", ret);
@@ -1590,8 +1602,6 @@ static int arizona_extcon_remove(struct platform_device *pdev)
 	int jack_irq_rise, jack_irq_fall;
 
 	pm_runtime_disable(&pdev->dev);
-
-	regulator_put(info->micvdd);
 
 	regmap_update_bits(arizona->regmap,
 			   ARIZONA_MICD_CLAMP_CONTROL,

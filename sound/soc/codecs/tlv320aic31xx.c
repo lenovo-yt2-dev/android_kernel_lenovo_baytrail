@@ -150,7 +150,7 @@ static const struct snd_kcontrol_new aic31xx_snd_controls[] = {
 	/* DAC Volume soft stepping control */
 	/* HP driver mute control */
 	SOC_DOUBLE_R("HP driver mute", AIC31XX_HPLGAIN,
-			AIC31XX_HPRGAIN, 2, 2, 0),
+			AIC31XX_HPRGAIN, 2, 1, 0),
 
 
 	/* ADC FINE GAIN */
@@ -194,7 +194,7 @@ static const struct snd_kcontrol_new aic311x_snd_controls[] = {
 			AIC31XX_RANALOGSPR, 0, 0x7F, 1, sp_vol_tlv),
 	/* SP driver mute control */
 	SOC_DOUBLE_R("SP driver mute", AIC31XX_SPLGAIN,
-			AIC31XX_SPRGAIN, 2, 2, 0),
+			AIC31XX_SPRGAIN, 2, 1, 0),
 };
 
 static const struct snd_kcontrol_new aic310x_snd_controls[] = {
@@ -205,7 +205,7 @@ static const struct snd_kcontrol_new aic310x_snd_controls[] = {
 	SOC_SINGLE_TLV("Left Analog Channel Gain", AIC31XX_LANALOGSPL,
 			0, 0x7F, 1, sp_vol_tlv),
 	SOC_SINGLE("SP driver mute", AIC31XX_SPLGAIN,
-			 2, 2, 0),
+			 2, 1, 0),
 };
 
 static const struct snd_kcontrol_new asilin_control =
@@ -761,23 +761,23 @@ static int aic31xx_add_widgets(struct snd_soc_codec *codec)
 		ret = snd_soc_dapm_new_controls(dapm, aic311x_dapm_widgets,
 					ARRAY_SIZE(aic311x_dapm_widgets));
 		if (!ret)
-			dev_dbg(codec->dev, "#Completed adding dapm widgets size = %d\n",
+			dev_dbg(codec->dev, "#Completed adding dapm widgets size = %ld\n",
 					ARRAY_SIZE(aic311x_dapm_widgets));
 		ret = snd_soc_dapm_add_routes(dapm, aic311x_audio_map,
 					ARRAY_SIZE(aic311x_audio_map));
 		if (!ret)
-			dev_dbg(codec->dev, "#Completed adding DAPM routes = %d\n",
+			dev_dbg(codec->dev, "#Completed adding DAPM routes = %ld\n",
 					ARRAY_SIZE(aic311x_audio_map));
 	} else if (aic31xx->pdata.codec_type == AIC310X) {
 		ret = snd_soc_dapm_new_controls(dapm, aic310x_dapm_widgets,
 					ARRAY_SIZE(aic310x_dapm_widgets));
 		if (!ret)
-			dev_dbg(codec->dev, "#Completed adding dapm widgets size = %d\n",
+			dev_dbg(codec->dev, "#Completed adding dapm widgets size = %ld\n",
 					ARRAY_SIZE(aic310x_dapm_widgets));
 		ret = snd_soc_dapm_add_routes(dapm, aic310x_audio_map,
 					ARRAY_SIZE(aic310x_audio_map));
 		if (!ret)
-			dev_dbg(codec->dev, "#Completed adding DAPM routes = %d\n",
+			dev_dbg(codec->dev, "#Completed adding DAPM routes = %ld\n",
 					ARRAY_SIZE(aic310x_audio_map));
 	}
 
@@ -792,8 +792,7 @@ static int aic31xx_hw_params(struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *params,
 				struct snd_soc_dai *tmp)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = tmp->codec;
 	u8 data;
 	dev_dbg(codec->dev, "%s\n", __func__);
 
@@ -1116,6 +1115,7 @@ static int aic31xx_resume(struct snd_soc_codec *codec)
 void aic31xx_btn_press_intr_enable(struct snd_soc_codec *codec,
 		int enable)
 {
+	dev_dbg(codec->dev, "%s: %s\n", __func__, enable ? "enable" : "disable");
 	if (enable)
 		snd_soc_update_bits(codec, AIC31XX_INT1CTRL,
 				AIC31XX_BUTTONPRESSDET_MASK,
@@ -1214,7 +1214,7 @@ int aic31xx_query_jack_status(struct snd_soc_codec *codec)
 	default:
 		break;
 	}
-	dev_dbg(codec->dev, "Jack Status returned is %x\n", state);
+	dev_dbg(codec->dev, "AIC31XX_HSDETECT=0x%X, Jack Status returned is %x\n", status, state);
 	return state;
 }
 EXPORT_SYMBOL_GPL(aic31xx_query_jack_status);
@@ -1224,9 +1224,11 @@ int aic31xx_query_btn_press(struct snd_soc_codec *codec)
 	int state = 0, status;
 
 	status = snd_soc_read(codec, AIC31XX_INTRFLAG);
-	if (status & AIC31XX_BTNPRESS_STATUS_MASK)
+	dev_dbg(codec->dev, "Status(P0/46): %x\n", status);
+	/** when HS is plugging out, BTN interrupts may be triggered
+	*  It is fake BTN press, should not be reported */
+	if ((status & AIC31XX_BTN_HS_STATUS_MASK) == AIC31XX_BTN_HS_STATUS_MASK)
 		return state | SND_JACK_BTN_0;
-	dev_dbg(codec->dev, "BTN Status returned is %x\n", state);
 	return state;
 
 }
@@ -1336,10 +1338,14 @@ static int aic31xx_codec_probe(struct snd_soc_codec *codec)
 	 * start we will be working with internal clock
 	 */
 	snd_soc_update_bits(codec, AIC31XX_HSDETECT,
-			AIC31XX_JACK_DEBOUCE_MASK, 0x14);
+			AIC31XX_JACK_DEBOUCE_MASK, 0x4<<2); /* 0x4 - 256ms debounce */
+
+	/* set debounce time for button */
+	snd_soc_update_bits(codec, AIC31XX_HSDETECT,
+			AIC31XX_BTN_DEBOUCE_MASK, 0x03);
 
 	/*Reconfiguring CM to band gap mode*/
-	snd_soc_update_bits(codec, AIC31XX_HPPOP, 0xff, 0xAE);
+	snd_soc_update_bits(codec, AIC31XX_HPPOP, 0xff, 0xA8);
 
 	/*disable soft stepping of DAC volume */
 	snd_soc_update_bits(codec, AIC31XX_DACSETUP, AIC31XX_SOFTSTEP_MASK, 0x02);

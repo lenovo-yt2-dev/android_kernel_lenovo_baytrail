@@ -115,7 +115,7 @@ sh_css_metrics_start_binary(struct sh_css_binary_metrics *metrics)
 	isp_histogram = &metrics->isp_histogram;
 	sp_histogram = &metrics->sp_histogram;
 	make_histogram(isp_histogram, ISP_PMEM_DEPTH);
-#if !defined(IS_ISP_2500_SKYCAM_SYSTEM)
+#if !defined(IS_ISP_2500_SYSTEM)
 	make_histogram(sp_histogram, SP_PMEM_DEPTH);
 #endif
 	insert_binary_metrics(&sh_css_metrics.binary_metrics, metrics);
@@ -137,7 +137,7 @@ sh_css_metrics_sample_pcs(void)
 
 #if MULTIPLE_PCS
 	int i;
-	unsigned int pc_tab[NOF_PCS] ;
+	unsigned int pc_tab[NOF_PCS];
 
 	for (i = 0; i < NOF_PCS; i++)
 		pc_tab[i] = 0;
@@ -170,13 +170,6 @@ sh_css_metrics_sample_pcs(void)
 			isp_histogram->stall[pc]++;
 		else
 			isp_histogram->run[pc]++;
-
-#if MULTIPLE_PCS
-		printk(KERN_INFO "msink = 0%X\n", msink);
-		for (i = 0; i < NOF_PCS; i++)
-			printk(KERN_INFO "PC = %d  ", pc_tab[i]);
-		printk(KERN_INFO "\n");
-#endif
 	}
 
 	if (sp_histogram && 0) {

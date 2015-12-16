@@ -139,6 +139,8 @@ static inline struct snd_soc_codec *ctp_get_codec(struct snd_soc_card *card,
 	return codec;
 }
 
+struct snd_soc_codec *snd_soc_dapm_kcontrol_codec(struct snd_kcontrol *kcontrol);
+
 static int ext_amp_put(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_value *ucontrol)
 {

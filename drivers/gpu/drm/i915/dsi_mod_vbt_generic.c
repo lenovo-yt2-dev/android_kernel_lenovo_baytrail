@@ -67,6 +67,8 @@ static u8 *mipi_exec_send_packet(struct intel_dsi *intel_dsi, u8 *data)
 	/* LP or HS mode */
 	intel_dsi->hs = mode;
 
+	intel_dsi->port = port;
+
 	/* get packet type and increment the pointer */
 	type = *data++;
 
@@ -212,16 +214,17 @@ static void generic_exec_sequence(struct intel_dsi *intel_dsi, char *sequence)
 
 static void generic_get_panel_info(int pipe, struct drm_connector *connector)
 {
+	struct intel_connector *intel_connector = to_intel_connector(connector);
+
 	DRM_DEBUG_KMS("\n");
+
 	if (!connector)
 		return;
 
 	if (pipe == 0) {
-		/* FIXME: Fill from VBT */
-		connector->display_info.width_mm = 0;
-		connector->display_info.height_mm = 0;
+		connector->display_info.width_mm = intel_connector->panel.fixed_mode->width_mm;
+		connector->display_info.height_mm =  intel_connector->panel.fixed_mode->height_mm;
 	}
-
 	return;
 }
 
@@ -239,6 +242,8 @@ bool generic_init(struct intel_dsi_device *dsi)
 	u32 prepare_cnt, exit_zero_cnt, clk_zero_cnt, trail_cnt;
 	u32 ths_prepare_ns, tclk_trail_ns;
 	u32 tclk_prepare_clkzero, ths_prepare_hszero;
+	u32 pclk, computed_ddr;
+	u16 burst_mode_ratio;
 
 	DRM_DEBUG_KMS("\n");
 
@@ -246,14 +251,32 @@ bool generic_init(struct intel_dsi_device *dsi)
 	intel_dsi->clock_stop = mipi_config->clk_stop ? 1 : 0;
 	intel_dsi->lane_count = mipi_config->lane_cnt + 1;
 	intel_dsi->pixel_format = mipi_config->videomode_color_format << 7;
+	intel_dsi->dual_link = mipi_config->dual_link;
+	intel_dsi->pixel_overlap = mipi_config->pixel_overlap;
+
+	intel_dsi->port = 0;
 
 	if (intel_dsi->pixel_format == VID_MODE_FORMAT_RGB666)
 		bits_per_pixel = 18;
 	else if (intel_dsi->pixel_format == VID_MODE_FORMAT_RGB565)
 		bits_per_pixel = 16;
 
-	bitrate = (mode->clock * bits_per_pixel) / intel_dsi->lane_count;
+	pclk = mode->clock;
 
+	/* In dual link mode each port needs half of pixel clock */
+	if (intel_dsi->dual_link) {
+		pclk = pclk / 2;
+
+		/* in case of C0 and above setting we can enable pixel_overlap
+		 * if needed by panel. In this case we need to increase the pixel
+		 * clock for extra pixels
+		 */
+		if (IS_VALLEYVIEW_C0(dev) &&
+				(intel_dsi->dual_link & MIPI_DUAL_LINK_FRONT_BACK)) {
+			pclk += ceil_div(mode->vtotal * intel_dsi->pixel_overlap * 60,
+				1000);
+		}
+	}
 	intel_dsi->operation_mode = mipi_config->cmd_mode;
 	intel_dsi->video_mode_type = mipi_config->vtm;
 	intel_dsi->escape_clk_div = mipi_config->byte_clk_sel;
@@ -263,6 +286,41 @@ bool generic_init(struct intel_dsi_device *dsi)
 	intel_dsi->init_count = mipi_config->master_init_timer;
 	intel_dsi->bw_timer = mipi_config->dbi_bw_timer;
 	intel_dsi->video_frmt_cfg_bits = mipi_config->bta ? DISABLE_VIDEO_BTA : 0;
+
+	/* Burst Mode Ratio
+	 * Target ddr frequency from VBT / non burst ddr freq
+	 * multiply by 100 to preserver remainder
+	 */
+	if (intel_dsi->video_mode_type == DSI_VIDEO_BURST) {
+		if (mipi_config->target_burst_mode_freq) {
+			computed_ddr = (pclk * bits_per_pixel) /
+								intel_dsi->lane_count;
+			if (mipi_config->target_burst_mode_freq <
+							computed_ddr) {
+				DRM_ERROR("DDR clock is less than computed\n");
+				return false;
+			}
+
+			burst_mode_ratio = ceil_div(
+				mipi_config->target_burst_mode_freq * 100,
+				computed_ddr);
+			pclk = ceil_div(pclk * burst_mode_ratio, 100);
+		} else {
+			DRM_ERROR("Burst mode target is not set\n");
+			return false;
+		}
+	} else
+		burst_mode_ratio = 100;
+
+	intel_dsi->burst_mode_ratio = burst_mode_ratio;
+	intel_dsi->pclk = pclk;
+	DRM_DEBUG_DRIVER("dsi->pclk = %d\n", intel_dsi->pclk);
+
+	/* FIX ME:
+	 * Check if pixel clock required is within the limits
+	 */
+
+	bitrate	= (pclk * bits_per_pixel) / intel_dsi->lane_count;
 
 	switch (intel_dsi->escape_clk_div) {
 	case 0:
@@ -426,6 +484,14 @@ bool generic_init(struct intel_dsi_device *dsi)
 	DRM_DEBUG_KMS("CLOCKSTOP %s\n", intel_dsi->clock_stop ?
 						"ENABLED" : "DISABLED");
 	DRM_DEBUG_KMS("Mode %s\n", intel_dsi->operation_mode ? "COMMAND" : "VIDEO");
+
+	if (intel_dsi->dual_link == MIPI_DUAL_LINK_FRONT_BACK)
+		DRM_DEBUG_KMS("Dual link: MIPI_DUAL_LINK_FRONT_BACK\n");
+	else if (intel_dsi->dual_link == MIPI_DUAL_LINK_PIXEL_ALT)
+		DRM_DEBUG_KMS("Dual link: MIPI_DUAL_LINK_PIXEL_ALT\n");
+	else
+		DRM_DEBUG_KMS("Dual link: NONE\n");
+
 	DRM_DEBUG_KMS("Pixel Format %d\n", intel_dsi->pixel_format);
 	DRM_DEBUG_KMS("TLPX %d\n", intel_dsi->escape_clk_div);
 	DRM_DEBUG_KMS("LP RX Timeout 0x%x\n", intel_dsi->lp_rx_timeout);
@@ -600,6 +666,7 @@ struct drm_display_mode *generic_get_modes(struct intel_dsi_device *dsi)
 		DRM_DEBUG_DRIVER("Sending target timings");
 	}
 
+	target->vrefresh = drm_mode_vrefresh(target);
 	target->type |= DRM_MODE_TYPE_PREFERRED;
 	return target;
 }

@@ -19,8 +19,8 @@
 #include <media/v4l2-subdev.h>
 #include <linux/mfd/intel_mid_pmic.h>
 
-#ifdef CONFIG_VLV2_PLAT_CLK
-#include <linux/vlv2_plat_clock.h>
+#ifdef CONFIG_INTEL_SOC_PMC
+#include <asm/intel_soc_pmc.h>
 #endif
 
 #include "platform_camera.h"
@@ -29,20 +29,38 @@
 /* workround - pin defined for byt */
 #define CAMERA_0_RESET 126
 #define CAMERA_0_RESET_CRV2 119
-#ifdef CONFIG_VLV2_PLAT_CLK
+#ifdef CONFIG_INTEL_SOC_PMC
 #define OSC_CAM0_CLK 0x0
 #define CLK_19P2MHz 0x1
 #define CLK_ON	0x1
 #define CLK_OFF	0x2
 #endif
 #ifdef CONFIG_CRYSTAL_COVE
-static struct regulator *v1p8_reg;
-static struct regulator *v2p8_reg;
+#define ALDO1_SEL_REG	0x28
+#define ALDO1_CTRL3_REG	0x13
+#define ALDO1_2P8V	0x16
+#define ALDO1_CTRL3_SHIFT 0x05
+
+#define ELDO2_SEL_REG	0x1a
+#define ELDO2_CTRL2_REG 0x12
+#define ELDO2_1P8V	0x16
+#define ELDO2_CTRL2_SHIFT 0x01
+
+#define LDO9_REG	0x49
+#define LDO9_2P8V_ON	0x2f
+#define LDO9_2P8V_OFF	0x2e
+
+#define LDO10_REG	0x4a
+#define LDO10_1P8V_ON	0x59
+#define LDO10_1P8V_OFF	0x58
 
 /* PMIC HID */
 #define PMIC_HID_ROHM	"INT33FD:00"
 #define PMIC_HID_XPOWER	"INT33F4:00"
 #define PMIC_HID_TI	"INT33F5:00"
+
+static struct regulator *v1p8_reg;
+static struct regulator *v2p8_reg;
 
 enum pmic_ids {
 	PMIC_ROHM = 0,
@@ -64,8 +82,8 @@ static int camera_vprog1_on;
 static int match_name(struct device *dev, void *data)
 {
 	const char *name = data;
-	struct i2c_client *client = to_i2c_client(dev);
-	return !strncmp(client->name, name, strlen(client->name));
+	struct i2c_client *client = i2c_verify_client(dev);
+	return client ? !strncmp(client->name, name, strlen(name)) : 0;
 }
 
 static struct i2c_client *i2c_find_client_by_name(char *name)
@@ -117,35 +135,35 @@ static int camera_pmic_set(bool flag)
 			break;
 		case PMIC_XPOWER:
 			/* ALDO1 */
-			ret = intel_mid_pmic_writeb(0x28, 0x16);
+			ret = intel_mid_pmic_writeb(ALDO1_SEL_REG, ALDO1_2P8V);
 			if (ret)
 				return ret;
 
 			/* PMIC Output CTRL 3 for ALDO1 */
-			val = intel_mid_pmic_readb(0x13);
-			val |= (1 << 5);
-			ret = intel_mid_pmic_writeb(0x13, val);
+			val = intel_mid_pmic_readb(ALDO1_CTRL3_REG);
+			val |= (1 << ALDO1_CTRL3_SHIFT);
+			ret = intel_mid_pmic_writeb(ALDO1_CTRL3_REG, val);
 			if (ret)
 				return ret;
 
 			/* ELDO2 */
-			ret = intel_mid_pmic_writeb(0x1A, 0x16);
+			ret = intel_mid_pmic_writeb(ELDO2_SEL_REG, ELDO2_1P8V);
 			if (ret)
 				return ret;
 
 			/* PMIC Output CTRL 2 for ELDO2 */
-			val = intel_mid_pmic_readb(0x12);
-			val |= (1 << 1);
-			ret = intel_mid_pmic_writeb(0x12, val);
+			val = intel_mid_pmic_readb(ELDO2_CTRL2_REG);
+			val |= (1 << ELDO2_CTRL2_SHIFT);
+			ret = intel_mid_pmic_writeb(ELDO2_CTRL2_REG, val);
 			break;
 		case PMIC_TI:
 			/* LDO9 */
-			ret = intel_mid_pmic_writeb(0x49, 0x2F);
+			ret = intel_mid_pmic_writeb(LDO9_REG, LDO9_2P8V_ON);
 			if (ret)
 				return ret;
 
 			/* LDO10 */
-			ret = intel_mid_pmic_writeb(0x4A, 0x59);
+			ret = intel_mid_pmic_writeb(LDO10_REG, LDO10_1P8V_ON);
 			if (ret)
 				return ret;
 			break;
@@ -160,24 +178,24 @@ static int camera_pmic_set(bool flag)
 			ret += regulator_disable(v1p8_reg);
 			break;
 		case PMIC_XPOWER:
-			val = intel_mid_pmic_readb(0x13);
-			val &= ~(1 << 5);
-			ret = intel_mid_pmic_writeb(0x13, val);
+			val = intel_mid_pmic_readb(ALDO1_CTRL3_REG);
+			val &= ~(1 << ALDO1_CTRL3_SHIFT);
+			ret = intel_mid_pmic_writeb(ALDO1_CTRL3_REG, val);
 			if (ret)
 				return ret;
 
-			val = intel_mid_pmic_readb(0x12);
-			val &= ~(1 << 1);
-			ret = intel_mid_pmic_writeb(0x12, val);
+			val = intel_mid_pmic_readb(ELDO2_CTRL2_REG);
+			val &= ~(1 << ELDO2_CTRL2_SHIFT);
+			ret = intel_mid_pmic_writeb(ELDO2_CTRL2_REG, val);
 			break;
 		case PMIC_TI:
 			/* LDO9 */
-			ret = intel_mid_pmic_writeb(0x49, 0x2E);
+			ret = intel_mid_pmic_writeb(LDO9_REG, LDO9_2P8V_OFF);
 			if (ret)
 				return ret;
 
 			/* LDO10 */
-			ret = intel_mid_pmic_writeb(0x4A, 0x58);
+			ret = intel_mid_pmic_writeb(LDO10_REG, LDO10_1P8V_OFF);
 			if (ret)
 				return ret;
 			break;
@@ -241,6 +259,9 @@ static int imx134_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 		gpio_set_value(camera_reset, 0);
 		/* 1us - Falling time of REGEN after XCLR H -> L */
 		udelay(1);
+
+		gpio_free(camera_reset);
+		camera_reset = -1;
 	}
 
 	return 0;
@@ -248,17 +269,17 @@ static int imx134_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 
 static int imx134_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 {
-	static const unsigned int clock_khz = 19200;
-#ifdef CONFIG_VLV2_PLAT_CLK
+#ifdef CONFIG_INTEL_SOC_PMC
 	if (flag) {
 		int ret;
-		ret = vlv2_plat_set_clock_freq(OSC_CAM0_CLK, CLK_19P2MHz);
+		ret = pmc_pc_set_freq(OSC_CAM0_CLK, CLK_19P2MHz);
 		if (ret)
 			return ret;
-		return vlv2_plat_configure_clock(OSC_CAM0_CLK, CLK_ON);
+		return pmc_pc_configure(OSC_CAM0_CLK, CLK_ON);
 	}
-	return vlv2_plat_configure_clock(OSC_CAM0_CLK, CLK_OFF);
+	return pmc_pc_configure(OSC_CAM0_CLK, CLK_OFF);
 #elif defined(CONFIG_INTEL_SCU_IPC_UTIL)
+	static const unsigned int clock_khz = 19200;
 	return intel_scu_ipc_osc_clk(OSC_CLK_CAM0,
 			flag ? clock_khz : 0);
 #else

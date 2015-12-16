@@ -22,12 +22,7 @@
 #ifndef __SP_LOCAL_H_INCLUDED__
 #define __SP_LOCAL_H_INCLUDED__
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stdbool.h>
-#endif
-
+#include <type_support.h>
 #include "sp_global.h"
 
 struct sp_state_s {

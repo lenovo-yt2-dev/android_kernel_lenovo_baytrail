@@ -129,7 +129,7 @@ struct bdb_general_features {
         /* bits 3 */
 	u8 disable_smooth_vision:1;
 	u8 single_dvi:1;
-	u8 rsvd9:1;
+	u8 enable_180_rotation:1;
 	u8 fdi_rx_polarity_inverted:1;
 	u8 rsvd10:4; /* finish byte */
 
@@ -324,8 +324,6 @@ struct lvds_fp_timing {
 	u32 pp_off_reg_val;
 	u32 pp_cycle_reg;
 	u32 pp_cycle_reg_val;
-	u32 pfit_reg;
-	u32 pfit_reg_val;
 	u16 terminator;
 } __attribute__((packed));
 
@@ -371,8 +369,15 @@ struct bdb_lvds_lfp_data_entry {
 	struct lvds_pnp_id pnp_id;
 } __attribute__((packed));
 
+struct lfp_panel_name {
+	u8 name[13];
+} __attribute__((packed));
+
 struct bdb_lvds_lfp_data {
 	struct bdb_lvds_lfp_data_entry data[16];
+	struct lfp_panel_name name[16];
+	u16 scaling_enabling_bits;
+	u8 seamless_drrs_min_vrefresh[16];
 } __attribute__((packed));
 
 struct aimdb_header {
@@ -680,7 +685,7 @@ struct mipi_config {
 	u32 cmd_mode:1;
 	u32 vtm:2;
 	u32 cabc:1;
-	u32 pwm_blc:1;
+	u32 pmic_soc_blc:1;
 
 	/* Bit 13:10
 	 * 000 - Reserved, 001 - RGB565, 002 - RGB666,
@@ -700,14 +705,16 @@ struct mipi_config {
 	/* 2 byte Port Description */
 	u16 dual_link:2;
 	u16 lane_cnt:2;
-	u16 rsvd3:12;
+	u16 pixel_overlap:3;
+	u16 rsvd3:9;
 
 	/* 2 byte DSI COntroller params */
 	/* 0 - Using DSI PHY, 1 - TE usage */
 	u16 dsi_usage:1;
 	u16 rsvd4:15;
 
-	u8 rsvd5[5];
+	u8 rsvd5;
+	u32 target_burst_mode_freq;
 	u32 dsi_ddr_clk;
 	u32 bridge_ref_clk;
 
@@ -835,17 +842,6 @@ enum MIPI_GPIO_PIN_INDEX {
 	MIPI_GPIO_STDBY_RST_N,
 	MIPI_GPIO_MAX
 
-};
-
-struct mipi_info {
-	u8 seq_version;
-	u16 panel_id;
-	u16 panel_bpp;
-	struct _mipi_config *config;
-	struct _mipi_pps_data *pps;
-	u32 size;
-	u8 *data;
-	u8 *sequence[MIPI_SEQ_MAX];
 };
 
 /* We will have variable number of these - max 6 */

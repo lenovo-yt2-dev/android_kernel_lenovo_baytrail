@@ -3,7 +3,11 @@
 #
 
 CFLAGS_pmic_basin_cove.o		:= -Werror
+CFLAGS_dcovex_regulator.o		:= -Werror
+CFLAGS_dcovet_regulator.o		:= -Werror
 CFLAGS_pmic_crystal_cove.0		:= -Werror
+CFLAGS_pmic_crystal_cove_plus.o		:= -Werror
+CFLAGS_pmic_whiskey_cove.o		:= -Werror
 
 obj-$(CONFIG_REGULATOR) += core.o dummy.o fixed-helper.o
 obj-$(CONFIG_OF) += of_regulator.o
@@ -24,6 +28,8 @@ obj-$(CONFIG_REGULATOR_DA9052)	+= da9052-regulator.o
 obj-$(CONFIG_REGULATOR_DA9055)	+= da9055-regulator.o
 obj-$(CONFIG_REGULATOR_DBX500_PRCMU) += dbx500-prcmu.o
 obj-$(CONFIG_REGULATOR_DB8500_PRCMU) += db8500-prcmu.o
+obj-$(CONFIG_REGULATOR_PMIC_DCOVE_XB) += dcovex_regulator.o
+obj-$(CONFIG_REGULATOR_PMIC_DCOVE_TB) += dcovet_regulator.o
 obj-$(CONFIG_REGULATOR_FAN53555) += fan53555.o
 obj-$(CONFIG_REGULATOR_GPIO) += gpio-regulator.o
 obj-$(CONFIG_REGULATOR_ISL6271A) += isl6271a-regulator.o
@@ -52,6 +58,9 @@ obj-$(CONFIG_REGULATOR_PCAP) += pcap-regulator.o
 obj-$(CONFIG_REGULATOR_PCF50633) += pcf50633-regulator.o
 obj-$(CONFIG_REGULATOR_PMIC_BASIN_COVE) += pmic_basin_cove.o
 obj-$(CONFIG_REGULATOR_CRYSTAL_COVE) += pmic_crystal_cove.o
+obj-$(CONFIG_REGULATOR_CRYSTAL_COVE_PLUS) += pmic_crystal_cove_plus.o
+obj-$(CONFIG_REGULATOR_WHISKEY_COVE) += pmic_whiskey_cove.o
+obj-$(CONFIG_REGULATOR_PMIC_SHADY_COVE) += pmic_shady_cove.o
 obj-$(CONFIG_REGULATOR_RC5T583)  += rc5t583-regulator.o
 obj-$(CONFIG_REGULATOR_S2MPS11) += s2mps11.o
 obj-$(CONFIG_REGULATOR_S5M8767) += s5m8767.o

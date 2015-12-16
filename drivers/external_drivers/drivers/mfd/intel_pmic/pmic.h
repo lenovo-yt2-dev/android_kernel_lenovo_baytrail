@@ -16,6 +16,7 @@
 #define IS_PMIC_REG_RC(_map)	(_map->flags & INTEL_PMIC_REG_RC)
 #define IS_PMIC_REG_VALID(_map) \
 	((_map->mask != 0 ) && (_map->offset >= 0))
+
 struct intel_pmic_regmap {
 	int offset;
 	int shift;
@@ -40,9 +41,13 @@ struct intel_mid_pmic {
 	int 				irq_num;
 	int 				irq_base;
 	unsigned long	 		irq_mask[INTEL_PMIC_IRQ_MAX/32];
+	int				pmic_int_gpio;
+	int				default_client;
 	int (*init)(void);
 	int (*readb)(int);
 	int (*writeb)(int, u8);
+	int (*readmul)(int, u8, u8*);
+	int (*writemul)(int, u8, u8*);
 #define PMIC_IRQREG_MASK	0
 #define PMIC_IRQREG_STATUS	1
 #define PMIC_IRQREG_ACK		2
@@ -55,6 +60,8 @@ int intel_pmic_remove(struct intel_mid_pmic *chip);
 
 extern struct intel_mid_pmic crystal_cove_pmic;
 extern struct intel_mid_pmic dollar_cove_pmic;
+extern struct intel_mid_pmic dollar_cove_ti_pmic;
+extern struct intel_mid_pmic whiskey_cove_pmic;
 
 #endif
 

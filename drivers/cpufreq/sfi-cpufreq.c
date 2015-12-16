@@ -111,6 +111,16 @@ static int parse_freq(struct sfi_table_header *table)
 	return 0;
 }
 
+static void get_cpu_sibling_mask(int cpu, struct cpumask *sibling_mask)
+{
+	unsigned int base = (cpu/CONFIG_NR_CPUS_PER_MODULE) * CONFIG_NR_CPUS_PER_MODULE;
+	unsigned int i;
+
+	cpumask_clear(sibling_mask);
+	for (i = base; i < (base + CONFIG_NR_CPUS_PER_MODULE); i++)
+		cpumask_set_cpu(i, sibling_mask);
+}
+
 static int sfi_processor_get_performance_states(struct sfi_processor *pr)
 {
 	int result = 0;
@@ -206,14 +216,17 @@ static unsigned extract_freq(u32 msr, struct sfi_cpufreq_data *data)
 
 	msr &= INTEL_MSR_BUSRATIO_MASK;
 	perf = data->sfi_data;
+	unsigned int lowest_freq = data->freq_table[0].frequency;
 
 	for (i = 0; data->freq_table[i].frequency != CPUFREQ_TABLE_END; i++) {
 		sfi_ctrl = perf->states[data->freq_table[i].index].control
 			& INTEL_MSR_BUSRATIO_MASK;
+		if (data->freq_table[i].frequency < lowest_freq)
+			lowest_freq = data->freq_table[i].frequency;
 		if (sfi_ctrl == msr)
 			return data->freq_table[i].frequency;
 	}
-	return data->freq_table[0].frequency;
+	return lowest_freq;
 }
 
 /* Called via smp_call_function_many(), on the target CPUs */
@@ -252,9 +265,21 @@ static u32 get_cur_val(const struct cpumask *mask)
 
 static unsigned int get_cur_freq_on_cpu(unsigned int cpu)
 {
-	struct sfi_cpufreq_data *data = per_cpu(drv_data, cpu);
+	struct sfi_cpufreq_data *data = NULL;
 	unsigned int freq;
 	unsigned int cached_freq;
+	struct cpumask sibling_mask;
+	unsigned int master_cpu;
+
+	/* take care of both of module-based and standalone DVFS */
+	get_cpu_sibling_mask(cpu, &sibling_mask);
+	for_each_cpu(master_cpu, &sibling_mask) {
+		data = per_cpu(drv_data, master_cpu);
+
+		/* very likely it's the first cpu */
+		if (likely(data != NULL))
+			break;
+	}
 
 	pr_debug("get_cur_freq_on_cpu (%d)\n", cpu);
 
@@ -373,7 +398,14 @@ static int sfi_cpufreq_cpu_init(struct cpufreq_policy *policy)
 	unsigned int result = 0;
 	struct cpuinfo_x86 *c = &cpu_data(policy->cpu);
 	struct sfi_processor_performance *perf;
-	u32 lo, hi;
+	struct cpumask sibling_mask;
+	struct {
+		unsigned int max;
+		unsigned int min;
+	} freq_saved = {
+		.max = policy->max,
+		.min = policy->min
+	};
 
 	pr_debug("sfi_cpufreq_cpu_init CPU:%d\n", policy->cpu);
 
@@ -392,9 +424,10 @@ static int sfi_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		goto err_free;
 
 	perf = data->sfi_data;
-	policy->shared_type = CPUFREQ_SHARED_TYPE_HW;
+	policy->shared_type = CPUFREQ_SHARED_TYPE_ALL;
 
-	cpumask_setall(policy->cpus);
+	get_cpu_sibling_mask(cpu, &sibling_mask);
+	cpumask_copy(policy->cpus, &sibling_mask);
 	cpumask_set_cpu(policy->cpu, policy->related_cpus);
 
 	/* capability check */
@@ -434,26 +467,41 @@ static int sfi_cpufreq_cpu_init(struct cpufreq_policy *policy)
 	}
 	cpufreqidx = valid_states - 1;
 	data->freq_table[valid_states].frequency = CPUFREQ_TABLE_END;
-	perf->state = 0;
 
 	result = cpufreq_frequency_table_cpuinfo(policy, data->freq_table);
 	if (result)
 		goto err_freqfree;
 
-	policy->cur = get_cur_freq_on_cpu(cpu);
+	/* restore saved min and max freq. */
+	if (freq_saved.max && freq_saved.min) {
+		struct cpufreq_policy new_policy;
+		pr_debug("CPU%u - restoring min and max freq.\n", cpu);
+		memcpy(&new_policy, policy, sizeof(struct cpufreq_policy));
+		new_policy.max = freq_saved.max;
+		new_policy.min = freq_saved.min;
 
+		/* do restore after freq. boundary chk & calibration */
+		if (!cpufreq_frequency_table_verify(&new_policy, data->freq_table)) {
+			policy->min = new_policy.min;
+			policy->max = new_policy.max;
+		}
+	}
+
+	policy->cur = get_cur_freq_on_cpu(cpu);
 
 	/* Check for APERF/MPERF support in hardware */
 	if (cpu_has(c, X86_FEATURE_APERFMPERF))
 		sfi_cpufreq_driver.getavg = cpufreq_get_measured_perf;
 
 	pr_debug("CPU%u - SFI performance management activated.\n", cpu);
-	for (i = 0; i < perf->state_count; i++)
+	for (i = 0; i < perf->state_count; i++) {
+		if (policy->cur == (u32) perf->states[i].core_frequency * 1000)
+			perf->state = i;
 		pr_debug("     %cP%d: %d MHz, %d uS\n",
 			(i == perf->state ? '*' : ' '), i,
 			(u32) perf->states[i].core_frequency,
 			(u32) perf->states[i].transition_latency);
-
+	}
 	cpufreq_frequency_table_get_attr(data->freq_table, policy->cpu);
 
 	/*

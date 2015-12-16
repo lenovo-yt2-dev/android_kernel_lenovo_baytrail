@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_OB_TYPES_H
 #define __IA_CSS_OB_TYPES_H
 
+/** @file
+* CSS-API header file for Optical Black level parameters.
+*/
+
 #include "ia_css_frac.h"
 
 /** Optical black mode.

@@ -214,27 +214,24 @@ static struct attribute_group pidv_attr_group = {
 	.attrs = pidv_attrs,
 };
 
+static int acpi_pidv_revision;
+
 static int __init acpi_parse_pidv(struct acpi_table_header *table)
 {
-	struct acpi_table_pidv *pidv_tbl;
+	struct acpi_table_pidv *pidv_tbl = (struct acpi_table_pidv *)table;
 
-	pidv_tbl = (struct acpi_table_pidv *)table;
-	if (!pidv_tbl) {
-		pr_warn("Unable to map PIDV\n");
-		return -ENODEV;
+	acpi_pidv_revision = table->revision;
+
+	if (sizeof(pidv_tbl) > table->length) {
+		pr_warn("SPID: Invalid PIDV table size\n");
+		return -EINVAL;
 	}
 
 	memcpy(&pidv, &(pidv_tbl->pidv), sizeof(struct platform_id));
-	/*
-	 * FIXME: add spid accessor, instead of memcpy
-	 */
 	memcpy(&spid, &(pidv_tbl->pidv.ext_id_1),
-			sizeof(struct soft_platform_id));
-	/*
-	 * FIXME: add ssn accessor, instead of memcpy
-	 */
+	       sizeof(struct soft_platform_id));
 	memcpy(intel_platform_ssn, &(pidv_tbl->pidv.part_number),
-			INTEL_PLATFORM_SSN_SIZE);
+	       INTEL_PLATFORM_SSN_SIZE);
 	intel_platform_ssn[INTEL_PLATFORM_SSN_SIZE] = '\0';
 
 	pr_info("SPID updated according to ACPI Table:\n");
@@ -257,12 +254,20 @@ static int __init acpi_parse_pidv(struct acpi_table_header *table)
 			spid.fru[0], spid.fru[9], spid.fru[8], spid.fru[7],
 			spid.fru[6], spid.fru[5],
 			intel_platform_ssn);
+
 	return 0;
 }
 
 static int __init acpi_spid_init(void)
 {
-	int ret = 0;
+	int ret;
+
+	/* parse SPID table from firmware/bios */
+	ret = acpi_table_parse(ACPI_SIG_PIDV, acpi_parse_pidv);
+	if (ret) {
+		pr_err("SPID: PIDV ACPI table not found\n");
+		return -EINVAL;
+	}
 
 	/* create sysfs entries for soft platform id */
 	spid_kobj = kobject_create_and_add("spid", NULL);
@@ -277,25 +282,20 @@ static int __init acpi_spid_init(void)
 		goto err_sysfs_spid;
 	}
 
-	/* parse SPID table from firmware/bios */
-	ret = acpi_table_parse(ACPI_SIG_PIDV, acpi_parse_pidv);
-	if (ret) {
-		pr_err("SPID: PIDV ACPI table not found\n");
-		ret = -EINVAL;
-		goto err_acpi_parse;
-	}
+	if (acpi_pidv_revision < 2) {
+		pidv_kobj = kobject_create_and_add("pidv", firmware_kobj);
+		if (!pidv_kobj) {
+			pr_err("SPID: ENOMEM for pidv_kobj\n");
+			ret = -ENOMEM;
+			goto err_kobj_create_pidv;
+		}
 
-	pidv_kobj = kobject_create_and_add("pidv", firmware_kobj);
-	if (!pidv_kobj) {
-		pr_err("pidv: ENOMEM for pidv_kobj\n");
-		ret = -ENOMEM;
-		goto err_kobj_create_pidv;
-	}
-
-	ret = sysfs_create_group(pidv_kobj, &pidv_attr_group);
-	if (ret) {
-		pr_err("SPID: failed to create /sys/spid\n");
-		goto err_sysfs_pidv;
+		ret = sysfs_create_group(pidv_kobj, &pidv_attr_group);
+		if (ret) {
+			pr_err("SPID: failed to create /sys/%s/pidv\n",
+			       firmware_kobj->name);
+			goto err_sysfs_pidv;
+		}
 	}
 
 	/* Populate command line with SPID values */
@@ -304,15 +304,13 @@ static int __init acpi_spid_init(void)
 	return 0;
 
 err_sysfs_pidv:
-	kobject_put(firmware_kobj);
+	kobject_put(pidv_kobj);
 err_kobj_create_pidv:
-err_acpi_parse:
 	sysfs_remove_group(spid_kobj, &spid_attr_group);
 err_sysfs_spid:
 	kobject_put(spid_kobj);
 
 	return ret;
-
 }
 arch_initcall(acpi_spid_init);
 #endif
@@ -362,6 +360,24 @@ int __init sfi_handle_spid(struct sfi_table_header *table)
 	}
 
 	memcpy(&spid, &oemb->spid, sizeof(struct soft_platform_id));
+#if defined(CONFIG_ME372CL) || defined(CONFIG_PF450CL)
+	spid.customer_id = 0x0;
+	spid.vendor_id = 0x0;
+	spid.manufacturer_id = 0x3;
+	spid.platform_family_id = 0x2;
+	spid.product_line_id = 0x0;
+	spid.hardware_id = 0x21;
+	spid.fru[4] = 0x12;
+	spid.fru[3] = 0x21;
+	spid.fru[2] = 0x12;
+	spid.fru[1] = 0x11;
+	spid.fru[0] = 0x11;
+	spid.fru[9] = 0x0;
+	spid.fru[8] = 0x0;
+	spid.fru[7] = 0x0;
+	spid.fru[6] = 0x0;
+	spid.fru[5] = 0x11;
+#endif /* CONFIG_ME372CL || CONFIG_PF450CL */
 
 	if (oemb->header.len <
 			(char *)oemb->ssn + INTEL_PLATFORM_SSN_SIZE -

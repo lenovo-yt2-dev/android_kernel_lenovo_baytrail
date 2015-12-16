@@ -33,14 +33,18 @@
 
 void
 ia_css_vf_config(
-	struct sh_css_isp_vf_isp_config *to,
-	const struct ia_css_vf_configuration  *from)
+	struct sh_css_isp_vf_isp_config      *to,
+	const struct ia_css_vf_configuration *from,
+	unsigned size)
 {
 	unsigned elems_a = ISP_VEC_NELEMS;
 
+	(void)size;
 	to->vf_downscale_bits = from->vf_downscale_bits;
+	to->enable = from->info != NULL;
 
 	if (from->info) {
+		ia_css_frame_info_to_frame_sp_info(&to->info, from->info);
 		ia_css_dma_configure_from_info(&to->dma.port_b, from->info);
 		to->dma.width_a_over_b = elems_a / to->dma.port_b.elems;
 
@@ -105,7 +109,7 @@ configure_kernel(
 	       if (err != IA_CSS_SUCCESS)
 		       return err;
        }
-       vf_log_ds = min(vf_log_ds, info->max_vf_log_downscale);
+       vf_log_ds = min(vf_log_ds, info->vf_dec.max_log_downscale);
        *downscale_log2 = vf_log_ds;
 
        /* Then store it in isp config section */

@@ -44,6 +44,9 @@ static void pci_pme_list_scan(struct work_struct *work);
 static LIST_HEAD(pci_pme_list);
 static DEFINE_MUTEX(pci_pme_list_mutex);
 static DECLARE_DELAYED_WORK(pci_pme_work, pci_pme_list_scan);
+#ifdef CONFIG_INTEL_SOC_PMC
+extern bool acpi_pci_quirk_power_manageable(struct pci_dev *dev);
+#endif
 
 struct pci_pme_device {
 	struct list_head list;
@@ -1799,7 +1802,12 @@ int pci_prepare_to_sleep(struct pci_dev *dev)
 		return -EIO;
 
 	/* D3cold during system suspend/hibernate is not supported */
-	if (target_state > PCI_D3hot)
+	if (target_state > PCI_D3hot
+	/* FIXME: workround for HW sighting 5128333 */
+#ifdef CONFIG_INTEL_SOC_PMC
+		&& (!acpi_pci_quirk_power_manageable(dev))
+#endif
+	)
 		target_state = PCI_D3hot;
 
 	pci_enable_wake(dev, target_state, device_may_wakeup(&dev->dev));

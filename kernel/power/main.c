@@ -592,55 +592,8 @@ power_attr(pm_freeze_timeout);
 
 #endif	/* CONFIG_FREEZER*/
 
-int pm_gpio_show_enable = 0; 
-static ssize_t pm_gpio_state_show(struct kobject *kobj,
-				       struct kobj_attribute *attr,
-				       char *buf)
-{
-	return sprintf(buf, "%d\n", pm_gpio_show_enable);
-}
-
-static ssize_t
-pm_gpio_state_store(struct kobject *kobj, struct kobj_attribute *attr,
-			 const char *buf, size_t n)
-{
-	int val;
-
-	if (sscanf(buf, "%d", &val) == 1) {
-		pm_gpio_show_enable = !!val;
-		return n;
-	}
-	return -EINVAL;
-}
-
-power_attr(pm_gpio_state);
-
-extern int wakesource_dump_info(char* buf);
-
-static ssize_t pm_ws_state_show(struct kobject *kobj, struct kobj_attribute *attr,
-			char *buf)
-{
-	char *s = buf;
-
-	s += wakesource_dump_info(s);
-	
-	return (s - buf);
-}
-
-static ssize_t pm_ws_state_store(struct kobject *kobj, struct kobj_attribute *attr,
-			const char *buf, size_t n)
-{
-	printk(KERN_ERR "%s: no support yet.\n", __func__);
-
-	return -EPERM;
-}
-
-power_attr(pm_ws_state);
-
 static struct attribute * g[] = {
 	&state_attr.attr,
-	&pm_gpio_state_attr.attr,
-	&pm_ws_state_attr.attr,
 #ifdef CONFIG_PM_TRACE
 	&pm_trace_attr.attr,
 	&pm_trace_dev_match_attr.attr,

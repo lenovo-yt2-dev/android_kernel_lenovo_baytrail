@@ -22,6 +22,11 @@
 #ifndef __IA_CSS_WB_TYPES_H
 #define __IA_CSS_WB_TYPES_H
 
+/** @file
+* CSS-API header file for White Balance parameters.
+*/
+
+
 /** White Balance configuration (Gain Adjust).
  *
  *  ISP block: WB1

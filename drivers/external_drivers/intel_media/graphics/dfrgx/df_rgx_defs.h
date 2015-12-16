@@ -38,15 +38,14 @@
  * driver (as a thermal cooling device by reducing frequency) supports.
  */
 #define THERMAL_COOLING_DEVICE_MAX_STATE	4
-#define NUMBER_OF_LEVELS_B0			8
-#define NUMBER_OF_LEVELS			4
+#define NUMBER_OF_LEVELS			8
+#define NUMBER_OF_LEVELS_TNG_A0			4
+#define NUMBER_OF_LEVELS_MAX_FUSE		9
 
 #define DF_RGX_FREQ_KHZ_MIN             200000
-#define DF_RGX_FREQ_KHZ_MAX             533000
+#define DF_RGX_FREQ_KHZ_MAX             640000
 
 #define DF_RGX_FREQ_KHZ_MIN_INITIAL     DF_RGX_FREQ_KHZ_MIN
-
-#define DF_RGX_FREQ_KHZ_MAX_INITIAL     320000
 
 #define DF_RGX_INITIAL_FREQ_KHZ         320000
 
@@ -61,6 +60,7 @@ typedef enum _DFRGX_FREQ_ {
 	DFRGX_FREQ_400_MHZ = 400000,
 	DFRGX_FREQ_457_MHZ = 457000,
 	DFRGX_FREQ_533_MHZ = 533000,
+	DFRGX_FREQ_640_MHZ = 640000,
 } DFRGX_FREQ;
 
 typedef enum _DFRGX_TURBO_PROFILE_ {
@@ -83,8 +83,11 @@ struct gpu_util_stats {
 	* there was not enough data to calculate the ratios
 	*/
 	unsigned int				bValid;
+	unsigned int				bIncompleteData;
 	/* GPU active  ratio expressed in 0,01% units */
-	unsigned int				ui32GpuStatActive;
+	unsigned int				ui32GpuStatActiveHigh;
+	/* GPU active  ratio expressed in 0,01% units */
+	unsigned int				ui32GpuStatActiveLow;
 	/* GPU blocked ratio expressed in 0,01% units */
 	unsigned int				ui32GpuStatBlocked;
 	/* GPU idle    ratio expressed in 0,01% units */
@@ -191,7 +194,8 @@ static const struct gpu_utilization_record a_available_state_freq[] = {
 					{DFRGX_FREQ_355_MHZ, 0x8},
 					{DFRGX_FREQ_400_MHZ, 0x7},
 					{DFRGX_FREQ_457_MHZ, 0x6},
-					{DFRGX_FREQ_533_MHZ, 0x5}
+					{DFRGX_FREQ_533_MHZ, 0x5},
+					{DFRGX_FREQ_640_MHZ, 0x4}
 					};
 
 unsigned int df_rgx_is_valid_freq(unsigned long int freq);
@@ -202,5 +206,20 @@ long df_rgx_set_freq_khz(struct busfreq_data *bfdata,
 				unsigned long freq_khz);
 int df_rgx_set_governor_profile(const char *governor_name,
 					struct df_rgx_data_s *g_dfrgx);
+int df_rgx_is_max_fuse_set(void);
+
+extern int is_tng_a0;
+/* Returns the number of levels - frequencies - supported for current sku */
+static inline int sku_levels(void)
+{
+	int ret = NUMBER_OF_LEVELS;
+
+	if (is_tng_a0)
+		ret = NUMBER_OF_LEVELS_TNG_A0;
+	if (df_rgx_is_max_fuse_set())
+		ret = NUMBER_OF_LEVELS_MAX_FUSE;
+
+	return ret;
+}
 
 #endif /*DF_RGX_DEFS_H*/

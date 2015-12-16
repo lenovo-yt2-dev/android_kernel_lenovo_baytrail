@@ -8,6 +8,7 @@
 #include <linux/intel_mid_pm.h>
 #include <linux/dma-direction.h>
 #include <asm/intel_mid_hsu.h>
+#include <linux/lpss_dma.h>
 
 #define HSU_PORT_MAX		8
 #define HSU_DMA_BUF_SIZE	2048
@@ -95,6 +96,8 @@ struct intel_dma_priv {
 };
 
 struct hsu_dma_ops {
+	int (*setup)(struct uart_hsu_port *up);
+	int (*remove)(struct uart_hsu_port *up);
 	int (*init)(struct uart_hsu_port *up);
 	int (*exit)(struct uart_hsu_port *up);
 	int (*suspend)(struct uart_hsu_port *up);
@@ -236,6 +239,7 @@ static inline void serial_out(struct uart_hsu_port *up, int offset, int value)
 void serial_sched_cmd(struct uart_hsu_port *up, char cmd);
 extern struct hsu_dma_ops *pdw_dma_ops;
 extern struct hsu_dma_ops intel_dma_ops;
+extern struct hsu_dma_ops lpss_dma_ops;
 
 struct uart_hsu_port *serial_hsu_port_setup(struct device *pdev, int port,
 	resource_size_t start, resource_size_t len, int irq);

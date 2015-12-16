@@ -218,6 +218,7 @@ static void intel_fbdev_destroy(struct drm_device *dev,
 	intel_framebuffer_fini(&ifbdev->ifb);
 }
 
+extern int intel_read_board_id(void );
 int intel_fbdev_init(struct drm_device *dev)
 {
 	struct intel_fbdev *ifbdev;
@@ -238,7 +239,7 @@ int intel_fbdev_init(struct drm_device *dev)
 		kfree(ifbdev);
 		return ret;
 	}
-
+	intel_read_board_id();
 	drm_fb_helper_single_add_all_connectors(&ifbdev->helper);
 
 	return 0;
@@ -282,7 +283,6 @@ void intel_fbdev_set_suspend(struct drm_device *dev, int state)
 		memset_io(info->screen_base, 0, info->screen_size);
 
 	fb_set_suspend(info, state);
-	printk("[LCD]:%s: ###   state=%d\n",__func__, state);
 }
 
 MODULE_LICENSE("GPL and additional rights");

@@ -239,6 +239,7 @@ static int poll_idle(struct cpuidle_device *dev,
 
 	t1 = ktime_get();
 	local_irq_enable();
+
 	while (!need_resched())
 		cpu_relax();
 
@@ -530,6 +531,8 @@ EXPORT_SYMBOL_GPL(cpuidle_register);
 static void smp_callback(void *v)
 {
 	/* we already woke the CPU up, nothing more to do */
+	if (is_idle_task(current))
+		set_tsk_need_resched(current);
 }
 
 /*

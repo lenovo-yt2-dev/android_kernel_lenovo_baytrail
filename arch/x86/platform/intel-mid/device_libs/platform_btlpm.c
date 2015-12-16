@@ -23,7 +23,12 @@ static struct bcm_bt_lpm_platform_data bcm_bt_lpm_pdata = {
 	.gpio_wake = -EINVAL,
 	.gpio_host_wake = -EINVAL,
 	.int_host_wake = -EINVAL,
+#ifdef CONFIG_PF450CL
+	.gpio_reset = -EINVAL,
+	.gpio_reg_on = -EINVAL,
+#else
 	.gpio_enable = -EINVAL,
+#endif
 	.port = UART_PORT_NO,
 };
 
@@ -42,27 +47,56 @@ static int __init bluetooth_init(void)
 
 	/* Get the GPIO numbers from the SFI table */
 
+#ifdef CONFIG_PF450CL
+	bcm_bt_lpm_pdata.gpio_reg_on = get_gpio_by_name("BT_REG_ON");
+	if (!gpio_is_valid(bcm_bt_lpm_pdata.gpio_reg_on)) {
+		pr_err("%s: gpio %s not found\n", __func__, "BT_REG_ON");
+		return -ENODEV;
+	}
+
+	bcm_bt_lpm_pdata.gpio_reset = get_gpio_by_name("BT_RST_N");
+	if (!gpio_is_valid(bcm_bt_lpm_pdata.gpio_reset)) {
+		pr_err("%s: gpio %s not found\n", __func__, "BT_RST_N");
+		return -ENODEV;
+	}
+#else
 	bcm_bt_lpm_pdata.gpio_enable = get_gpio_by_name("BT-reset");
 	if (!gpio_is_valid(bcm_bt_lpm_pdata.gpio_enable)) {
 		pr_err("%s: gpio %s not found\n", __func__, "BT-reset");
 		return -ENODEV;
 	}
+#endif
 
 #ifdef LPM_ON
+#ifdef CONFIG_PF450CL
+	bcm_bt_lpm_pdata.gpio_host_wake = get_gpio_by_name("BT_HOSTWAKE_SOC");
+	if (!gpio_is_valid(bcm_bt_lpm_pdata.gpio_host_wake)) {
+		pr_err("%s: gpio %s not found\n", __func__, "BT_HOSTWAKE_SOC");
+		return -ENODEV;
+	}
+#else
 	bcm_bt_lpm_pdata.gpio_host_wake = get_gpio_by_name("bt_uart_enable");
 	if (!gpio_is_valid(bcm_bt_lpm_pdata.gpio_host_wake)) {
 		pr_err("%s: gpio %s not found\n", __func__, "bt_uart_enable");
 		return -ENODEV;
 	}
-
+#endif
 	bcm_bt_lpm_pdata.int_host_wake =
 				gpio_to_irq(bcm_bt_lpm_pdata.gpio_host_wake);
 
+#ifdef CONFIG_PF450CL
+	bcm_bt_lpm_pdata.gpio_wake = get_gpio_by_name("BT_BTWAKE_SOC");
+	if (!gpio_is_valid(bcm_bt_lpm_pdata.gpio_wake)) {
+		pr_err("%s: gpio %s not found\n", __func__, "BT_BTWAKE_SOC");
+		return -ENODEV;
+	}
+#else
 	bcm_bt_lpm_pdata.gpio_wake = get_gpio_by_name("bt_wakeup");
 	if (!gpio_is_valid(bcm_bt_lpm_pdata.gpio_wake)) {
 		pr_err("%s: gpio %s not found\n", __func__, "bt_wakeup");
 		return -ENODEV;
 	}
+#endif
 
 	pr_debug("%s: gpio_wake %d, gpio_host_wake %d\n", __func__,
 		bcm_bt_lpm_pdata.gpio_wake, bcm_bt_lpm_pdata.gpio_host_wake);

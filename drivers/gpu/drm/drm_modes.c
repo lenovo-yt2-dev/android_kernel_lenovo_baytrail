@@ -819,8 +819,10 @@ struct drm_display_mode *drm_mode_duplicate(struct drm_device *dev,
 	struct drm_display_mode *nmode;
 
 	nmode = drm_mode_create(dev);
-	if (!nmode)
+	if (!nmode || !mode) {
+		DRM_ERROR("Mode to be duplicated can not be null or can't allocate memory for duplicated mode\n ");
 		return NULL;
+	}
 
 	drm_mode_copy(nmode, mode);
 

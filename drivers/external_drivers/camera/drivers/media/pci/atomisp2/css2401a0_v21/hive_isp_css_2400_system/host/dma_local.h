@@ -22,12 +22,7 @@
 #ifndef __DMA_LOCAL_H_INCLUDED__
 #define __DMA_LOCAL_H_INCLUDED__
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stdbool.h>
-#endif
-
+#include <type_support.h>
 #include "dma_global.h"
 
 #include <hrt/defs.h>				/* HRTCAT() */
@@ -74,6 +69,8 @@
 #define _DMA_FSM_GROUP_FSM_WR_STATE_IDX				_DMA_V2_FSM_GROUP_FSM_WR_STATE_IDX
 #define _DMA_FSM_GROUP_FSM_WR_CNT_YB_IDX			_DMA_V2_FSM_GROUP_FSM_WR_CNT_YB_IDX
 #define _DMA_FSM_GROUP_FSM_WR_CNT_XB_IDX			_DMA_V2_FSM_GROUP_FSM_WR_CNT_XB_IDX
+
+#define _DMA_DEV_INTERF_MAX_BURST_IDX			_DMA_V2_DEV_INTERF_MAX_BURST_IDX
 
 /*
  * Macro's to compute the DMA parameter register indices
