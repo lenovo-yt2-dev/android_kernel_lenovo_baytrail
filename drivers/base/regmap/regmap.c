@@ -29,7 +29,8 @@
  * sort of problem defining LOG_DEVICE will add printks for basic
  * register I/O on a specific device.
  */
-#undef LOG_DEVICE
+//#undef LOG_DEVICE
+#define LOG_DEVICE "spi1.0"
 
 static int _regmap_update_bits(struct regmap *map, unsigned int reg,
 			       unsigned int mask, unsigned int val,
@@ -1178,7 +1179,7 @@ int _regmap_write(struct regmap *map, unsigned int reg,
 
 #ifdef LOG_DEVICE
 	if (strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
-		dev_info(map->dev, "%x <= %x\n", reg, val);
+		dev_dbg(map->dev, "%x <= %x\n", reg, val);
 #endif
 
 	trace_regmap_reg_write(map->dev, reg, val);
@@ -1319,6 +1320,96 @@ out:
 }
 EXPORT_SYMBOL_GPL(regmap_bulk_write);
 
+static int _regmap_multi_reg_write(struct regmap *map,
+				   const struct reg_default *regs,
+				   int num_regs)
+{
+	int i, ret;
+
+	for (i = 0; i < num_regs; i++) {
+		if (regs[i].reg % map->reg_stride)
+			return -EINVAL;
+		ret = _regmap_write(map, regs[i].reg, regs[i].def);
+		if (ret != 0) {
+			dev_err(map->dev, "Failed to write %x = %x: %d\n",
+				regs[i].reg, regs[i].def, ret);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * regmap_multi_reg_write(): Write multiple registers to the device
+ *
+ * where the set of register are supplied in any order
+ *
+ * @map: Register map to write to
+ * @regs: Array of structures containing register,value to be written
+ * @num_regs: Number of registers to write
+ *
+ * This function is intended to be used for writing a large block of data
+ * atomically to the device in single transfer for those I2C client devices
+ * that implement this alternative block write mode.
+ *
+ * A value of zero will be returned on success, a negative errno will
+ * be returned in error cases.
+ */
+int regmap_multi_reg_write(struct regmap *map, const struct reg_default *regs,
+			   int num_regs)
+{
+	int ret;
+
+	map->lock(map->lock_arg);
+
+	ret = _regmap_multi_reg_write(map, regs, num_regs);
+
+	map->unlock(map->lock_arg);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(regmap_multi_reg_write);
+
+/*
+ * regmap_multi_reg_write_bypassed(): Write multiple registers to the
+ *                                    device but not the cache
+ *
+ * where the set of register are supplied in any order
+ *
+ * @map: Register map to write to
+ * @regs: Array of structures containing register,value to be written
+ * @num_regs: Number of registers to write
+ *
+ * This function is intended to be used for writing a large block of data
+ * atomically to the device in single transfer for those I2C client devices
+ * that implement this alternative block write mode.
+ *
+ * A value of zero will be returned on success, a negative errno will
+ * be returned in error cases.
+ */
+int regmap_multi_reg_write_bypassed(struct regmap *map,
+				    const struct reg_default *regs,
+				    int num_regs)
+{
+	int ret;
+	bool bypass;
+
+	map->lock(map->lock_arg);
+
+	bypass = map->cache_bypass;
+	map->cache_bypass = true;
+
+	ret = _regmap_multi_reg_write(map, regs, num_regs);
+
+	map->cache_bypass = bypass;
+
+	map->unlock(map->lock_arg);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(regmap_multi_reg_write_bypassed);
+
 /**
  * regmap_raw_write_async(): Write raw values to one or more registers
  *                           asynchronously
@@ -1438,7 +1529,7 @@ static int _regmap_read(struct regmap *map, unsigned int reg,
 	if (ret == 0) {
 #ifdef LOG_DEVICE
 		if (strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
-			dev_info(map->dev, "%x => %x\n", reg, *val);
+			dev_dbg(map->dev, "%x => %x\n", reg, *val);
 #endif
 
 		trace_regmap_reg_read(map->dev, reg, *val);

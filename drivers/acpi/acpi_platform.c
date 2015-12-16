@@ -29,9 +29,67 @@ ACPI_MODULE_NAME("platform");
 static const struct acpi_device_id acpi_platform_device_ids[] = {
 
 	{ "PNP0D40" },
-
+	{ "BCM43241" },
+	{ "BCM2E1A" },
+	{ "BCM2E3A" },
+	{ "BCM4752" },
+	{ "RTL8723" },
+	{ "OBDA8723" },
+  /* Telepĥony */
+	{ "MCD0001", 0 },
+	/* SSP devices */
+	{ "SSPM0000", 0 },
+	{ "SSPC0000", 0 },
+	{ "SSPB0000", 0 },
+	{ "SSPX0000", 0 },
+	/* Baytrail Audio devices */
+	{ "HAD0F28", 0 },
+	{ "LPE0F28", 0 },
+	{ "80860F28", 0 },
+	{ "LPE0F281", 0 },
+	{ "AMCR0F28", 0 },
+	{ "TIMC0F28", 0 },
+	{ "DMA0F28", 0 },
+	{ "ADMA0F28", 0 },
+	{ "BYTEC001", 0 },
+	{ "INT0002", 0 },
+	/* Cherrytrail Audio device*/
+	{ "808622A8", 0 },
+	{ "ADMA22A8", 0 },
+	{ "AMCR22A8", 0 },
+	{ "HAD022A8", 0 },
 	{ }
 };
+
+static int acpi_dev_gpio(struct acpi_resource *ares, void *data)
+{
+	int *count = data;
+
+	if (ares->type == ACPI_RESOURCE_TYPE_GPIO)
+		return (*count)++;
+
+	return 1;
+}
+
+static int acpi_dev_resource_gpio(struct acpi_device *adev)
+{
+	int count = 0;
+	int ret;
+	struct list_head resource_list;
+
+	if (!adev->handle)
+		return count;
+
+	INIT_LIST_HEAD(&resource_list);
+	ret = acpi_dev_get_resources(adev, &resource_list, acpi_dev_gpio,
+					&count);
+	if (ret < 0)
+		goto end;
+
+	acpi_dev_free_resource_list(&resource_list);
+end:
+	return count;
+}
 
 /**
  * acpi_create_platform_device - Create platform device for ACPI device node
@@ -52,7 +110,7 @@ int acpi_create_platform_device(struct acpi_device *adev,
 	struct platform_device_info pdevinfo;
 	struct resource_list_entry *rentry;
 	struct list_head resource_list;
-	struct resource *resources;
+	struct resource *resources = NULL;
 	int count;
 
 	/* If the ACPI node already has a physical device attached, skip it. */
@@ -61,8 +119,13 @@ int acpi_create_platform_device(struct acpi_device *adev,
 
 	INIT_LIST_HEAD(&resource_list);
 	count = acpi_dev_get_resources(adev, &resource_list, NULL, NULL);
-	if (count <= 0)
-		return 0;
+
+	if (count <= 0) {
+		if (!acpi_dev_resource_gpio(adev))
+			return 0;
+		else
+			goto create_dev;
+	}
 
 	resources = kmalloc(count * sizeof(struct resource), GFP_KERNEL);
 	if (!resources) {
@@ -76,6 +139,7 @@ int acpi_create_platform_device(struct acpi_device *adev,
 
 	acpi_dev_free_resource_list(&resource_list);
 
+create_dev:
 	memset(&pdevinfo, 0, sizeof(pdevinfo));
 	/*
 	 * If the ACPI node has a parent and that parent has a physical device

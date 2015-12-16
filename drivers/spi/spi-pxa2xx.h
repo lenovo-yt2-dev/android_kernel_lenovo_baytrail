@@ -88,6 +88,8 @@ struct driver_data {
 	void (*cs_control)(u32 command);
 
 	void __iomem *lpss_base;
+
+        struct completion xfer_completion;
 };
 
 struct chip_data {

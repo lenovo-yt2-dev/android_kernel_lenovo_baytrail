@@ -171,7 +171,8 @@ int acpi_device_set_power(struct acpi_device *device, int state)
 	}
 
 	if (!device->power.states[state].flags.valid) {
-		printk(KERN_WARNING PREFIX "Device does not support %s\n",
+		printk(KERN_WARNING PREFIX "Device %s does not support %s\n",
+		       dev_name(&device->dev),
 		       acpi_power_state_string(state));
 		return -ENODEV;
 	}

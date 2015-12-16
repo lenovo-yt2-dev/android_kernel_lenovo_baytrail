@@ -23,6 +23,9 @@ extern struct start_info *xen_start_info;
 extern struct shared_info xen_dummy_shared_info;
 extern struct shared_info *HYPERVISOR_shared_info;
 
+extern unsigned long vrtc_get_time(void);
+extern int vrtc_set_mmss(unsigned long nowtime);
+
 void xen_setup_mfn_list_list(void);
 void xen_setup_shared_info(void);
 void xen_build_mfn_list_list(void);

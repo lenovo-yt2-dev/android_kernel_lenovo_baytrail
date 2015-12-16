@@ -51,6 +51,10 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/printk.h>
 
+#ifdef CONFIG_EARLY_PRINTK_DIRECT
+extern void printascii(char *);
+#endif
+
 /* printk's without a loglevel use this.. */
 #define DEFAULT_MESSAGE_LOGLEVEL CONFIG_DEFAULT_MESSAGE_LOGLEVEL
 
@@ -361,6 +365,13 @@ static void log_store(int facility, int level,
 	/* insert message */
 	log_next_idx += msg->len;
 	log_next_seq++;
+}
+
+/* Clears the ring-buffer */
+void log_buf_clear(void)
+{
+	clear_seq = log_next_seq;
+	clear_idx = log_next_idx;
 }
 
 #ifdef CONFIG_SECURITY_DMESG_RESTRICT
@@ -1272,8 +1283,6 @@ static void call_console_drivers(int level, const char *text, size_t len)
 
 	trace_console(text, len);
 
-	if (level >= console_loglevel && !ignore_loglevel)
-		return;
 	if (!console_drivers)
 		return;
 
@@ -1286,6 +1295,9 @@ static void call_console_drivers(int level, const char *text, size_t len)
 			continue;
 		if (!cpu_online(smp_processor_id()) &&
 		    !(con->flags & CON_ANYTIME))
+			continue;
+		if ((level >= console_loglevel) &&
+		    (!(con->flags & CON_IGNORELEVEL)) && (!ignore_loglevel))
 			continue;
 		con->write(con, text, len);
 	}
@@ -1353,7 +1365,7 @@ static int console_trylock_for_printk(unsigned int cpu)
 {
 	int retval = 0, wake = 0;
 
-	if (console_trylock()) {
+	if (!in_nmi() && console_trylock()) {
 		retval = 1;
 
 		/*
@@ -1532,7 +1544,13 @@ asmlinkage int vprintk_emit(int facility, int level,
 	}
 
 	lockdep_off();
-	raw_spin_lock(&logbuf_lock);
+	if (unlikely(in_nmi())) {
+		if (!raw_spin_trylock(&logbuf_lock))
+			goto out_restore_lockdep_irqs;
+	} else {
+		raw_spin_lock(&logbuf_lock);
+	}
+
 	logbuf_cpu = this_cpu;
 
 	if (recursion_bug) {
@@ -1577,6 +1595,10 @@ asmlinkage int vprintk_emit(int facility, int level,
 			text = (char *)end_of_header;
 		}
 	}
+
+#ifdef CONFIG_EARLY_PRINTK_DIRECT
+	printascii(text);
+#endif
 
 	if (level == -1)
 		level = default_message_loglevel;
@@ -1628,6 +1650,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 	if (console_trylock_for_printk(this_cpu))
 		console_unlock();
 
+out_restore_lockdep_irqs:
 	lockdep_on();
 out_restore_irqs:
 	local_irq_restore(flags);

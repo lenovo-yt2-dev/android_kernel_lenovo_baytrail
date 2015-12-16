@@ -781,9 +781,12 @@ unsigned long __init set_phys_range_identity(unsigned long pfn_s,
 	early_alloc_p2m_middle(pfn_s, true);
 	early_alloc_p2m_middle(pfn_e, true);
 
-	for (pfn = pfn_s; pfn < pfn_e; pfn++)
+	for (pfn = pfn_s; pfn < pfn_e; pfn++) {
+		if (pfn >= 0x100 && pfn < 0x1000)
+			continue;
 		if (!__set_phys_to_machine(pfn, IDENTITY_FRAME(pfn)))
 			break;
+	}
 
 	if (!WARN((pfn - pfn_s) != (pfn_e - pfn_s),
 		"Identity mapping failed. We are %ld short of 1-1 mappings!\n",

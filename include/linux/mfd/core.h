@@ -59,6 +59,9 @@ struct mfd_cell {
 	 * pm_runtime_no_callbacks().
 	 */
 	bool			pm_runtime_no_callbacks;
+
+	/* Cells with a lower remove level will be destroyed first */
+	int			remove_level;
 };
 
 /*

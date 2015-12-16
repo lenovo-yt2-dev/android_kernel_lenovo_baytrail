@@ -444,7 +444,7 @@ static const struct pv_time_ops xen_time_ops __initconst = {
 	.sched_clock = xen_clocksource_read,
 };
 
-static void __init xen_time_init(void)
+void __init xen_time_init(void)
 {
 	int cpu = smp_processor_id();
 	struct timespec tp;
@@ -459,7 +459,7 @@ static void __init xen_time_init(void)
 	}
 
 	/* Set initial system time with full resolution */
-	xen_read_wallclock(&tp);
+	tp.tv_sec = vrtc_get_time();
 	do_settimeofday(&tp);
 
 	setup_force_cpu_cap(X86_FEATURE_TSC);
@@ -478,8 +478,8 @@ void __init xen_init_time_ops(void)
 	x86_cpuinit.setup_percpu_clockev = x86_init_noop;
 
 	x86_platform.calibrate_tsc = xen_tsc_khz;
-	x86_platform.get_wallclock = xen_get_wallclock;
-	x86_platform.set_wallclock = xen_set_wallclock;
+	x86_platform.get_wallclock = vrtc_get_time;
+	x86_platform.set_wallclock = vrtc_set_mmss;
 }
 
 #ifdef CONFIG_XEN_PVHVM

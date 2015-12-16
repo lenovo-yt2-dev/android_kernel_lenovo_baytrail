@@ -188,8 +188,8 @@ static void __init xen_fill_possible_map(void)
 {
 	int i, rc;
 
-	if (xen_initial_domain())
-		return;
+	/* if (xen_initial_domain()) */
+		/* return; */
 
 	for (i = 0; i < nr_cpu_ids; i++) {
 		rc = HYPERVISOR_vcpu_op(VCPUOP_is_up, i, NULL);

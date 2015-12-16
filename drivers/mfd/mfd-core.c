@@ -207,11 +207,19 @@ int mfd_add_devices(struct device *parent, int id,
 }
 EXPORT_SYMBOL(mfd_add_devices);
 
+struct mfd_remove_data {
+	atomic_t *cnts;
+
+	int level;
+	int next_level;
+};
+
 static int mfd_remove_devices_fn(struct device *dev, void *c)
 {
 	struct platform_device *pdev;
 	const struct mfd_cell *cell;
-	atomic_t **usage_count = c;
+	struct mfd_remove_data *rd = c;
+	atomic_t **usage_count = &rd->cnts;
 
 	if (dev->type != &mfd_dev_type)
 		return 0;
@@ -219,20 +227,38 @@ static int mfd_remove_devices_fn(struct device *dev, void *c)
 	pdev = to_platform_device(dev);
 	cell = mfd_get_cell(pdev);
 
+	if (rd->level < cell->remove_level) {
+		if (!rd->next_level || rd->next_level > cell->remove_level)
+			rd->next_level = cell->remove_level;
+
+		return 0;
+	}
+
+	dev_dbg(dev, "Removing from MFD\n");
+
 	/* find the base address of usage_count pointers (for freeing) */
 	if (!*usage_count || (cell->usage_count < *usage_count))
 		*usage_count = cell->usage_count;
 
 	platform_device_unregister(pdev);
+
 	return 0;
 }
 
 void mfd_remove_devices(struct device *parent)
 {
-	atomic_t *cnts = NULL;
+	struct mfd_remove_data rd = {};
 
-	device_for_each_child(parent, &cnts, mfd_remove_devices_fn);
-	kfree(cnts);
+	do {
+		rd.level = rd.next_level;
+		rd.next_level = 0;
+
+		dev_dbg(parent, "Running remove for level: %d\n", rd.level);
+
+		device_for_each_child(parent, &rd, mfd_remove_devices_fn);
+	} while (rd.next_level);
+
+	kfree(rd.cnts);
 }
 EXPORT_SYMBOL(mfd_remove_devices);
 

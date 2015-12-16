@@ -104,6 +104,8 @@ struct vbios_data {
 #define BDB_LVDS_LFP_DATA	 42
 #define BDB_LVDS_BACKLIGHT	 43
 #define BDB_LVDS_POWER		 44
+#define BDB_MIPI_CONFIG		 52
+#define BDB_MIPI_SEQUENCE	 53
 #define BDB_SKIP		254 /* VBIOS private block, ignore */
 
 struct bdb_general_features {
@@ -201,6 +203,9 @@ struct bdb_general_features {
 #define DEVICE_PORT_DVOB	0x01
 #define DEVICE_PORT_DVOC	0x02
 
+#define EDP_SUPPORT           0x1806
+#define MIPI_SUPPORT          0x1400
+
 struct child_device_config {
 	u16 handle;
 	u16 device_type;
@@ -251,6 +256,9 @@ struct bdb_general_definitions {
 	struct child_device_config devices[0];
 } __attribute__((packed));
 
+/* Mask for DRRS / Panel Channel / SSC / BLT control bits extraction */
+#define MODE_MASK	0x3
+
 struct bdb_lvds_options {
 	u8 panel_type;
 	u8 rsvd1;
@@ -260,10 +268,34 @@ struct bdb_lvds_options {
 	u8 pfit_gfx_mode_enhanced:1;
 	u8 pfit_ratio_auto:1;
 	u8 pixel_dither:1;
-	u8 lvds_edid:1;
+	u8 panel_edid:1;
 	u8 rsvd2:1;
 	u8 rsvd4;
+	/* LVDS Panel channel bits stored here */
+	u32 lvds_panel_channel_bits;
+	/* LVDS SSC (Spread Spectrum Clock) bits stored here. */
+	u16 ssc_bits;
+	u16 ssc_freq;
+	u16 ssc_ddt;
+	/* Panel color depth defined here */
+	u16 panel_color_depth;
+	/* LVDS panel type bits stored here */
+	u32 dps_panel_type_bits;
+	/* LVDS backlight control type bits stored here */
+	u32 blt_control_type_bits;
 } __attribute__((packed));
+
+struct bdb_panel_backlight {
+	/* Backlight control parameters */
+	u8 type:2;
+	u8 inverter_pol:1;
+	u8 gpio:3;
+	u8 gmbus:2;
+	u16 pwm_freq;
+	u8 minbrightness;
+	u8 i2c_slave_addr;
+	u8 brightnesscmd;
+} __packed;
 
 /* LFP pointer table contains entries to the struct below */
 struct bdb_lvds_lfp_data_ptr {
@@ -432,6 +464,20 @@ struct bdb_driver_features {
 
 	u8 hdmi_termination;
 	u8 custom_vbt_version;
+	/* Driver features data block */
+	u16 rmpm_enabled:1;
+	u16 s2ddt_enabled:1;
+	u16 dpst_enabled:1;
+	u16 bltclt_enabled:1;
+	u16 adb_enabled:1;
+	u16 drrs_enabled:1;
+	u16 grs_enabled:1;
+	u16 gpmt_enabled:1;
+	u16 tbt_enabled:1;
+	u16 psr_enabled:1;
+	u16 ips_enabled:1;
+	u16 reserved3:4;
+	u16 pc_feature_valid:1;
 } __attribute__((packed));
 
 #define EDP_18BPP	0
@@ -617,5 +663,195 @@ int intel_parse_bios(struct drm_device *dev);
 #define		PORT_IDPB	7
 #define		PORT_IDPC	8
 #define		PORT_IDPD	9
+
+/* Block 52 contains MiPi Panel info
+ * 6 such enteries will there. Index into correct
+ * entery is based on the panel_index in #40 LFP
+ */
+#define MAX_MIPI_CONFIGURATIONS	6
+struct mipi_config {
+	u16 panel_id;
+
+	/* General Params */
+	u32 dithering:1;
+	u32 rsvd1:1;
+	u32 panel_type:1;
+	u32 panel_arch_type:2;
+	u32 cmd_mode:1;
+	u32 vtm:2;
+	u32 cabc:1;
+	u32 pwm_blc:1;
+
+	/* Bit 13:10
+	 * 000 - Reserved, 001 - RGB565, 002 - RGB666,
+	 * 011 - RGB666Loosely packed, 100 - RGB888,
+	 * others - rsvd
+	 */
+	u32 videomode_color_format:4;
+
+	/* Bit 15:14
+	 * 0 - No rotation, 1 - 90 degree
+	 * 2 - 180 degree, 3 - 270 degree
+	 */
+	u32 rotation:2;
+	u32 bta:1;
+	u32 rsvd2:15;
+
+	/* 2 byte Port Description */
+	u16 dual_link:2;
+	u16 lane_cnt:2;
+	u16 rsvd3:12;
+
+	/* 2 byte DSI COntroller params */
+	/* 0 - Using DSI PHY, 1 - TE usage */
+	u16 dsi_usage:1;
+	u16 rsvd4:15;
+
+	u8 rsvd5[5];
+	u32 dsi_ddr_clk;
+	u32 bridge_ref_clk;
+
+	u8 byte_clk_sel:2;
+	u8 rsvd6:6;
+
+	/* DPHY Flags */
+	u16 dphy_param_valid:1;
+	u16 eot_disabled:1;
+	u16 clk_stop:1;
+	u16 rsvd7:13;
+
+	u32 hs_tx_timeout;
+	u32 lp_rx_timeout;
+	u32 turn_around_timeout;
+	u32 device_reset_timer;
+	u32 master_init_timer;
+	u32 dbi_bw_timer;
+	u32 lp_byte_clk_val;
+
+	/*  4 byte Dphy Params */
+	u32 prepare_cnt:6;
+	u32 rsvd8:2;
+	u32 clk_zero_cnt:8;
+	u32 trail_cnt:5;
+	u32 rsvd9:3;
+	u32 exit_zero_cnt:6;
+	u32 rsvd10:2;
+
+	u32 clk_lane_switch_cnt;
+	u32 hl_switch_cnt;
+
+	u32 rsvd11[6];
+
+	/* timings based on dphy spec */
+	u8 tclk_miss;
+	u8 tclk_post;
+	u8 rsvd12;
+	u8 tclk_pre;
+	u8 tclk_prepare;
+	u8 tclk_settle;
+	u8 tclk_term_enable;
+	u8 tclk_trail;
+	u16 tclk_prepare_clkzero;
+	u8 rsvd13;
+	u8 td_term_enable;
+	u8 teot;
+	u8 ths_exit;
+	u8 ths_prepare;
+	u16 ths_prepare_hszero;
+	u8 rsvd14;
+	u8 ths_settle;
+	u8 ths_skip;
+	u8 ths_trail;
+	u8 tinit;
+	u8 tlpx;
+	u8 rsvd15[3];
+
+	/* GPIOs */
+	u8 panel_enable;
+	u8 bl_enable;
+	u8 pwm_enable;
+	u8 reset_r_n;
+	u8 pwr_down_r;
+	u8 stdby_r_n;
+
+} __packed;
+
+struct bdb_mipi_config {
+	struct mipi_config config[0];
+};
+
+/* Block 52 contains MiPi configuration block
+ * 6 * bdb_mipi_config, followed by 6 pps data
+ * block below
+ */
+struct mipi_pps_data {
+	u16 panel_on_delay;
+	u16 bl_enable_delay;
+	u16 bl_disable_delay;
+	u16 panel_off_delay;
+	u16 panel_power_cycle_delay;
+};
+
+/* MIPI Sequnece Block definitions */
+enum MIPI_SEQ {
+	MIPI_SEQ_UNDEFINED = 0,
+	MIPI_SEQ_ASSERT_RESET,
+	MIPI_SEQ_INIT_OTP,
+	MIPI_SEQ_DISPLAY_ON,
+	MIPI_SEQ_DISPLAY_OFF,
+	MIPI_SEQ_DEASSERT_RESET,
+	MIPI_SEQ_BACKLIGHT_ON,
+	MIPI_SEQ_BACKLIGHT_OFF,
+	MIPI_SEQ_TEAR_ON,
+	MIPI_SEQ_MAX
+
+};
+
+enum MIPI_SEQ_ELEMENT {
+	MIPI_SEQ_ELEM_UNDEFINED = 0,
+	MIPI_SEQ_ELEM_SEND_PKT,
+	MIPI_SEQ_ELEM_DELAY,
+	MIPI_SEQ_ELEM_GPIO,
+	MIPI_SEQ_ELEM_I2C,
+	MIPI_SEQ_ELEM_STATUS,
+	MIPI_SEQ_ELEM_MAX
+
+};
+
+enum MIPI_SEQ_FLAG {
+	MIPI_SEQ_FLAG_UNDEFINED = 0,
+	MIPI_SEQ_FLAG_PRE_DPION,
+	MIPI_SEQ_FLAG_POST_DPION
+
+};
+
+enum MIPI_GPIO_PIN_INDEX {
+	MIPI_GPIO_UNDEFINED = 0,
+	MIPI_GPIO_PANEL_ENABLE,
+	MIPI_GPIO_BL_ENABLE,
+	MIPI_GPIO_PWM_ENABLE,
+	MIPI_GPIO_RESET_N,
+	MIPI_GPIO_PWR_DOWN_R,
+	MIPI_GPIO_STDBY_RST_N,
+	MIPI_GPIO_MAX
+
+};
+
+struct mipi_info {
+	u8 seq_version;
+	u16 panel_id;
+	u16 panel_bpp;
+	struct _mipi_config *config;
+	struct _mipi_pps_data *pps;
+	u32 size;
+	u8 *data;
+	u8 *sequence[MIPI_SEQ_MAX];
+};
+
+/* We will have variable number of these - max 6 */
+struct bdb_mipi_sequence {
+	u8 version;
+	void *data;
+};
 
 #endif /* _I830_BIOS_H_ */

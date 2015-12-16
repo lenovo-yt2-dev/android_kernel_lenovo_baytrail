@@ -37,6 +37,7 @@
 #include <linux/kthread.h>
 #include <linux/jiffies.h>	/* time_after() */
 #include <linux/slab.h>
+#include <linux/irqdesc.h>
 #ifdef CONFIG_ACPI
 #include <acpi/acpi_bus.h>
 #endif
@@ -60,6 +61,7 @@
 #include <asm/irq_remapping.h>
 #include <asm/hpet.h>
 #include <asm/hw_irq.h>
+#include <asm/intel-mid.h>
 
 #include <asm/apic.h>
 
@@ -76,6 +78,8 @@ int sis_apic_bug = -1;
 
 static DEFINE_RAW_SPINLOCK(ioapic_lock);
 static DEFINE_RAW_SPINLOCK(vector_lock);
+
+static DECLARE_BITMAP(apic_irqs, IRQ_BITMAP_BITS);
 
 static struct ioapic {
 	/*
@@ -315,6 +319,24 @@ void io_apic_eoi(unsigned int apic, unsigned int vector)
 	struct io_apic __iomem *io_apic = io_apic_base(apic);
 	writel(vector, &io_apic->eoi);
 }
+
+/*
+ * This index matches with 1024 - 4 address in SCU RTE table area.
+ * That is not used for anything. Works in CLVP only
+ */
+#define LAST_INDEX_IN_IO_APIC_SPACE 255
+#define KERNEL_TO_SCU_PANIC_REQUEST (0x0515dead)
+void apic_scu_panic_dump(void)
+{
+	unsigned long flags;
+
+	printk(KERN_ERR "Request SCU panic dump");
+	raw_spin_lock_irqsave(&ioapic_lock, flags);
+	io_apic_write(0, LAST_INDEX_IN_IO_APIC_SPACE,
+		      KERNEL_TO_SCU_PANIC_REQUEST);
+	raw_spin_unlock_irqrestore(&ioapic_lock, flags);
+}
+EXPORT_SYMBOL_GPL(apic_scu_panic_dump);
 
 unsigned int native_io_apic_read(unsigned int apic, unsigned int reg)
 {
@@ -1160,6 +1182,10 @@ next:
 		err = 0;
 		break;
 	}
+
+	if (err == 0)
+		set_bit(irq, apic_irqs);
+
 	free_cpumask_var(tmp_mask);
 	return err;
 }
@@ -1187,6 +1213,7 @@ static void __clear_irq_vector(int irq, struct irq_cfg *cfg)
 
 	cfg->vector = 0;
 	cpumask_clear(cfg->domain);
+	clear_bit(irq, apic_irqs);
 
 	if (likely(!cfg->move_in_progress))
 		return;
@@ -1216,6 +1243,9 @@ void __setup_vector_irq(int cpu)
 	raw_spin_lock(&vector_lock);
 	/* Mark the inuse vectors */
 	for_each_active_irq(irq) {
+		if (!test_bit(irq, apic_irqs))
+			continue;
+
 		cfg = irq_get_chip_data(irq);
 		if (!cfg)
 			continue;
@@ -2266,8 +2296,12 @@ static void irq_complete_move(struct irq_cfg *cfg)
 
 void irq_force_complete_move(int irq)
 {
-	struct irq_cfg *cfg = irq_get_chip_data(irq);
+	struct irq_cfg *cfg;
 
+	if (!test_bit(irq, apic_irqs))
+		return;
+
+	cfg = irq_get_chip_data(irq);
 	if (!cfg)
 		return;
 
@@ -2355,6 +2389,10 @@ int native_ioapic_set_affinity(struct irq_data *data,
 	return ret;
 }
 
+static int ioapic_set_wake(struct irq_data *data, unsigned int on)
+{
+	return 0;
+}
 static void ack_apic_edge(struct irq_data *data)
 {
 	irq_complete_move(data->chip_data);
@@ -2519,7 +2557,9 @@ static struct irq_chip ioapic_chip __read_mostly = {
 	.irq_ack		= ack_apic_edge,
 	.irq_eoi		= ack_apic_level,
 	.irq_set_affinity	= native_ioapic_set_affinity,
+	.irq_set_wake		= ioapic_set_wake,
 	.irq_retrigger		= ioapic_retrigger_irq,
+	.flags			= IRQCHIP_SKIP_SET_WAKE,
 };
 
 static inline void init_IO_APIC_traps(void)
@@ -2539,6 +2579,9 @@ static inline void init_IO_APIC_traps(void)
 	 * 0x80, because int 0x80 is hm, kind of importantish. ;)
 	 */
 	for_each_active_irq(irq) {
+		if (!test_bit(irq, apic_irqs))
+			continue;
+
 		cfg = irq_get_chip_data(irq);
 		if (IO_APIC_IRQ(irq) && cfg && !cfg->vector) {
 			/*
@@ -2857,7 +2900,9 @@ void __init setup_IO_APIC(void)
 	sync_Arb_IDs();
 	setup_IO_APIC_irqs();
 	init_IO_APIC_traps();
-	if (legacy_pic->nr_legacy_irqs)
+
+	/* Skip the timer check for newer CPU with ARAT timer */
+	if (!boot_cpu_has(X86_FEATURE_ARAT) && legacy_pic->nr_legacy_irqs)
 		check_timer();
 }
 

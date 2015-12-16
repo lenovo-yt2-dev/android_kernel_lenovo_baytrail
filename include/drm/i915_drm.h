@@ -27,6 +27,7 @@
 #define _I915_DRM_H_
 
 #include <uapi/drm/i915_drm.h>
+#include "uapi/drm/i915_perfmon.h"
 
 /* For use by IPS driver */
 extern unsigned long i915_read_mch_val(void);
@@ -34,4 +35,5 @@ extern bool i915_gpu_raise(void);
 extern bool i915_gpu_lower(void);
 extern bool i915_gpu_busy(void);
 extern bool i915_gpu_turbo_disable(void);
+
 #endif				/* _I915_DRM_H_ */

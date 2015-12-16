@@ -278,4 +278,10 @@ static inline void pwm_add_table(struct pwm_lookup *table, size_t num)
 }
 #endif
 
+#define LPIO_PWM_CTRL 0
+int lpio_bl_write(uint8_t pwm_num, uint32_t reg, uint32_t val);
+int lpio_bl_write_bits(uint8_t pwm_num, uint32_t reg, uint32_t val,
+		uint32_t mask);
+int lpio_bl_update(uint8_t pwm_num, uint32_t reg);
+
 #endif /* __LINUX_PWM_H */

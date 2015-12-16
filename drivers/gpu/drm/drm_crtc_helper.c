@@ -189,13 +189,14 @@ prune:
 	if (list_empty(&connector->modes))
 		return 0;
 
+	list_for_each_entry(mode, &connector->modes, head)
+		mode->vrefresh = drm_mode_vrefresh(mode);
+
 	drm_mode_sort(&connector->modes);
 
 	DRM_DEBUG_KMS("[CONNECTOR:%d:%s] probed modes :\n", connector->base.id,
 			drm_get_connector_name(connector));
 	list_for_each_entry(mode, &connector->modes, head) {
-		mode->vrefresh = drm_mode_vrefresh(mode);
-
 		drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V);
 		drm_mode_debug_printmodeline(mode);
 	}
@@ -220,6 +221,13 @@ bool drm_helper_encoder_in_use(struct drm_encoder *encoder)
 {
 	struct drm_connector *connector;
 	struct drm_device *dev = encoder->dev;
+	struct drm_encoder_helper_funcs *encoder_funcs =
+						encoder->helper_private;
+
+	if (encoder_funcs->inuse)
+		if (encoder_funcs->inuse(encoder))
+			return true;
+
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head)
 		if (connector->encoder == encoder)
 			return true;
@@ -301,6 +309,7 @@ void drm_helper_disable_unused_functions(struct drm_device *dev)
 				(*crtc_funcs->disable)(crtc);
 			else
 				(*crtc_funcs->dpms)(crtc, DRM_MODE_DPMS_OFF);
+            printk("%s jianming set fb as null", __func__) ;   
 			crtc->fb = NULL;
 		}
 	}
@@ -424,6 +433,14 @@ bool drm_crtc_helper_set_mode(struct drm_crtc *crtc,
 		if (encoder->crtc != crtc)
 			continue;
 		encoder_funcs = encoder->helper_private;
+
+		/* HDMI Encoder actually being used as of now for Audio */
+		if (encoder_funcs->inuse)
+			if (encoder_funcs->inuse(encoder)) {
+				ret = true;
+				goto done;
+			}
+
 		if (!(ret = encoder_funcs->mode_fixup(encoder, mode,
 						      adjusted_mode))) {
 			DRM_DEBUG_KMS("Encoder fixup failed\n");
@@ -564,14 +581,13 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 
 	DRM_DEBUG_KMS("\n");
 
-	if (!set)
-		return -EINVAL;
+	BUG_ON(!set);
+	BUG_ON(!set->crtc);
+	BUG_ON(!set->crtc->helper_private);
 
-	if (!set->crtc)
-		return -EINVAL;
-
-	if (!set->crtc->helper_private)
-		return -EINVAL;
+	/* Enforce sane interface api - has been abused by the fb helper. */
+	BUG_ON(!set->mode && set->fb);
+	BUG_ON(set->fb && set->num_connectors == 0);
 
 	crtc_funcs = set->crtc->helper_private;
 
@@ -645,11 +661,6 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 			mode_changed = true;
 		} else if (set->fb == NULL) {
 			mode_changed = true;
-		} else if (set->fb->depth != set->crtc->fb->depth) {
-			mode_changed = true;
-		} else if (set->fb->bits_per_pixel !=
-			   set->crtc->fb->bits_per_pixel) {
-			mode_changed = true;
 		} else if (set->fb->pixel_format !=
 			   set->crtc->fb->pixel_format) {
 			mode_changed = true;
@@ -682,6 +693,11 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 					/* don't break so fail path works correct */
 					fail = 1;
 				break;
+
+				if (connector->dpms != DRM_MODE_DPMS_ON) {
+					DRM_DEBUG_KMS("connector dpms not on, full mode switch\n");
+					mode_changed = true;
+				}
 			}
 		}
 
@@ -749,13 +765,23 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 					" userspace\n");
 			drm_mode_debug_printmodeline(set->mode);
 			old_fb = set->crtc->fb;
-			set->crtc->fb = set->fb;
-			if (!drm_crtc_helper_set_mode(set->crtc, set->mode,
+
+            if(set->fb == NULL) 
+                    printk("%s jianming set fb as null %d", __func__, __LINE__) ;   
+            
+            set->crtc->fb = set->fb;
+			
+            if (!drm_crtc_helper_set_mode(set->crtc, set->mode,
 						      set->x, set->y,
 						      old_fb)) {
 				DRM_ERROR("failed to set mode on [CRTC:%d]\n",
 					  set->crtc->base.id);
+                
+                if(old_fb == NULL) 
+                    printk("%s jianming set fb as null %d", __func__, __LINE__) ;   
+
 				set->crtc->fb = old_fb;
+
 				ret = -EINVAL;
 				goto fail;
 			}
@@ -772,11 +798,18 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set)
 		set->crtc->y = set->y;
 
 		old_fb = set->crtc->fb;
-		if (set->crtc->fb != set->fb)
-			set->crtc->fb = set->fb;
-		ret = crtc_funcs->mode_set_base(set->crtc,
+        if (set->crtc->fb != set->fb) {
+            if(set->fb == NULL)
+                    printk("%s jianming set fb as null %d", __func__, __LINE__) ;   
+            set->crtc->fb = set->fb;
+        }
+
+        ret = crtc_funcs->mode_set_base(set->crtc,
 						set->x, set->y, old_fb);
 		if (ret != 0) {
+            if(old_fb == NULL)
+                    printk("%s jianming set fb as null %d", __func__, __LINE__) ;   
+
 			set->crtc->fb = old_fb;
 			goto fail;
 		}
@@ -896,7 +929,6 @@ void drm_helper_connector_dpms(struct drm_connector *connector, int mode)
 						     drm_helper_choose_crtc_dpms(crtc));
 		}
 	}
-
 	return;
 }
 EXPORT_SYMBOL(drm_helper_connector_dpms);

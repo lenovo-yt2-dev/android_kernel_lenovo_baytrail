@@ -235,7 +235,7 @@ static unsigned extract_msr(u32 msr, struct acpi_cpufreq_data *data)
 		if (msr == perf->states[data->freq_table[i].index].status)
 			return data->freq_table[i].frequency;
 	}
-	return data->freq_table[0].frequency;
+	return data->freq_table[i-1].frequency;
 }
 
 static unsigned extract_freq(u32 val, struct acpi_cpufreq_data *data)
@@ -817,7 +817,6 @@ static int acpi_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		valid_states++;
 	}
 	data->freq_table[valid_states].frequency = CPUFREQ_TABLE_END;
-	perf->state = 0;
 
 	result = cpufreq_frequency_table_cpuinfo(policy, data->freq_table);
 	if (result)
@@ -847,12 +846,15 @@ static int acpi_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		acpi_cpufreq_driver.getavg = cpufreq_get_measured_perf;
 
 	pr_debug("CPU%u - ACPI performance management activated.\n", cpu);
-	for (i = 0; i < perf->state_count; i++)
+	for (i = 0; i < perf->state_count; i++) {
+		if (policy->cur == (u32) perf->states[i].core_frequency * 1000)
+			perf->state = i;
 		pr_debug("     %cP%d: %d MHz, %d mW, %d uS\n",
 			(i == perf->state ? '*' : ' '), i,
 			(u32) perf->states[i].core_frequency,
 			(u32) perf->states[i].power,
 			(u32) perf->states[i].transition_latency);
+	}
 
 	cpufreq_frequency_table_get_attr(data->freq_table, policy->cpu);
 

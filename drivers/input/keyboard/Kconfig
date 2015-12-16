@@ -188,6 +188,11 @@ config KEYBOARD_GPIO
 	  To compile this driver as a module, choose M here: the
 	  module will be called gpio_keys.
 
+config GPIO_KEYS_TRIGGER_PANIC
+    bool "gpio keys trigger panic"
+    default n
+    depends on KEYBOARD_GPIO
+
 config KEYBOARD_GPIO_POLLED
 	tristate "Polled GPIO buttons"
 	depends on GPIOLIB

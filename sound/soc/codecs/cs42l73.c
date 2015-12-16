@@ -20,6 +20,7 @@
 #include <linux/pm.h>
 #include <linux/i2c.h>
 #include <linux/regmap.h>
+#include <linux/gpio.h>
 #include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -28,7 +29,17 @@
 #include <sound/soc-dapm.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
+#include <sound/jack.h>
+#include <asm/intel-mid.h>
+#include <asm/platform_cs42l73.h>
 #include "cs42l73.h"
+
+/* spec mentions this delay=15msec.
+ * however, minimal delay required=200msec
+ */
+static int pdn_delay = 200;
+module_param(pdn_delay, int, 0);
+MODULE_PARM_DESC(pdn_delay, "Codec PDN settling time (msecs)");
 
 struct sp_config {
 	u8 spc, mmcc, spfs;
@@ -40,7 +51,7 @@ struct  cs42l73_private {
 	u32 sysclk;
 	u8 mclksel;
 	u32 mclk;
-	int shutdwn_delay;
+	int codec_rst;
 };
 
 static const struct reg_default cs42l73_reg_defaults[] = {
@@ -244,6 +255,8 @@ static bool cs42l73_readable_register(struct device *dev, unsigned int reg)
 	case CS42L73_ESLMVSPMA:
 	case CS42L73_IM1:
 	case CS42L73_IM2:
+	case CS42L73_IS1:
+	case CS42L73_IS2:
 		return true;
 	default:
 		return false;
@@ -289,19 +302,21 @@ static const struct snd_kcontrol_new pgaa_mux =
 static const struct snd_kcontrol_new pgab_mux =
 	SOC_DAPM_ENUM("Right Analog Input Capture Mux", pgab_enum);
 
-static const struct snd_kcontrol_new input_left_mixer[] = {
-	SOC_DAPM_SINGLE("ADC Left Input", CS42L73_PWRCTL1,
-			5, 1, 1),
-	SOC_DAPM_SINGLE("DMIC Left Input", CS42L73_PWRCTL1,
-			4, 1, 1),
-};
+static const char * const input_left_enum_text[] = {"None", "ADC A", "DMIC A"};
 
-static const struct snd_kcontrol_new input_right_mixer[] = {
-	SOC_DAPM_SINGLE("ADC Right Input", CS42L73_PWRCTL1,
-			7, 1, 1),
-	SOC_DAPM_SINGLE("DMIC Right Input", CS42L73_PWRCTL1,
-			6, 1, 1),
-};
+static const struct soc_enum input_left_enum =
+	SOC_ENUM_SINGLE(0, 0, 3, input_left_enum_text);
+
+static const struct snd_kcontrol_new input_left_mux =
+	SOC_DAPM_ENUM_VIRT("Input Left Capture Mux", input_left_enum);
+
+static const char * const input_right_enum_text[] = {"None", "ADC B", "DMIC B"};
+
+static const struct soc_enum input_right_enum =
+	SOC_ENUM_SINGLE(0, 0, 3, input_right_enum_text);
+
+static const struct snd_kcontrol_new input_right_mux =
+	SOC_DAPM_ENUM_VIRT("Input Right Capture Mux", input_right_enum);
 
 static const char * const cs42l73_ng_delay_text[] = {
 	"50ms", "100ms", "150ms", "200ms" };
@@ -398,6 +413,38 @@ static const struct snd_kcontrol_new spklo_amp_ctl =
 static const struct snd_kcontrol_new ear_amp_ctl =
 	SOC_DAPM_SINGLE("Switch", CS42L73_PWRCTL3, 3, 1, 1);
 
+static const char * const loopback_text[] = {
+	"Enable", "Disable"};
+
+static const unsigned int loopback_values[] = { 0, 1 };
+
+static const struct soc_enum esl_loopback_enum =
+	SOC_VALUE_ENUM_SINGLE(CS42L73_ESLMIPMA, 0, 1,
+			      ARRAY_SIZE(loopback_text),
+			      loopback_text,
+			      loopback_values);
+
+static const struct snd_kcontrol_new esl_loopback_mux =
+	SOC_DAPM_ENUM("ESL Loopback Mux", esl_loopback_enum);
+
+static const struct soc_enum spk_loopback_enum =
+	SOC_VALUE_ENUM_SINGLE(CS42L73_SPKMIPMA, 0, 1,
+			      ARRAY_SIZE(loopback_text),
+			      loopback_text,
+			      loopback_values);
+
+static const struct snd_kcontrol_new spk_loopback_mux =
+	SOC_DAPM_ENUM("SPK Loopback Mux", spk_loopback_enum);
+
+static const struct soc_enum hl_loopback_enum =
+	SOC_VALUE_ENUM_SINGLE(CS42L73_HLBIPBA, 0, 1,
+			      ARRAY_SIZE(loopback_text),
+			      loopback_text,
+			      loopback_values);
+
+static const struct snd_kcontrol_new hl_loopback_mux =
+	SOC_DAPM_ENUM("HL Loopback Mux", hl_loopback_enum);
+
 static const struct snd_kcontrol_new cs42l73_snd_controls[] = {
 	SOC_DOUBLE_R_SX_TLV("Headphone Analog Playback Volume",
 			CS42L73_HPAAVOL, CS42L73_HPBAVOL, 0,
@@ -407,7 +454,7 @@ static const struct snd_kcontrol_new cs42l73_snd_controls[] = {
 			CS42L73_LOBAVOL, 0, 0x41, 0x4B, hpaloa_tlv),
 
 	SOC_DOUBLE_R_SX_TLV("Input PGA Analog Volume", CS42L73_MICAPREPGAAVOL,
-			CS42L73_MICBPREPGABVOL, 5, 0x34,
+			CS42L73_MICBPREPGABVOL, 0, 0x34,
 			0x24, micpga_tlv),
 
 	SOC_DOUBLE_R("MIC Preamp Switch", CS42L73_MICAPREPGAAVOL,
@@ -426,10 +473,10 @@ static const struct snd_kcontrol_new cs42l73_snd_controls[] = {
 	SOC_SINGLE_TLV("ADC B Boost Volume",
 		       CS42L73_ADCIPC, 6, 0x01, 1, adc_boost_tlv),
 
-	SOC_SINGLE_SX_TLV("Speakerphone Digital Volume",
+	SOC_SINGLE_SX_TLV("Speakerphone Digital Playback Volume",
 			    CS42L73_SPKDVOL, 0, 0x34, 0xE4, hl_tlv),
 
-	SOC_SINGLE_SX_TLV("Ear Speaker Digital Volume",
+	SOC_SINGLE_SX_TLV("Ear Speaker Digital Playback Volume",
 			    CS42L73_ESLDVOL, 0, 0x34, 0xE4, hl_tlv),
 
 	SOC_DOUBLE_R("Headphone Analog Playback Switch", CS42L73_HPAAVOL,
@@ -589,57 +636,6 @@ static const struct snd_kcontrol_new cs42l73_snd_controls[] = {
 	SOC_ENUM("XSPOUT Mono/Stereo Select", xsp_output_mux_enum),
 };
 
-static int cs42l73_spklo_spk_amp_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *kcontrol, int event)
-{
-	struct snd_soc_codec *codec = w->codec;
-	struct cs42l73_private *priv = snd_soc_codec_get_drvdata(codec);
-	switch (event) {
-	case SND_SOC_DAPM_POST_PMD:
-		/* 150 ms delay between setting PDN and MCLKDIS */
-		priv->shutdwn_delay = 150;
-		break;
-	default:
-		pr_err("Invalid event = 0x%x\n", event);
-	}
-	return 0;
-}
-
-static int cs42l73_ear_amp_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *kcontrol, int event)
-{
-	struct snd_soc_codec *codec = w->codec;
-	struct cs42l73_private *priv = snd_soc_codec_get_drvdata(codec);
-	switch (event) {
-	case SND_SOC_DAPM_POST_PMD:
-		/* 50 ms delay between setting PDN and MCLKDIS */
-		if (priv->shutdwn_delay < 50)
-			priv->shutdwn_delay = 50;
-		break;
-	default:
-		pr_err("Invalid event = 0x%x\n", event);
-	}
-	return 0;
-}
-
-
-static int cs42l73_hp_amp_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *kcontrol, int event)
-{
-	struct snd_soc_codec *codec = w->codec;
-	struct cs42l73_private *priv = snd_soc_codec_get_drvdata(codec);
-	switch (event) {
-	case SND_SOC_DAPM_POST_PMD:
-		/* 30 ms delay between setting PDN and MCLKDIS */
-		if (priv->shutdwn_delay < 30)
-			priv->shutdwn_delay = 30;
-		break;
-	default:
-		pr_err("Invalid event = 0x%x\n", event);
-	}
-	return 0;
-}
-
 static const struct snd_soc_dapm_widget cs42l73_dapm_widgets[] = {
 	SND_SOC_DAPM_INPUT("DMICA"),
 	SND_SOC_DAPM_INPUT("DMICB"),
@@ -650,13 +646,9 @@ static const struct snd_soc_dapm_widget cs42l73_dapm_widgets[] = {
 	SND_SOC_DAPM_INPUT("MIC2"),
 	SND_SOC_DAPM_SUPPLY("MIC2 Bias", CS42L73_PWRCTL2, 7, 1, NULL, 0),
 
-	SND_SOC_DAPM_AIF_OUT("XSPOUTL", NULL,  0,
+	SND_SOC_DAPM_AIF_OUT("XSPOUT", NULL,  0,
 			CS42L73_PWRCTL2, 1, 1),
-	SND_SOC_DAPM_AIF_OUT("XSPOUTR", NULL,  0,
-			CS42L73_PWRCTL2, 1, 1),
-	SND_SOC_DAPM_AIF_OUT("ASPOUTL", NULL,  0,
-			CS42L73_PWRCTL2, 3, 1),
-	SND_SOC_DAPM_AIF_OUT("ASPOUTR", NULL,  0,
+	SND_SOC_DAPM_AIF_OUT("ASPOUT", NULL,  0,
 			CS42L73_PWRCTL2, 3, 1),
 	SND_SOC_DAPM_AIF_OUT("VSPINOUT", NULL,  0,
 			CS42L73_PWRCTL2, 4, 1),
@@ -667,18 +659,23 @@ static const struct snd_soc_dapm_widget cs42l73_dapm_widgets[] = {
 	SND_SOC_DAPM_MUX("PGA Left Mux", SND_SOC_NOPM, 0, 0, &pgaa_mux),
 	SND_SOC_DAPM_MUX("PGA Right Mux", SND_SOC_NOPM, 0, 0, &pgab_mux),
 
-	SND_SOC_DAPM_ADC("ADC Left", NULL, CS42L73_PWRCTL1, 7, 1),
-	SND_SOC_DAPM_ADC("ADC Right", NULL, CS42L73_PWRCTL1, 5, 1),
-	SND_SOC_DAPM_ADC("DMIC Left", NULL, CS42L73_PWRCTL1, 6, 1),
-	SND_SOC_DAPM_ADC("DMIC Right", NULL, CS42L73_PWRCTL1, 4, 1),
+	SND_SOC_DAPM_ADC("ADC Left", NULL, CS42L73_PWRCTL1, 5, 1),
+	SND_SOC_DAPM_ADC("ADC Right", NULL, CS42L73_PWRCTL1, 7, 1),
+	SND_SOC_DAPM_ADC("DMIC Left", NULL, CS42L73_PWRCTL1, 4, 1),
+	SND_SOC_DAPM_ADC("DMIC Right", NULL, CS42L73_PWRCTL1, 6, 1),
 
-	SND_SOC_DAPM_MIXER_NAMED_CTL("Input Left Capture", SND_SOC_NOPM,
-			 0, 0, input_left_mixer,
-			 ARRAY_SIZE(input_left_mixer)),
+	SND_SOC_DAPM_VIRT_MUX("Input Left Capture", SND_SOC_NOPM,
+			 0, 0, &input_left_mux),
+	SND_SOC_DAPM_VIRT_MUX("Input Right Capture", SND_SOC_NOPM,
+			0, 0, &input_right_mux),
 
-	SND_SOC_DAPM_MIXER_NAMED_CTL("Input Right Capture", SND_SOC_NOPM,
-			0, 0, input_right_mixer,
-			ARRAY_SIZE(input_right_mixer)),
+	SND_SOC_DAPM_MIXER("Input Loopback Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
+	SND_SOC_DAPM_MUX("ESL Loopback", SND_SOC_NOPM, 0, 0,
+			    &esl_loopback_mux),
+	SND_SOC_DAPM_MUX("SPK Loopback", SND_SOC_NOPM, 0, 0,
+				&spk_loopback_mux),
+	SND_SOC_DAPM_MUX("HL Loopback", SND_SOC_NOPM, 0, 0,
+				&hl_loopback_mux),
 
 	SND_SOC_DAPM_MIXER("ASPL Output Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_MIXER("ASPR Output Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
@@ -686,21 +683,12 @@ static const struct snd_soc_dapm_widget cs42l73_dapm_widgets[] = {
 	SND_SOC_DAPM_MIXER("XSPR Output Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_MIXER("VSP Output Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
 
-	SND_SOC_DAPM_AIF_IN("XSPINL", NULL, 0,
-				CS42L73_PWRCTL2, 0, 1),
-	SND_SOC_DAPM_AIF_IN("XSPINR", NULL, 0,
-				CS42L73_PWRCTL2, 0, 1),
-	SND_SOC_DAPM_AIF_IN("XSPINM", NULL, 0,
-				CS42L73_PWRCTL2, 0, 1),
 
-	SND_SOC_DAPM_AIF_IN("ASPINL", NULL, 0,
+	SND_SOC_DAPM_AIF_IN("XSPIN", NULL, 0,
+				CS42L73_PWRCTL2, 0, 1),
+	SND_SOC_DAPM_AIF_IN("ASPIN", NULL, 0,
 				CS42L73_PWRCTL2, 2, 1),
-	SND_SOC_DAPM_AIF_IN("ASPINR", NULL, 0,
-				CS42L73_PWRCTL2, 2, 1),
-	SND_SOC_DAPM_AIF_IN("ASPINM", NULL, 0,
-				CS42L73_PWRCTL2, 2, 1),
-
-	SND_SOC_DAPM_AIF_IN("VSPINOUT", NULL, 0,
+	SND_SOC_DAPM_AIF_IN("VSPIN", NULL, 0,
 				CS42L73_PWRCTL2, 4, 1),
 
 	SND_SOC_DAPM_MIXER("HL Left Mixer", SND_SOC_NOPM, 0, 0, NULL, 0),
@@ -725,20 +713,16 @@ static const struct snd_soc_dapm_widget cs42l73_dapm_widgets[] = {
 	SND_SOC_DAPM_PGA("SPK DAC", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("ESL DAC", SND_SOC_NOPM, 0, 0, NULL, 0),
 
-	SND_SOC_DAPM_SWITCH_E("HP Amp",  CS42L73_PWRCTL3, 0, 1,
-			    &hp_amp_ctl, cs42l73_hp_amp_event,
-			SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_SWITCH("HP Amp", CS42L73_PWRCTL3, 0, 1,
+			    &hp_amp_ctl),
 	SND_SOC_DAPM_SWITCH("LO Amp", CS42L73_PWRCTL3, 1, 1,
 			    &lo_amp_ctl),
-	SND_SOC_DAPM_SWITCH_E("SPK Amp", CS42L73_PWRCTL3, 2, 1,
-			&spk_amp_ctl, cs42l73_spklo_spk_amp_event,
-			SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_SWITCH_E("EAR Amp", CS42L73_PWRCTL3, 3, 1,
-			    &ear_amp_ctl, cs42l73_ear_amp_event,
-			SND_SOC_DAPM_POST_PMD),
-	SND_SOC_DAPM_SWITCH_E("SPKLO Amp", CS42L73_PWRCTL3, 4, 1,
-			    &spklo_amp_ctl, cs42l73_spklo_spk_amp_event,
-			SND_SOC_DAPM_POST_PMD),
+	SND_SOC_DAPM_SWITCH("SPK Amp", CS42L73_PWRCTL3, 2, 1,
+			    &spk_amp_ctl),
+	SND_SOC_DAPM_SWITCH("EAR Amp", CS42L73_PWRCTL3, 3, 1,
+			    &ear_amp_ctl),
+	SND_SOC_DAPM_SWITCH("SPKLO Amp", CS42L73_PWRCTL3, 4, 1,
+			    &spklo_amp_ctl),
 
 	SND_SOC_DAPM_OUTPUT("HPOUTA"),
 	SND_SOC_DAPM_OUTPUT("HPOUTB"),
@@ -762,19 +746,20 @@ static const struct snd_soc_dapm_route cs42l73_audio_map[] = {
 	{"ESL DAC", "ESL-XSP Mono Volume", "ESL Mixer"},
 	{"ESL DAC", "ESL-VSP Mono Volume", "VSPINOUT"},
 	/* Loopback */
-	{"ESL DAC", "ESL-IP Mono Volume", "Input Left Capture"},
-	{"ESL DAC", "ESL-IP Mono Volume", "Input Right Capture"},
+	{"ESL DAC", "ESL-IP Mono Volume", "ESL Mixer"},
+	{"ESL Mixer", NULL, "ESL Loopback"},
+	{"ESL Loopback", "Enable", "Input Loopback Mixer"},
 
 	{"ESL Mixer", NULL, "ESL-ASP Mux"},
 	{"ESL Mixer", NULL, "ESL-XSP Mux"},
 
-	{"ESL-ASP Mux", "Left", "ASPINL"},
-	{"ESL-ASP Mux", "Right", "ASPINR"},
-	{"ESL-ASP Mux", "Mono Mix", "ASPINM"},
+	{"ESL-ASP Mux", "Left", "ASPIN"},
+	{"ESL-ASP Mux", "Right", "ASPIN"},
+	{"ESL-ASP Mux", "Mono Mix", "ASPIN"},
 
-	{"ESL-XSP Mux", "Left", "XSPINL"},
-	{"ESL-XSP Mux", "Right", "XSPINR"},
-	{"ESL-XSP Mux", "Mono Mix", "XSPINM"},
+	{"ESL-XSP Mux", "Left", "XSPIN"},
+	{"ESL-XSP Mux", "Right", "XSPIN"},
+	{"ESL-XSP Mux", "Mono Mix", "XSPIN"},
 
 	/* Speakerphone Paths */
 	{"SPKOUT", NULL, "SPK Amp"},
@@ -784,19 +769,19 @@ static const struct snd_soc_dapm_route cs42l73_audio_map[] = {
 	{"SPK DAC", "SPK-XSP Mono Volume", "SPK Mixer"},
 	{"SPK DAC", "SPK-VSP Mono Volume", "VSPINOUT"},
 	/* Loopback */
-	{"SPK DAC", "SPK-IP Mono Volume", "Input Left Capture"},
-	{"SPK DAC", "SPK-IP Mono Volume", "Input Right Capture"},
+	{"SPK DAC", "SPK-IP Mono Volume", "SPK Loopback"},
+	{"SPK Loopback", "Enable", "Input Loopback Mixer"},
 
 	{"SPK Mixer", NULL, "SPK-ASP Mux"},
 	{"SPK Mixer", NULL, "SPK-XSP Mux"},
 
-	{"SPK-ASP Mux", "Left", "ASPINL"},
-	{"SPK-ASP Mux", "Mono Mix", "ASPINM"},
-	{"SPK-ASP Mux", "Right", "ASPINR"},
+	{"SPK-ASP Mux", "Left", "ASPIN"},
+	{"SPK-ASP Mux", "Mono Mix", "ASPIN"},
+	{"SPK-ASP Mux", "Right", "ASPIN"},
 
-	{"SPK-XSP Mux", "Left", "XSPINL"},
-	{"SPK-XSP Mux", "Mono Mix", "XSPINM"},
-	{"SPK-XSP Mux", "Right", "XSPINR"},
+	{"SPK-XSP Mux", "Left", "XSPIN"},
+	{"SPK-XSP Mux", "Mono Mix", "XSPIN"},
+	{"SPK-XSP Mux", "Right", "XSPIN"},
 
 	/* HP LineOUT Paths */
 	{"HPOUTA", NULL, "HP Amp"},
@@ -818,22 +803,22 @@ static const struct snd_soc_dapm_route cs42l73_audio_map[] = {
 	/* Loopback */
 	{"HL Left DAC", "HL-IP Volume", "HL Left Mixer"},
 	{"HL Right DAC", "HL-IP Volume", "HL Right Mixer"},
-	{"HL Left Mixer", NULL, "Input Left Capture"},
-	{"HL Right Mixer", NULL, "Input Right Capture"},
+	{"HL Left Mixer", NULL, "HL Loopback"},
+	{"HL Right Mixer", NULL, "HL Loopback"},
+	{"HL Loopback", "Enable", "Input Loopback Mixer"},
 
-	{"HL Left Mixer", NULL, "ASPINL"},
-	{"HL Right Mixer", NULL, "ASPINR"},
-	{"HL Left Mixer", NULL, "XSPINL"},
-	{"HL Right Mixer", NULL, "XSPINR"},
+	{"HL Left Mixer", NULL, "ASPIN"},
+	{"HL Right Mixer", NULL, "ASPIN"},
+	{"HL Left Mixer", NULL, "XSPIN"},
+	{"HL Right Mixer", NULL, "XSPIN"},
 	{"HL Left Mixer", NULL, "VSPINOUT"},
 	{"HL Right Mixer", NULL, "VSPINOUT"},
 
-	{"ASPINL", NULL, "ASP Playback"},
-	{"ASPINM", NULL, "ASP Playback"},
-	{"ASPINR", NULL, "ASP Playback"},
-	{"XSPINL", NULL, "XSP Playback"},
-	{"XSPINM", NULL, "XSP Playback"},
-	{"XSPINR", NULL, "XSP Playback"},
+	{"VSPINOUT", NULL, "XSPIN"},
+	{"ASPOUT", NULL, "XSPIN"},
+
+	{"ASPIN", NULL, "ASP Playback"},
+	{"XSPIN", NULL, "XSP Playback"},
 	{"VSPINOUT", NULL, "VSP Playback"},
 
 	/* Capture Paths */
@@ -853,27 +838,35 @@ static const struct snd_soc_dapm_route cs42l73_audio_map[] = {
 	{"DMIC Left", NULL, "DMICA"},
 	{"DMIC Right", NULL, "DMICB"},
 
-	{"Input Left Capture", "ADC Left Input", "ADC Left"},
-	{"Input Right Capture", "ADC Right Input", "ADC Right"},
-	{"Input Left Capture", "DMIC Left Input", "DMIC Left"},
-	{"Input Right Capture", "DMIC Right Input", "DMIC Right"},
+	{"Input Left Capture", "ADC A", "ADC Left"},
+	{"Input Right Capture", "ADC B", "ADC Right"},
+	{"Input Left Capture", "DMIC A", "DMIC Left"},
+	{"Input Right Capture", "DMIC B", "DMIC Right"},
+	{"Input Loopback Mixer", NULL, "Input Left Capture"},
+	{"Input Loopback Mixer", NULL, "Input Right Capture"},
 
 	/* Audio Capture */
 	{"ASPL Output Mixer", NULL, "Input Left Capture"},
 	{"ASPR Output Mixer", NULL, "Input Right Capture"},
 
-	{"ASPOUTL", "ASP-IP Volume", "ASPL Output Mixer"},
-	{"ASPOUTR", "ASP-IP Volume", "ASPR Output Mixer"},
+	{"ASPOUT", "ASP-IP Volume", "ASPL Output Mixer"},
+	{"ASPOUT", "ASP-IP Volume", "ASPR Output Mixer"},
 
 	/* Auxillary Capture */
 	{"XSPL Output Mixer", NULL, "Input Left Capture"},
 	{"XSPR Output Mixer", NULL, "Input Right Capture"},
 
-	{"XSPOUTL", "XSP-IP Volume", "XSPL Output Mixer"},
-	{"XSPOUTR", "XSP-IP Volume", "XSPR Output Mixer"},
+	{"XSPOUT", "XSP-IP Volume", "XSPL Output Mixer"},
+	{"XSPOUT", "XSP-IP Volume", "XSPR Output Mixer"},
 
-	{"XSPOUTL", NULL, "XSPL Output Mixer"},
-	{"XSPOUTR", NULL, "XSPR Output Mixer"},
+	{"XSPL Output Mixer", NULL, "VSPINOUT"},
+	{"XSPR Output Mixer", NULL, "VSPINOUT"},
+
+	{"XSPL Output Mixer", NULL, "ASPIN"},
+	{"XSPR Output Mixer", NULL, "ASPIN"},
+
+	{"XSPOUT", NULL, "XSPL Output Mixer"},
+	{"XSPOUT", NULL, "XSPR Output Mixer"},
 
 	/* Voice Capture */
 	{"VSP Output Mixer", NULL, "Input Left Capture"},
@@ -882,11 +875,14 @@ static const struct snd_soc_dapm_route cs42l73_audio_map[] = {
 	{"VSPINOUT", "VSP-IP Volume", "VSP Output Mixer"},
 
 	{"VSPINOUT", NULL, "VSP Output Mixer"},
+	{"ASPL Output Mixer", NULL, "ASPIN"},
+	{"ASPR Output Mixer", NULL, "ASPIN"},
 
-	{"ASP Capture", NULL, "ASPOUTL"},
-	{"ASP Capture", NULL, "ASPOUTR"},
-	{"XSP Capture", NULL, "XSPOUTL"},
-	{"XSP Capture", NULL, "XSPOUTR"},
+	{"ASPOUT", "ASP-ASP Volume", "ASPL Output Mixer"},
+	{"ASPOUT", "ASP-ASP Volume", "ASPR Output Mixer"},
+
+	{"ASP Capture", NULL, "ASPOUT"},
+	{"XSP Capture", NULL, "XSPOUT"},
 	{"VSP Capture", NULL, "VSPINOUT"},
 };
 
@@ -949,7 +945,7 @@ struct cs42l73_mclkx_div {
 static struct cs42l73_mclkx_div cs42l73_mclkx_coeffs[] = {
 	{5644800,  1, 0},	/* 5644800 */
 	{6000000,  1, 0},	/* 6000000 */
-	{6144000,  1, 0},	/* 6144000 */
+	{6144000,  1, 3},	/* 6144000 */
 	{11289600, 2, 2},	/* 5644800 */
 	{12288000, 2, 2},	/* 6144000 */
 	{12000000, 2, 2},	/* 6000000 */
@@ -996,8 +992,10 @@ static int cs42l73_set_mclk(struct snd_soc_dai *dai, unsigned int freq)
 	/* MCLKX -> MCLK */
 	mclkx_coeff = cs42l73_get_mclkx_coeff(freq);
 	if (mclkx_coeff < 0)
-		return mclkx_coeff;
+		return -EINVAL;
 
+	if (mclkx_coeff < 0)
+		return -EINVAL;
 	mclk = cs42l73_mclkx_coeffs[mclkx_coeff].mclkx /
 		cs42l73_mclkx_coeffs[mclkx_coeff].ratio;
 
@@ -1180,11 +1178,7 @@ static int cs42l73_pcm_hw_params(struct snd_pcm_substream *substream,
 		priv->config[id].mmcc &= 0xC0;
 		priv->config[id].mmcc |= cs42l73_mclk_coeffs[mclk_coeff].mmcc;
 		priv->config[id].spc &= 0xFC;
-		/* Use SCLK=64*Fs if internal MCLK >= 6.4MHz */
-		if (priv->mclk >= 6400000)
-			priv->config[id].spc |= MCK_SCLK_64FS;
-		else
-			priv->config[id].spc |= MCK_SCLK_MCLK;
+		priv->config[id].spc |= MCK_SCLK_MCLK;
 	} else {
 		/* CS42L73 Slave */
 		priv->config[id].spc &= 0xFC;
@@ -1208,8 +1202,6 @@ static int cs42l73_set_bias_level(struct snd_soc_codec *codec,
 
 	switch (level) {
 	case SND_SOC_BIAS_ON:
-		snd_soc_update_bits(codec, CS42L73_DMMCC, MCLKDIS, 0);
-		snd_soc_update_bits(codec, CS42L73_PWRCTL1, PDN, 0);
 		break;
 
 	case SND_SOC_BIAS_PREPARE:
@@ -1219,24 +1211,20 @@ static int cs42l73_set_bias_level(struct snd_soc_codec *codec,
 		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
 			regcache_cache_only(cs42l73->regmap, false);
 			regcache_sync(cs42l73->regmap);
+			snd_soc_update_bits(codec, CS42L73_DMMCC, MCLKDIS, 0);
+			snd_soc_update_bits(codec, CS42L73_PWRCTL1, PDN, 0);
 		}
-		snd_soc_update_bits(codec, CS42L73_PWRCTL1, PDN, 1);
 		break;
 
 	case SND_SOC_BIAS_OFF:
 		snd_soc_update_bits(codec, CS42L73_PWRCTL1, PDN, 1);
-		if (cs42l73->shutdwn_delay > 0) {
-			mdelay(cs42l73->shutdwn_delay);
-			cs42l73->shutdwn_delay = 0;
-		} else {
-			mdelay(15); /* Min amount of time requred to power
-				     * down.
-				     */
-		}
+		msleep(pdn_delay);
 		snd_soc_update_bits(codec, CS42L73_DMMCC, MCLKDIS, 1);
 		break;
 	}
 	codec->dapm.bias_level = level;
+	pr_debug("codec(%s)->bias_level %u\n", codec->name,
+			codec->dapm.bias_level);
 	return 0;
 }
 
@@ -1341,18 +1329,98 @@ static struct snd_soc_dai_driver cs42l73_dai[] = {
 	 }
 };
 
-static int cs42l73_suspend(struct snd_soc_codec *codec)
+void cs42l73_mclk_switch(struct device *dev, bool mode)
 {
-	cs42l73_set_bias_level(codec, SND_SOC_BIAS_OFF);
-
-	return 0;
+	struct snd_soc_card *card = dev_get_drvdata(dev);
+	if (mode) {
+		pr_debug("%s: switch mclk to normal mode\n", __func__);
+		snd_soc_update_bits(card->rtd->codec, CS42L73_DMMCC,
+				MCLK_DIV_MASK, MCLK_DIV_3<<1);
+		snd_soc_update_bits(card->rtd->codec, CS42L73_TST2, 0xff, 0x00);
+		snd_soc_update_bits(card->rtd->codec, CS42L73_TST0, 0xff, 0x00);
+	} else {
+		pr_debug("%s: swith mclk to lowpower mode\n", __func__);
+		/* Ensure MCLK is disabled before changing clk divide ratio
+		 * and reenable after the change
+		 */
+		snd_soc_update_bits(card->rtd->codec, CS42L73_PWRCTL1, PDN, 1);
+		msleep(pdn_delay);
+		snd_soc_update_bits(card->rtd->codec,
+						CS42L73_DMMCC, MCLKDIS, 1);
+		 /* set the test bit to keep the debounce time constant
+		  * regardless of the MCLK frequency */
+		snd_soc_update_bits(card->rtd->codec, CS42L73_TST0, 0xff, 0x99);
+		snd_soc_update_bits(card->rtd->codec, CS42L73_TST1, 0xff, 0x81);
+		snd_soc_update_bits(card->rtd->codec, CS42L73_TST2, 0xff, 0x01);
+		snd_soc_update_bits(card->rtd->codec, CS42L73_DMMCC,
+				MCLK_DIV_MASK, MCLK_DIV_2<<1);
+		snd_soc_update_bits(card->rtd->codec,
+						CS42L73_DMMCC, MCLKDIS, 0);
+		snd_soc_update_bits(card->rtd->codec, CS42L73_PWRCTL1, PDN, 0);
+	}
 }
+EXPORT_SYMBOL_GPL(cs42l73_mclk_switch);
 
-static int cs42l73_resume(struct snd_soc_codec *codec)
+int cs42l73_bp_detection(struct snd_soc_codec *codec,
+			   struct snd_soc_jack *jack,
+			   int plug_status)
 {
-	cs42l73_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
-	return 0;
+	int status = 0;
+	unsigned int reg;
+
+	if (plug_status) {
+		pr_err("%s: Invalid interrupt\n", __func__);
+	} else {
+		snd_soc_update_bits(codec, CS42L73_IM1, MIC2_SDET, MIC2_SDET);
+		reg = snd_soc_read(codec, CS42L73_IS1);
+		if (reg & MIC2_SDET) { /*button pressed */
+			pr_debug("%s:Button Pressed\n", __func__);
+			status = SND_JACK_HEADSET | SND_JACK_BTN_0;
+		} else {
+			pr_debug("%s:Button Released\n", __func__);
+			status = SND_JACK_HEADSET;
+		}
+	}
+	return status;
 }
+EXPORT_SYMBOL_GPL(cs42l73_bp_detection);
+
+int cs42l73_hp_detection(struct snd_soc_codec *codec,
+			   struct snd_soc_jack *jack,
+			   int plug_status)
+{
+	int status = 0;
+	unsigned int micbias = 0;
+	unsigned int reg;
+
+	if (plug_status) {
+		pr_debug("%s: Jack removed\n", __func__);
+		/* Disable the short detect mute feature when the jack
+		* is removed
+		*/
+		snd_soc_update_bits(codec, CS42L73_OLMBMSDC, 1 << 3, 0);
+	} else {
+		snd_soc_update_bits(codec, CS42L73_IM1, MIC2_SDET, MIC2_SDET);
+		reg = snd_soc_read(codec, CS42L73_IS1);
+		pr_debug("Mic detect = %x ISI =%x\n", micbias, reg);
+		if (reg & MIC2_SDET) {
+			status = SND_JACK_HEADPHONE;
+			pr_debug("Headphone detected\n");
+		} else {
+			status = SND_JACK_HEADSET;
+			pr_debug("Headset detected\n");
+			/* Enable short detect mute feature. */
+			snd_soc_update_bits(codec, CS42L73_OLMBMSDC, 1 << 3,
+								 1 << 3);
+		}
+	}
+
+	pr_debug("Plug Status = %x\n", plug_status);
+	pr_debug("Jack Status = %x\n", status);
+	return status;
+
+}
+EXPORT_SYMBOL_GPL(cs42l73_hp_detection);
 
 static int cs42l73_probe(struct snd_soc_codec *codec)
 {
@@ -1366,6 +1434,9 @@ static int cs42l73_probe(struct snd_soc_codec *codec)
 		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
 		return ret;
 	}
+	cs42l73_set_bias_level(codec, SND_SOC_BIAS_OFF);
+	codec->dapm.idle_bias_off = 1;
+
 
 	regcache_cache_only(cs42l73->regmap, true);
 
@@ -1379,6 +1450,16 @@ static int cs42l73_probe(struct snd_soc_codec *codec)
 
 static int cs42l73_remove(struct snd_soc_codec *codec)
 {
+	struct cs42l73_private *cs42l73 = snd_soc_codec_get_drvdata(codec);
+	/* put the codec in reset state */
+	if (cs42l73->codec_rst >= 0) {
+		gpio_set_value(cs42l73->codec_rst, 0);
+
+		/* As per the codec spec, after reset minimum 1ms
+		* power should available
+		*/
+		usleep_range(1000, 1100);
+	}
 	cs42l73_set_bias_level(codec, SND_SOC_BIAS_OFF);
 	return 0;
 }
@@ -1386,8 +1467,6 @@ static int cs42l73_remove(struct snd_soc_codec *codec)
 static struct snd_soc_codec_driver soc_codec_dev_cs42l73 = {
 	.probe = cs42l73_probe,
 	.remove = cs42l73_remove,
-	.suspend = cs42l73_suspend,
-	.resume = cs42l73_resume,
 	.set_bias_level = cs42l73_set_bias_level,
 
 	.dapm_widgets = cs42l73_dapm_widgets,
@@ -1412,9 +1491,10 @@ static struct regmap_config cs42l73_regmap = {
 };
 
 static int cs42l73_i2c_probe(struct i2c_client *i2c_client,
-			     const struct i2c_device_id *id)
+				       const struct i2c_device_id *id)
 {
 	struct cs42l73_private *cs42l73;
+	struct cs42l73_pdata *pdata = i2c_client->dev.platform_data;
 	int ret;
 	unsigned int devid = 0;
 	unsigned int reg;
@@ -1426,13 +1506,20 @@ static int cs42l73_i2c_probe(struct i2c_client *i2c_client,
 		return -ENOMEM;
 	}
 
+	if (pdata) {
+		cs42l73->codec_rst = pdata->codec_rst;
+		/* get codec out of reset*/
+		if (cs42l73->codec_rst >= 0)
+			gpio_set_value(cs42l73->codec_rst, 1);
+	}
+
 	i2c_set_clientdata(i2c_client, cs42l73);
 
-	cs42l73->regmap = devm_regmap_init_i2c(i2c_client, &cs42l73_regmap);
+	cs42l73->regmap = regmap_init_i2c(i2c_client, &cs42l73_regmap);
 	if (IS_ERR(cs42l73->regmap)) {
 		ret = PTR_ERR(cs42l73->regmap);
 		dev_err(&i2c_client->dev, "regmap_init() failed: %d\n", ret);
-		return ret;
+		goto err;
 	}
 	/* initialize codec */
 	ret = regmap_read(cs42l73->regmap, CS42L73_DEVID_AB, &reg);
@@ -1450,13 +1537,13 @@ static int cs42l73_i2c_probe(struct i2c_client *i2c_client,
 		dev_err(&i2c_client->dev,
 			"CS42L73 Device ID (%X). Expected %X\n",
 			devid, CS42L73_DEVID);
-		return ret;
+		goto err_regmap;
 	}
 
 	ret = regmap_read(cs42l73->regmap, CS42L73_REVID, &reg);
 	if (ret < 0) {
 		dev_err(&i2c_client->dev, "Get Revision ID failed\n");
-		return ret;;
+		goto err_regmap;
 	}
 
 	dev_info(&i2c_client->dev,
@@ -1468,13 +1555,23 @@ static int cs42l73_i2c_probe(struct i2c_client *i2c_client,
 			&soc_codec_dev_cs42l73, cs42l73_dai,
 			ARRAY_SIZE(cs42l73_dai));
 	if (ret < 0)
-		return ret;
+		goto err_regmap;
 	return 0;
+
+err_regmap:
+	regmap_exit(cs42l73->regmap);
+
+err:
+	return ret;
 }
 
 static int cs42l73_i2c_remove(struct i2c_client *client)
 {
+	struct cs42l73_private *cs42l73 = i2c_get_clientdata(client);
+
 	snd_soc_unregister_codec(&client->dev);
+	regmap_exit(cs42l73->regmap);
+
 	return 0;
 }
 
@@ -1496,7 +1593,25 @@ static struct i2c_driver cs42l73_i2c_driver = {
 
 };
 
-module_i2c_driver(cs42l73_i2c_driver);
+static int __init cs42l73_modinit(void)
+{
+	int ret;
+	ret = i2c_add_driver(&cs42l73_i2c_driver);
+	if (ret != 0) {
+		pr_err("Failed to register CS42L73 I2C driver: %d\n", ret);
+		return ret;
+	}
+	return 0;
+}
+
+module_init(cs42l73_modinit);
+
+static void __exit cs42l73_exit(void)
+{
+	i2c_del_driver(&cs42l73_i2c_driver);
+}
+
+module_exit(cs42l73_exit);
 
 MODULE_DESCRIPTION("ASoC CS42L73 driver");
 MODULE_AUTHOR("Georgi Vlaev, Nucleus Systems Ltd, <joe@nucleusys.com>");

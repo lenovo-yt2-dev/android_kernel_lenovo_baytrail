@@ -35,6 +35,7 @@
 
 extern struct shared_info *HYPERVISOR_shared_info;
 extern struct start_info *xen_start_info;
+extern void (*xen_oem_arch_setup)(void);
 
 #include <asm/processor.h>
 

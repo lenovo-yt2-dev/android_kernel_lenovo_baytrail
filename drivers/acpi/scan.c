@@ -29,6 +29,33 @@ extern struct acpi_device *acpi_root;
 
 static const char *dummy_hid = "device";
 
+/*
+ * The following ACPI IDs are known to be suitable for representing as
+ * platform devices.
+ */
+static const struct acpi_device_id acpi_platform_device_ids[] = {
+
+	{ "PNP0D40" },
+	{ "BCM2E1A" },
+	{ "BCM43241" },
+	{ "BCM4752" },
+	{ "LPE0F28", 0 },
+	/* Modem Controller Device */
+	{ "MCD0001", 0 },
+	/* Haswell LPSS devices */
+	{ "INT33C0", 0 },
+	{ "INT33C1", 0 },
+	{ "INT33C2", 0 },
+	{ "INT33C3", 0 },
+	{ "INT33C4", 0 },
+	{ "INT33C5", 0 },
+	{ "INT33C6", 0 },
+	{ "INT33C7", 0 },
+	{ "DMA0F28", 0 },
+
+	{ }
+};
+
 static LIST_HEAD(acpi_device_list);
 static LIST_HEAD(acpi_bus_id_list);
 static DEFINE_MUTEX(acpi_scan_lock);
@@ -2045,6 +2072,7 @@ int __init acpi_scan_init(void)
 	acpi_pci_link_init();
 	acpi_platform_init();
 	acpi_lpss_init();
+	acpi_mid_lpss_init();
 	acpi_cmos_rtc_init();
 	acpi_container_init();
 	acpi_memory_hotplug_init();

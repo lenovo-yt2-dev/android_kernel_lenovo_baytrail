@@ -883,6 +883,8 @@ struct acpi_bit_register_info {
 #define ACPI_REGISTER_PM_TIMER                  0x05
 #define ACPI_REGISTER_PROCESSOR_BLOCK           0x06
 #define ACPI_REGISTER_SMI_COMMAND_BLOCK         0x07
+#define ACPI_REGISTER_GPE0_STATUS		0xf1
+#define ACPI_REGISTER_GPE0_ENABLE		0xf2
 
 /* Masks used to access the bit_registers */
 
@@ -947,19 +949,6 @@ struct acpi_bit_register_info {
 #define ACPI_BITPOSITION_ARB_DISABLE            0x00
 
 /* Structs and definitions for _OSI support and I/O port validation */
-
-#define ACPI_OSI_WIN_2000               0x01
-#define ACPI_OSI_WIN_XP                 0x02
-#define ACPI_OSI_WIN_XP_SP1             0x03
-#define ACPI_OSI_WINSRV_2003            0x04
-#define ACPI_OSI_WIN_XP_SP2             0x05
-#define ACPI_OSI_WINSRV_2003_SP1        0x06
-#define ACPI_OSI_WIN_VISTA              0x07
-#define ACPI_OSI_WINSRV_2008            0x08
-#define ACPI_OSI_WIN_VISTA_SP1          0x09
-#define ACPI_OSI_WIN_VISTA_SP2          0x0A
-#define ACPI_OSI_WIN_7                  0x0B
-#define ACPI_OSI_WIN_8                  0x0C
 
 #define ACPI_ALWAYS_ILLEGAL             0x00
 

@@ -780,8 +780,11 @@ int platform_pm_suspend(struct device *dev)
 		return 0;
 
 	if (drv->pm) {
-		if (drv->pm->suspend)
+		if (drv->pm->suspend) {
+            pr_info("calling %s %pf()\n",
+                    dev_name(dev), drv->pm->suspend);
 			ret = drv->pm->suspend(dev);
+        }
 	} else {
 		ret = platform_legacy_suspend(dev, PMSG_SUSPEND);
 	}
@@ -798,8 +801,11 @@ int platform_pm_resume(struct device *dev)
 		return 0;
 
 	if (drv->pm) {
-		if (drv->pm->resume)
+		if (drv->pm->resume) {
+            pr_info("calling %s %pf()\n",
+                    dev_name(dev), drv->pm->suspend);
 			ret = drv->pm->resume(dev);
+        }
 	} else {
 		ret = platform_legacy_resume(dev);
 	}

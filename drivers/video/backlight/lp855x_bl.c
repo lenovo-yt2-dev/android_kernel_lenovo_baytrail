@@ -36,6 +36,8 @@
 #define LP8557_EPROM_START		0x10
 #define LP8557_EPROM_END		0x1E
 
+#define LP8557_AOTO_LED_STRINGS  0x4
+
 #define DEFAULT_BL_NAME		"lcd-backlight"
 #define MAX_BRIGHTNESS		255
 
@@ -71,6 +73,34 @@ struct lp855x {
 	struct lp855x_platform_data *pdata;
 	struct pwm_device *pwm;
 };
+
+/* FIXME: If the platform has more than one LP855x chip then need
+ * to port the code here.
+ */
+struct lp855x *lpdata;
+
+int lp855x_ext_write_byte(u8 reg, u8 data)
+{
+	if (lpdata == NULL)
+		return -EINVAL;
+
+	return i2c_smbus_write_byte_data(lpdata->client, reg, data);
+}
+
+int lp855x_ext_read_byte(u8 reg)
+{
+	int ret;
+	u8 tmp;
+
+	if (lpdata == NULL)
+		return -EINVAL;
+
+	ret = i2c_smbus_read_byte_data(lpdata->client, reg);
+	if (ret < 0)
+		dev_err(lpdata->dev, "failed to read 0x%.2x\n", reg);
+
+	return ret;
+}
 
 static int lp855x_write_byte(struct lp855x *lp, u8 reg, u8 data)
 {
@@ -174,7 +204,8 @@ static int lp855x_configure(struct lp855x *lp)
 	default:
 		return -EINVAL;
 	}
-
+//del by intel mingxin for bios lenovo logo flicker
+#if 0
 	if (lp->cfg->pre_init_device) {
 		ret = lp->cfg->pre_init_device(lp);
 		if (ret) {
@@ -184,15 +215,17 @@ static int lp855x_configure(struct lp855x *lp)
 	}
 
 	val = pd->initial_brightness;
+	
 	ret = lp855x_write_byte(lp, lp->cfg->reg_brightness, val);
 	if (ret)
 		goto err;
-
-	val = pd->device_control;
+		
+	val = pd->device_control;	
+	/*enable the ic to detect how many led strings been connected to the lp8557*/
+	val|= LP8557_AOTO_LED_STRINGS;
 	ret = lp855x_write_byte(lp, lp->cfg->reg_devicectrl, val);
 	if (ret)
 		goto err;
-
 	if (pd->size_program > 0) {
 		for (i = 0; i < pd->size_program; i++) {
 			addr = pd->rom_data[i].addr;
@@ -213,6 +246,7 @@ static int lp855x_configure(struct lp855x *lp)
 			goto err;
 		}
 	}
+#endif
 
 	return 0;
 
@@ -409,9 +443,17 @@ static int lp855x_probe(struct i2c_client *cl, const struct i2c_device_id *id)
 	if (!i2c_check_functionality(cl->adapter, I2C_FUNC_SMBUS_I2C_BLOCK))
 		return -EIO;
 
+	/* FIXME: If the platform has more than one LP855x chip then need
+	 * to port the code here.
+	 */
+	if (lpdata)
+		return -ENODEV;
+
 	lp = devm_kzalloc(&cl->dev, sizeof(struct lp855x), GFP_KERNEL);
 	if (!lp)
 		return -ENOMEM;
+
+	lpdata = lp;
 
 	if (pdata->period_ns > 0)
 		lp->mode = PWM_BASED;
@@ -430,7 +472,6 @@ static int lp855x_probe(struct i2c_client *cl, const struct i2c_device_id *id)
 		dev_err(lp->dev, "device config err: %d", ret);
 		goto err_dev;
 	}
-
 	ret = lp855x_backlight_register(lp);
 	if (ret) {
 		dev_err(lp->dev,
@@ -450,6 +491,7 @@ static int lp855x_probe(struct i2c_client *cl, const struct i2c_device_id *id)
 err_sysfs:
 	lp855x_backlight_unregister(lp);
 err_dev:
+	lpdata = NULL;
 	return ret;
 }
 
@@ -464,7 +506,11 @@ static int lp855x_remove(struct i2c_client *cl)
 
 	return 0;
 }
-
+static void lp855x_shutdown(struct i2c_client *cl)
+{
+    printk("==jinjt==%s line=%d\n",__func__,__LINE__);
+    lp855x_ext_write_byte(0x00, 0x00);
+}
 static const struct of_device_id lp855x_dt_ids[] = {
 	{ .compatible = "ti,lp8550", },
 	{ .compatible = "ti,lp8551", },
@@ -495,6 +541,7 @@ static struct i2c_driver lp855x_driver = {
 	.probe = lp855x_probe,
 	.remove = lp855x_remove,
 	.id_table = lp855x_ids,
+    .shutdown = lp855x_shutdown,
 };
 
 module_i2c_driver(lp855x_driver);

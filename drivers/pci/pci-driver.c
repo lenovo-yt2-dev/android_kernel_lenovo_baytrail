@@ -670,6 +670,9 @@ static int pci_pm_suspend_noirq(struct device *dev)
 		pci_power_t prev = pci_dev->current_state;
 		int error;
 
+        pr_info("calling %s %pf()\n",
+                dev_name(dev), pm->suspend_noirq);
+
 		error = pm->suspend_noirq(dev);
 		suspend_report_result(pm->suspend_noirq, error);
 		if (error)
@@ -718,8 +721,11 @@ static int pci_pm_resume_noirq(struct device *dev)
 	if (pci_has_legacy_pm_support(pci_dev))
 		return pci_legacy_resume_early(dev);
 
-	if (drv && drv->pm && drv->pm->resume_noirq)
+	if (drv && drv->pm && drv->pm->resume_noirq) {
+        pr_info("calling %s %pf()\n",
+                dev_name(dev), drv->pm->resume_noirq);
 		error = drv->pm->resume_noirq(dev);
+    }
 
 	return error;
 }
@@ -994,7 +1000,6 @@ static int pci_pm_runtime_suspend(struct device *dev)
 	pci_dev->state_saved = false;
 	pci_dev->no_d3cold = false;
 	error = pm->runtime_suspend(dev);
-	suspend_report_result(pm->runtime_suspend, error);
 	if (error)
 		return error;
 	if (!pci_dev->d3cold_allowed)

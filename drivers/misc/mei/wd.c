@@ -25,17 +25,10 @@
 
 #include "mei_dev.h"
 #include "hbm.h"
-#include "hw-me.h"
 #include "client.h"
 
 static const u8 mei_start_wd_params[] = { 0x02, 0x12, 0x13, 0x10 };
 static const u8 mei_stop_wd_params[] = { 0x02, 0x02, 0x14, 0x10 };
-
-const u8 mei_wd_state_independence_msg[3][4] = {
-	{0x05, 0x02, 0x51, 0x10},
-	{0x05, 0x02, 0x52, 0x10},
-	{0x07, 0x02, 0x01, 0x10}
-};
 
 /*
  * AMT Watchdog Device
@@ -93,15 +86,20 @@ int mei_wd_host_init(struct mei_device *dev)
 
 	cl->state = MEI_FILE_CONNECTING;
 
-	if (mei_hbm_cl_connect_req(dev, cl)) {
-		dev_err(&dev->pdev->dev, "wd: failed to connect to the client\n");
-		cl->state = MEI_FILE_DISCONNECTED;
-		cl->host_client_id = 0;
-		return -EIO;
-	}
-	cl->timer_count = MEI_CONNECT_TIMEOUT;
+	ret = mei_cl_connect(cl, NULL);
 
-	return 0;
+	if (ret) {
+		dev_err(&dev->pdev->dev, "wd: failed to connect = %d\n", ret);
+		mei_cl_unlink(cl);
+		return ret;
+	}
+
+	ret = mei_watchdog_register(dev);
+	if (ret) {
+		mei_cl_disconnect(cl);
+		mei_cl_unlink(cl);
+	}
+	return ret;
 }
 
 /**
@@ -158,10 +156,8 @@ int mei_wd_stop(struct mei_device *dev)
 	if (ret < 0)
 		goto out;
 
-	if (ret && dev->hbuf_is_ready) {
+	if (ret && mei_hbuf_acquire(dev)) {
 		ret = 0;
-		dev->hbuf_is_ready = false;
-
 		if (!mei_wd_send(dev)) {
 			ret = mei_cl_flow_ctrl_reduce(&dev->wd_cl);
 			if (ret)
@@ -265,16 +261,19 @@ static int mei_wd_ops_stop(struct watchdog_device *wd_dev)
  */
 static int mei_wd_ops_ping(struct watchdog_device *wd_dev)
 {
-	int ret = 0;
 	struct mei_device *dev;
+	struct mei_cl *cl;
+	int ret;
 
 	dev = watchdog_get_drvdata(wd_dev);
 	if (!dev)
 		return -ENODEV;
 
+	cl = &dev->wd_cl;
+
 	mutex_lock(&dev->device_lock);
 
-	if (dev->wd_cl.state != MEI_FILE_CONNECTED) {
+	if (cl->state != MEI_FILE_CONNECTED) {
 		dev_err(&dev->pdev->dev, "wd: not connected.\n");
 		ret = -ENODEV;
 		goto end;
@@ -282,10 +281,12 @@ static int mei_wd_ops_ping(struct watchdog_device *wd_dev)
 
 	dev->wd_state = MEI_WD_RUNNING;
 
-	/* Check if we can send the ping to HW*/
-	if (dev->hbuf_is_ready && mei_cl_flow_ctrl_creds(&dev->wd_cl) > 0) {
+	ret = mei_cl_flow_ctrl_creds(cl);
+	if (ret < 0)
+		goto end;
 
-		dev->hbuf_is_ready = false;
+	/* Check if we can send the ping to HW*/
+	if (ret && mei_hbuf_acquire(dev)) {
 		dev_dbg(&dev->pdev->dev, "wd: sending ping\n");
 
 		if (mei_wd_send(dev)) {
@@ -294,9 +295,8 @@ static int mei_wd_ops_ping(struct watchdog_device *wd_dev)
 			goto end;
 		}
 
-		if (mei_cl_flow_ctrl_reduce(&dev->wd_cl)) {
-			dev_err(&dev->pdev->dev,
-				"wd: mei_cl_flow_ctrl_reduce() failed.\n");
+		if (mei_cl_flow_ctrl_reduce(cl)) {
+			dev_err(&dev->pdev->dev, "wd: mei_cl_flow_ctrl_reduce() failed.\n");
 			ret = -EIO;
 			goto end;
 		}
@@ -368,17 +368,25 @@ static struct watchdog_device amt_wd_dev = {
 };
 
 
-void mei_watchdog_register(struct mei_device *dev)
+int mei_watchdog_register(struct mei_device *dev)
 {
-	if (watchdog_register_device(&amt_wd_dev)) {
-		dev_err(&dev->pdev->dev,
-			"wd: unable to register watchdog device.\n");
-		return;
+
+	int ret;
+
+	/* unlock to perserve correct locking order */
+	mutex_unlock(&dev->device_lock);
+	ret = watchdog_register_device(&amt_wd_dev);
+	mutex_lock(&dev->device_lock);
+	if (ret) {
+		dev_err(&dev->pdev->dev, "wd: unable to register watchdog device = %d.\n",
+			ret);
+		return ret;
 	}
 
 	dev_dbg(&dev->pdev->dev,
 		"wd: successfully register watchdog interface.\n");
 	watchdog_set_drvdata(&amt_wd_dev, dev);
+	return 0;
 }
 
 void mei_watchdog_unregister(struct mei_device *dev)

@@ -110,6 +110,7 @@
 #include <asm/mce.h>
 #include <asm/alternative.h>
 #include <asm/prom.h>
+#include <asm/intel-mid.h>
 
 /*
  * max_low_pfn_mapped: highest direct mapped pfn under 4GB
@@ -838,6 +839,9 @@ static void __init trim_low_memory_range(void)
 
 void __init setup_arch(char **cmdline_p)
 {
+	char *tmp_p1 = NULL;
+	char *tmp_p2 = NULL;
+
 	memblock_reserve(__pa_symbol(_text),
 			 (unsigned long)__bss_stop - (unsigned long)_text);
 
@@ -955,6 +959,16 @@ void __init setup_arch(char **cmdline_p)
 	}
 #endif
 #endif
+	// /dev/ttyS0 use for communication with PC in testmode mode
+	if(strstr(boot_command_line, "testmode")){
+		printk(KERN_INFO "factory mode found\n");
+		if(strstr(boot_command_line, "ttyS0")){
+			tmp_p1 = strstr(boot_command_line, "console");
+			tmp_p2 = strstr(tmp_p1+1, "console");
+			if((tmp_p1 != NULL) && (tmp_p2 != NULL))
+				 strlcpy(tmp_p1, tmp_p2, COMMAND_LINE_SIZE);
+		}
+	}
 
 	strlcpy(command_line, boot_command_line, COMMAND_LINE_SIZE);
 	*cmdline_p = command_line;
@@ -1091,7 +1105,9 @@ void __init setup_arch(char **cmdline_p)
 			(max_pfn_mapped<<PAGE_SHIFT) - 1);
 #endif
 
+#ifndef CONFIG_XEN
 	reserve_real_mode();
+#endif
 
 	trim_platform_memory_ranges();
 	trim_low_memory_range();
@@ -1100,7 +1116,9 @@ void __init setup_arch(char **cmdline_p)
 
 	early_trap_pf_init();
 
+#ifndef CONFIG_XEN
 	setup_real_mode();
+#endif
 
 	memblock.current_limit = get_max_mapped();
 	dma_contiguous_reserve(0);
@@ -1195,6 +1213,10 @@ void __init setup_arch(char **cmdline_p)
 	e820_mark_nosave_regions(max_low_pfn);
 
 	x86_init.resources.reserve_resources();
+
+#ifdef CONFIG_INTEL_MID_PSTORE_RAM
+	pstore_ram_reserve_memory();
+#endif
 
 	e820_setup_gap();
 

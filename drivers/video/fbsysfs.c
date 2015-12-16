@@ -20,9 +20,21 @@
 #include <linux/fb.h>
 #include <linux/console.h>
 #include <linux/module.h>
+#include <drm/drmP.h>
+#include <drm/drm_fb_helper.h>
+#include "../gpu/drm/i915/i915_drv.h"
 
 #define FB_SYSFS_FLAG_ATTR 1
+extern int i915_dpst_switch(bool on);
+extern bool i915_get_dpst_status(void);
 
+extern ssize_t lenovo_lcd_get_name(struct device *dev, struct device_attribute *attr, char *buf);
+extern ssize_t lenovo_lcd_get_cabc(struct device *dev, struct device_attribute *attr, char *buf);
+extern ssize_t lenovo_lcd_set_cabc(struct device *dev, struct device_attribute *attr, const char *buf, size_t count);
+extern ssize_t lenovo_lcd_get_ce(struct device *dev, struct device_attribute *attr, char *buf);
+extern ssize_t lenovo_lcd_set_ce(struct device *dev, struct device_attribute *attr, const char *buf, size_t count);
+extern ssize_t lenovo_lcd_set_dpst(struct device *dev, struct device_attribute *attr, const char *buf, size_t count);
+extern ssize_t lenovo_lcd_get_dpst(struct device *dev, struct device_attribute *attr, char *buf);
 /**
  * framebuffer_alloc - creates a new frame buffer info structure
  *
@@ -393,7 +405,20 @@ static ssize_t show_name(struct device *device,
 
 	return snprintf(buf, PAGE_SIZE, "%s\n", fb_info->fix.id);
 }
+#if 0
+static ssize_t show_lcd_name(struct device *device,
+			 struct device_attribute *attr, char *buf)
+{
+	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct drm_fb_helper *drm_helper = (struct drm_fb_helper *)fb_info->par;
+	struct drm_device *dev = drm_helper->dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	int mipi_panel_id = dev_priv->mipi_panel_id;
 
+	printk("[LCD]: %s, panel id: 0x%x\n",__func__, mipi_panel_id);
+	return snprintf(buf, sizeof(mipi_panel_id), "%x\n", mipi_panel_id);
+}
+#endif
 static ssize_t store_fbstate(struct device *device,
 			     struct device_attribute *attr,
 			     const char *buf, size_t count)
@@ -507,6 +532,11 @@ static struct device_attribute device_attrs[] = {
 	__ATTR(pan, S_IRUGO|S_IWUSR, show_pan, store_pan),
 	__ATTR(virtual_size, S_IRUGO|S_IWUSR, show_virtual, store_virtual),
 	__ATTR(name, S_IRUGO, show_name, NULL),
+	/*__ATTR(lcd_name, S_IRUGO, show_lcd_name, NULL),*/
+	__ATTR(lcd_name, S_IRUGO, lenovo_lcd_get_name, NULL),
+    __ATTR(cabc_onoff, S_IRUGO|S_IWUSR, lenovo_lcd_get_cabc,lenovo_lcd_set_cabc),
+    __ATTR(ce_onoff, S_IRUGO|S_IWUSR, lenovo_lcd_get_ce,lenovo_lcd_set_ce),
+    __ATTR(dpst_onoff, S_IRUGO|S_IWUSR, lenovo_lcd_get_dpst,lenovo_lcd_set_dpst),
 	__ATTR(stride, S_IRUGO, show_stride, NULL),
 	__ATTR(rotate, S_IRUGO|S_IWUSR, show_rotate, store_rotate),
 	__ATTR(state, S_IRUGO|S_IWUSR, show_fbstate, store_fbstate),

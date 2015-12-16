@@ -710,6 +710,11 @@ acpi_os_physical_table_override(struct acpi_table_header *existing_table,
 		table = acpi_os_map_memory(acpi_tables_addr + table_offset,
 					   ACPI_HEADER_SIZE);
 
+		if (table == NULL) {
+			pr_err("Error mapping ACPI memory\n");
+			return AE_ERROR;
+		}
+
 		if (table_offset + table->length > all_tables_size) {
 			acpi_os_unmap_memory(table, ACPI_HEADER_SIZE);
 			WARN_ON(1);
@@ -1714,6 +1719,17 @@ acpi_status acpi_os_release_object(acpi_cache_t * cache, void *object)
 	return (AE_OK);
 }
 #endif
+
+static int __init acpi_no_auto_ssdt_setup(char *s)
+{
+        printk(KERN_NOTICE PREFIX "SSDT auto-load disabled\n");
+
+        acpi_gbl_disable_ssdt_table_load = TRUE;
+
+        return 1;
+}
+
+__setup("acpi_no_auto_ssdt", acpi_no_auto_ssdt_setup);
 
 acpi_status __init acpi_os_initialize(void)
 {

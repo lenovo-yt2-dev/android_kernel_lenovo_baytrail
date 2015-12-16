@@ -398,6 +398,7 @@ gmbus_xfer(struct i2c_adapter *adapter,
 	int i, reg_offset;
 	int ret = 0;
 
+	intel_aux_display_runtime_get(dev_priv);
 	mutex_lock(&dev_priv->gmbus_mutex);
 
 	if (bus->force_bit) {
@@ -484,11 +485,15 @@ clear_err:
 			 adapter->name, msgs[i].addr,
 			 (msgs[i].flags & I2C_M_RD) ? 'r' : 'w', msgs[i].len);
 
-	goto out;
+	goto fallback;
 
 timeout:
 	DRM_INFO("GMBUS [%s] timed out, falling back to bit banging on pin %d\n",
 		 bus->adapter.name, bus->reg0 & 0xff);
+	DRM_INFO("GMBUS [%s] timed out,\n", bus->adapter.name);
+
+fallback:
+	DRM_INFO("Falling back to bit banging on pin %d\n", bus->reg0 & 0xff);
 	I915_WRITE(GMBUS0 + reg_offset, 0);
 
 	/* Hardware may not support GMBUS over these pins? Try GPIO bitbanging instead. */
@@ -497,6 +502,7 @@ timeout:
 
 out:
 	mutex_unlock(&dev_priv->gmbus_mutex);
+	intel_aux_display_runtime_put(dev_priv);
 	return ret;
 }
 
@@ -541,6 +547,9 @@ int intel_setup_gmbus(struct drm_device *dev)
 
 		bus->adapter.owner = THIS_MODULE;
 		bus->adapter.class = I2C_CLASS_DDC;
+		/*TODO: Revisit and optimize this value */
+		bus->adapter.retries = 100;
+		bus->adapter.timeout = usecs_to_jiffies(2200);
 		snprintf(bus->adapter.name,
 			 sizeof(bus->adapter.name),
 			 "i915 gmbus %s",
@@ -564,6 +573,12 @@ int intel_setup_gmbus(struct drm_device *dev)
 		if (ret)
 			goto err;
 	}
+	if (IS_VALLEYVIEW(dev)) {
+		/*
+		 * TODO: Need to program proper GMBUS frequency using cdclk
+		 */
+		intel_set_gmbus_frequency(dev_priv);
+	}
 
 	intel_i2c_reset(dev_priv->dev);
 
@@ -575,6 +590,59 @@ err:
 		i2c_del_adapter(&bus->adapter);
 	}
 	return ret;
+}
+
+void intel_get_cd_cz_clk(struct drm_i915_private *dev_priv, int *cd_clk,
+				int *cz_clk)
+{
+	u32 cck_fuse, clk_index, cd_clk_index, cz_clk_index;
+
+	u16  m_cd_clk_vco_800_tbl[] = {0, 800, 533, 400, 320, 267, 0, 200, 178,
+				160, 0, 133, 0, 0, 107, 100, 0, 89, 0,
+				80, 0, 0, 0, 67, 0, 0, 0, 0, 0, 53, 0, 50};
+	u16  m_cd_clk_vco_1600_tbl[] = {0, 1600, 1067, 800, 640, 533, 0, 400,
+				356, 320, 0, 267, 0, 0, 213, 200, 0, 178, 0,
+				160, 0, 0, 0, 133, 0, 0, 0, 0, 0, 107, 0, 100};
+	u16  m_cd_clk_vco_2000_tbl[] = {0, 2000, 1333, 1000, 800, 667, 0, 500,
+				444, 400, 0, 333, 0, 0, 267, 250, 0,  222, 0,
+				200, 0, 0, 0, 167, 0, 0, 0, 0, 0, 133, 0, 125};
+
+	/* print cdclock speed */
+	cck_fuse = vlv_cck_read(dev_priv, 0x08);
+	cck_fuse = cck_fuse & 0x03;
+
+	clk_index = I915_READ(CD_CZ_CLOCK_FREQ_REG);
+
+	/* Get the CD Clock Index */
+	cd_clk_index = (clk_index & 0x1F0) >> 4;
+	/* Get the CZ Clock Index */
+	cz_clk_index = (clk_index & 0xF);
+
+	switch (cck_fuse) {
+	case 0:
+		*cd_clk = m_cd_clk_vco_800_tbl[cd_clk_index];
+		*cz_clk = m_cd_clk_vco_800_tbl[cz_clk_index];
+		break;
+	case 1:
+		*cd_clk = m_cd_clk_vco_1600_tbl[cd_clk_index];
+		*cz_clk = m_cd_clk_vco_1600_tbl[cz_clk_index];
+		break;
+	case 2:
+		*cd_clk = m_cd_clk_vco_2000_tbl[cd_clk_index];
+		*cz_clk = m_cd_clk_vco_2000_tbl[cz_clk_index];
+		break;
+	default:
+		break;
+	}
+}
+
+void intel_set_gmbus_frequency(struct drm_i915_private *dev_priv)
+{
+	int cd_clk, cz_clk;
+
+	intel_get_cd_cz_clk(dev_priv, &cd_clk, &cz_clk);
+
+	I915_WRITE(GMBUSFREQ, cd_clk);
 }
 
 struct i2c_adapter *intel_gmbus_get_adapter(struct drm_i915_private *dev_priv,
