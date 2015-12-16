@@ -287,7 +287,7 @@ static const struct wiphy_wowlan_support wowlan_stub = {
 
 
 #ifndef RSSI_OFFSET
-#define RSSI_OFFSET	0
+#define RSSI_OFFSET	10
 #endif
 
 #ifndef IBSS_COALESCE_ALLOWED
