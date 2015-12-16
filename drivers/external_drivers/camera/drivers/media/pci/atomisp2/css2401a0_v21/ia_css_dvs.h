@@ -1,0 +1,166 @@
+/*
+ * Support for Intel Camera Imaging ISP subsystem.
+ *
+ * Copyright (c) 2010 - 2014 Intel Corporation. All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License version
+ * 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ */
+
+#ifndef __IA_CSS_DVS_H
+#define __IA_CSS_DVS_H
+
+#include <type_support.h>
+#include "ia_css_types.h"
+#include "ia_css_stream_public.h"
+
+/** Structure that holds DVS statistics in the ISP internal
+ * format. Use ia_css_get_dvs_statistics() to translate
+ * this to the format used on the host (DVS engine).
+ * */
+struct ia_css_isp_dvs_statistics {
+	ia_css_ptr hor_proj;
+	ia_css_ptr ver_proj;
+	uint32_t   hor_size;
+	uint32_t   ver_size;
+	uint32_t   exp_id;
+};
+#define SIZE_OF_IA_CSS_ISP_DVS_STATISTICS_STRUCT			\
+	((2 * SIZE_OF_IA_CSS_PTR) +					\
+	(3 * sizeof(uint32_t)))
+
+/** @brief Copy DVS statistics from an ISP buffer to a host buffer.
+ * @param[in]	host_stats Host buffer
+ * @param[in]	isp_stats ISP buffer
+ * @return		None
+ * This may include a translation step as well depending
+ * on the ISP version.
+ * Always use this function, never copy the buffer directly.
+ */
+void
+ia_css_get_dvs_statistics(struct ia_css_dvs_statistics           *host_stats,
+			  const struct ia_css_isp_dvs_statistics *isp_stats);
+
+/** @brief Copy DVS 2.0 statistics from an ISP buffer to a host buffer.
+ * @param[in]	host_stats Host buffer
+ * @param[in]	isp_stats ISP buffer
+ * @return		None
+ * This may include a translation step as well depending
+ * on the ISP version.
+ * Always use this function, never copy the buffer directly.
+ */
+void
+ia_css_get_dvs2_statistics(struct ia_css_dvs2_statistics           *host_stats,
+			  const struct ia_css_isp_dvs_statistics *isp_stats);
+
+/** @brief Allocate the DVS statistics memory on the ISP
+ * @param[in]	grid The grid.
+ * @return		Pointer to the allocated DVS statistics buffer on the ISP
+*/
+struct ia_css_isp_dvs_statistics *
+ia_css_isp_dvs_statistics_allocate(const struct ia_css_dvs_grid_info *grid);
+
+/** @brief Free the DVS statistics memory on the ISP
+ * @param[in]	me Pointer to the DVS statistics buffer on the ISP.
+ * @return		None
+*/
+void
+ia_css_isp_dvs_statistics_free(struct ia_css_isp_dvs_statistics *me);
+
+/** @brief Allocate the DVS 2.0 statistics memory
+ * @param[in]	grid The grid.
+ * @return		Pointer to the allocated DVS statistics buffer on the ISP
+*/
+struct ia_css_isp_dvs_statistics *
+ia_css_isp_dvs2_statistics_allocate(const struct ia_css_dvs_grid_info *grid);
+
+/** @brief Free the DVS 2.0 statistics memory
+ * @param[in]	me Pointer to the DVS statistics buffer on the ISP.
+ * @return		None
+*/
+void
+ia_css_isp_dvs2_statistics_free(struct ia_css_isp_dvs_statistics *me);
+
+/** @brief Allocate the DVS statistics memory on the host
+ * @param[in]	grid The grid.
+ * @return		Pointer to the allocated DVS statistics buffer on the host
+*/
+struct ia_css_dvs_statistics *
+ia_css_dvs_statistics_allocate(const struct ia_css_dvs_grid_info *grid);
+
+/** @brief Free the DVS statistics memory on the host
+ * @param[in]	me Pointer to the DVS statistics buffer on the host.
+ * @return		None
+*/
+void
+ia_css_dvs_statistics_free(struct ia_css_dvs_statistics *me);
+
+/** @brief Allocate the DVS coefficients memory
+ * @param[in]	grid The grid.
+ * @return		Pointer to the allocated DVS coefficients buffer
+*/
+struct ia_css_dvs_coefficients *
+ia_css_dvs_coefficients_allocate(const struct ia_css_dvs_grid_info *grid);
+
+/** @brief Free the DVS coefficients memory
+ * @param[in]	me Pointer to the DVS coefficients buffer.
+ * @return		None
+ */
+void
+ia_css_dvs_coefficients_free(struct ia_css_dvs_coefficients *me);
+
+/** @brief Allocate the DVS 2.0 statistics memory on the host
+ * @param[in]	grid The grid.
+ * @return		Pointer to the allocated DVS 2.0 statistics buffer on the host
+ */
+struct ia_css_dvs2_statistics *
+ia_css_dvs2_statistics_allocate(const struct ia_css_dvs_grid_info *grid);
+
+/** @brief Free the DVS 2.0 statistics memory
+ * @param[in]	me Pointer to the DVS 2.0 statistics buffer on the host.
+ * @return		None
+*/
+void
+ia_css_dvs2_statistics_free(struct ia_css_dvs2_statistics *me);
+
+/** @brief Allocate the DVS 2.0 coefficients memory
+ * @param[in]	grid The grid.
+ * @return		Pointer to the allocated DVS 2.0 coefficients buffer
+*/
+struct ia_css_dvs2_coefficients *
+ia_css_dvs2_coefficients_allocate(const struct ia_css_dvs_grid_info *grid);
+
+/** @brief Free the DVS 2.0 coefficients memory
+ * @param[in]	me Pointer to the DVS 2.0 coefficients buffer.
+ * @return		None
+*/
+void
+ia_css_dvs2_coefficients_free(struct ia_css_dvs2_coefficients *me);
+
+/** @brief Allocate the DVS 2.0 6-axis config memory
+ * @param[in]	stream The stream.
+ * @return		Pointer to the allocated DVS 6axis configuration buffer
+*/
+struct ia_css_dvs_6axis_config *
+ia_css_dvs2_6axis_config_allocate(const struct ia_css_stream *stream);
+
+/** @brief Free the DVS 2.0 6-axis config memory
+ * @param[in]	dvs_6axis_config Pointer to the DVS 6axis configuration buffer
+ * @return		None
+ */
+void
+ia_css_dvs2_6axis_config_free(struct ia_css_dvs_6axis_config *dvs_6axis_config);
+
+#endif /* __IA_CSS_DVS_H */
