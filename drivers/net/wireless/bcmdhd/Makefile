@@ -2,7 +2,7 @@ ifneq ($(CONFIG_BCM43241),)
 BCM43XX_DRIVER=bcm43241
 endif
 
-DHDCFLAGS += -Wall -Wstrict-prototypes -Dlinux -DBCMDRIVER                      \
+DHDCFLAGS += -Wall -Wstrict-prototypes -Dlinux -DBCMDRIVER -DSUPPORT_PM2_ONLY                      \
 	-DBCMDONGLEHOST -DUNRELEASEDCHIP -DBCMDMA32 -DBCMFILEIMAGE             \
 	-DDHDTHREAD -DBDC                                                      \
 	-DDHD_BCMEVENTS -DSHOW_EVENTS -DBCMDBG                                 \

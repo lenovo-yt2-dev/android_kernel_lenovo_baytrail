@@ -258,8 +258,8 @@ static int wl_android_get_rssi(struct net_device *net, char *command, int total_
 	int error;
 
 	error = wldev_get_rssi(net, &rssi);
-	rssi = rssi + 10;
-	DHD_ERROR(("%s: RSSI is %d\n", __FUNCTION__, rssi));
+	//rssi = rssi + 10;
+	//DHD_ERROR(("%s: RSSI is %d\n", __FUNCTION__, rssi));
 	if (error)
 		return -1;
 
