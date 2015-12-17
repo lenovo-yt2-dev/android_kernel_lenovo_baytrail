@@ -2031,3 +2031,9 @@ static void __exit alsa_card_intelhad_exit(void)
 }
 late_initcall(alsa_card_intelhad_init);
 module_exit(alsa_card_intelhad_exit);
+
+EXPORT_SYMBOL(had_set_caps);
+EXPORT_SYMBOL(had_get_hwstate);
+EXPORT_SYMBOL(snd_intelhad_read_len);
+EXPORT_SYMBOL(had_read_register);
+EXPORT_SYMBOL(had_write_register);
