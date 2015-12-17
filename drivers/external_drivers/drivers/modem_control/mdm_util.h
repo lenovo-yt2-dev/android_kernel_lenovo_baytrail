@@ -123,8 +123,8 @@ struct next_state {
 /* Modem control driver instance */
 extern struct mdm_ctrl *mdm_drv;
 
-inline void mdm_ctrl_set_opened(struct mdm_info *mdm, int value);
-inline int mdm_ctrl_get_opened(struct mdm_info *mdm);
+void mdm_ctrl_set_opened(struct mdm_info *mdm, int value);
+int mdm_ctrl_get_opened(struct mdm_info *mdm);
 
 void mdm_ctrl_enable_flashing(unsigned long int param);
 void mdm_ctrl_disable_flashing(unsigned long int param);
@@ -135,8 +135,8 @@ void mdm_ctrl_launch_timer(struct mdm_info *mdm, int delay,
 inline void mdm_ctrl_set_reset_ongoing(struct mdm_ctrl *drv, int ongoing);
 inline int mdm_ctrl_get_reset_ongoing(struct mdm_ctrl *drv);
 
-inline void mdm_ctrl_set_state(struct mdm_info *mdm, int state);
-inline int mdm_ctrl_get_state(struct mdm_info *mdm);
+void mdm_ctrl_set_state(struct mdm_info *mdm, int state);
+int mdm_ctrl_get_state(struct mdm_info *mdm);
 
 int mdm_ctrl_get_device_info(struct mdm_ctrl *drv,
 		struct platform_device *pdev);
