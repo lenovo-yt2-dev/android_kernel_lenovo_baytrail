@@ -23,7 +23,6 @@
 
 #include "reboot_target.h"
 #include "intel_mid_osnib_ilb.h"
-#include "intel_mid_osip.h"
 
 #define VALLEYVIEW2_FAMILY	0x30670
 #define CPUID_MASK		0xffff0
@@ -313,17 +312,6 @@ int intel_mid_ilb_write_osnib_rr(const char *target, int id)
 		id);
 	intel_mid_ilb_write_osnib_checksum(&osnib_buffer);
 
-	switch (id) {
-	case RECOVERY:
-		osip_invalidate_main();
-		break;
-	case MAIN:
-		osip_restore_main();
-		break;
-	default:
-		/* Nothing to do */
-		break;
-	}
 	return 0;
 }
 
