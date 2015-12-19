@@ -1196,6 +1196,8 @@ struct atomisp_sensor_ae_bracketing_lut {
 #define ATOMISP_IOC_G_EFFECTIVE_RESOLUTION \
 	_IOR('v', BASE_VIDIOC_PRIVATE + 45, struct atomisp_resolution)
 
+#define ATOMISP_IOC_S_BINNING_SUM \
+        _IOWR('v', BASE_VIDIOC_PRIVATE + 68, int)
 
 /*
  * Reserved ioctls. We have customer implementing it internally.

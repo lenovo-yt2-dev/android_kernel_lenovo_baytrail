@@ -1369,7 +1369,7 @@ int atomisp_css_start(struct atomisp_sub_device *asd,
                 if(asd->run_mode->val == ATOMISP_RUN_MODE_STILL_CAPTURE){
                     dev_err(isp->dev, "eee  ATOMISP_RUN_MODE_STILL_CAPTURE \n");
 //                    setOpenIntelISP(false);
-                    startCapture();
+//                    startCapture();
                 }else if(asd->run_mode->val == ATOMISP_RUN_MODE_PREVIEW){
                     dev_err(isp->dev, "eee ATOMISP_RUN_MODE_PREVIEW\n");
 //                    setOpenIntelISP(true);
