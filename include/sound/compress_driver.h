@@ -180,10 +180,11 @@ static inline void snd_compr_fragment_elapsed(struct snd_compr_stream *stream)
 
 static inline void snd_compr_drain_notify(struct snd_compr_stream *stream)
 {
-	snd_BUG_ON(!stream);
+	if (snd_BUG_ON(!stream))
+		return;
 
-	stream->runtime->drain_wake = 1;
-	wake_up(&stream->runtime->wait);
+	stream->runtime->state = SNDRV_PCM_STATE_SETUP;
+	wake_up(&stream->runtime->sleep);
 }
 
 #endif

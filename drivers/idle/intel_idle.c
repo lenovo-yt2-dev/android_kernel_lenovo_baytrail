@@ -838,7 +838,7 @@ static int intel_idle(struct cpuidle_device *dev,
 	if (!(lapic_timer_reliable_states & (1 << (cstate))))
 		clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_ENTER, &cpu);
 
-	if (!need_resched()) {
+	if (!current_set_polling_and_test()) {
 #ifdef CONFIG_XEN
 		HYPERVISOR_mwait_op(eax, ecx,
 					(void *)&current_thread_info()->flags,
