@@ -37,7 +37,7 @@
 #include "../sst_platform.h"
 #include "../platform_ipc_v2.h"
 #include "sst.h"
-#include "sst_trace.h"
+#include <trace/sst_trace.h>
 
 /**
  * sst_alloc_stream - Send msg for a new stream ID

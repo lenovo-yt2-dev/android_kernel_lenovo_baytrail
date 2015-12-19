@@ -36,7 +36,7 @@
 #include "../sst_platform.h"
 #include "../platform_ipc_v2.h"
 #include "sst.h"
-#include "sst_trace.h"
+#include <trace/sst_trace.h>
 
 void sst_dump_to_buffer(const void *from, size_t len, char *buf)
 {

@@ -51,7 +51,7 @@
 #include "sst.h"
 
 #define CREATE_TRACE_POINTS
-#include "sst_trace.h"
+#include <trace/sst_trace.h>
 
 MODULE_AUTHOR("Vinod Koul <vinod.koul@intel.com>");
 MODULE_AUTHOR("Harsha Priya <priya.harsha@intel.com>");
