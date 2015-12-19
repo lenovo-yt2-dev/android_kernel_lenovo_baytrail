@@ -42,7 +42,7 @@
 #include "../sst_platform.h"
 #include "../platform_ipc_v2.h"
 #include "sst.h"
-#include "sst_trace.h"
+#include <trace/sst_trace.h>
 
 #ifndef CONFIG_X86_64
 #define MEMCPY_TOIO memcpy_toio

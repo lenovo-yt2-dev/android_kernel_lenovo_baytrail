@@ -252,5 +252,5 @@ int serial_hsu_do_suspend(struct uart_hsu_port *up);
 int serial_hsu_do_resume(struct uart_hsu_port *up);
 int serial_hsu_do_runtime_idle(struct uart_hsu_port *up);
 
-#include "mfd_trace.h"
+#include <trace/mfd_trace.h>
 #endif
