@@ -1377,12 +1377,6 @@ void atomisp_wdt_work(struct work_struct *work)
 		return;
 	}
 
-    if (Read_PROJ_ID() == PROJ_ID_ZX550ML){  //=== For debug usage of scope trigger to capture the signal. ===//
-	    gpio_set_value(60, 0);
-		mdelay(1);
-		printk(KERN_INFO "@atomisp_wdt_work, gpio 60 set low 1ms here!\n");
-		gpio_set_value(60, 1);
-	}
 	dev_err(isp->dev, "timeout %d of %d\n",
 		atomic_read(&isp->wdt_count) + 1,
 		ATOMISP_ISP_MAX_TIMEOUT_COUNT);
