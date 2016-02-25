@@ -199,6 +199,18 @@ static int sdhci_acpi_get_tuning_count(struct sdhci_host *host)
 	return tuning_count;
 }
 
+static void  sdhci_acpi_platform_reset_exit(struct sdhci_host *host, u8 mask)
+{
+	if (host->quirks2 & SDHCI_QUIRK2_POWER_PIN_GPIO_MODE) {
+		if (mask & SDHCI_RESET_ALL) {
+			/* reset back to 3.3v signaling */
+			gpio_set_value(host->gpio_1p8_en, 0);
+			/* disable the VDD power */
+			gpio_set_value(host->gpio_pwr_en, 1);
+		}
+	}
+}
+
 /* CHT A0 workaround */
 static int sdhci_intel_chv_set_io_vol(struct sdhci_host *host, bool to_1p8)
 {
@@ -251,6 +263,7 @@ static const struct sdhci_ops sdhci_acpi_ops_dflt = {
 	.enable_dma = sdhci_acpi_enable_dma,
 	.power_up_host	= sdhci_acpi_power_up_host,
 	.get_tuning_count = sdhci_acpi_get_tuning_count,
+	.platform_reset_exit = sdhci_acpi_platform_reset_exit,
 	.set_io_voltage	= sdhci_acpi_set_io_vol,
 };
 
@@ -279,8 +292,6 @@ static int sdhci_acpi_emmc_probe_slot(struct platform_device *pdev)
 		sdhci_alloc_panic_host(host);
 
 	host->mmc->caps2 |= MMC_CAP2_CACHE_CTRL;
-	/* Enable Packed Command */
-	host->mmc->caps2 |= MMC_CAP2_PACKED_CMD;
 
 	if (!sdhci_intel_host(&cpu))
 		return 0;
@@ -303,31 +314,14 @@ static int sdhci_acpi_emmc_probe_slot(struct platform_device *pdev)
 static int sdhci_acpi_sdio_probe_slot(struct platform_device *pdev)
 {
 	struct sdhci_acpi_host *c = platform_get_drvdata(pdev);
-	struct sdhci_host *host;
-	unsigned int cpu;
 
-	if (!c || !c->host)
+	if (!c)
 		return 0;
 
-	host = c->host;
-
-	if (!sdhci_intel_host(&cpu))
-		return 0;
-
-	switch (cpu) {
-	case INTEL_VLV_CPU:
+	if (INTEL_MID_BOARDV1(PHONE, BYT) ||
+			 INTEL_MID_BOARDV1(TABLET, BYT)) {
 		/* increase the auto suspend delay for SDIO to be 500ms */
 		c->autosuspend_delay = 500;
-		host->mmc->qos = kzalloc(sizeof(struct pm_qos_request),
-				GFP_KERNEL);
-		pm_qos_add_request(host->mmc->qos, PM_QOS_CPU_DMA_LATENCY,
-				PM_QOS_DEFAULT_VALUE);
-		break;
-	case INTEL_CHV_CPU:
-		host->quirks2 |= SDHCI_QUIRK2_SDR104_BROKEN;
-		break;
-	default:
-		break;
 	}
 
 	return 0;
@@ -359,6 +353,8 @@ static int sdhci_acpi_sd_probe_slot(struct platform_device *pdev)
 {
 	struct sdhci_acpi_host *c = platform_get_drvdata(pdev);
 	struct sdhci_host *host;
+	int sd_1p8_en, sd_pwr_en;
+	int err;
 	unsigned int cpu;
 
 	if (!c || !c->host || !c->slot)
@@ -373,6 +369,37 @@ static int sdhci_acpi_sd_probe_slot(struct platform_device *pdev)
 
 	c->cd_gpio = acpi_get_gpio_by_index(&pdev->dev, 0, NULL);
 
+	if (INTEL_MID_BOARDV1(PHONE, BYT) ||
+			 INTEL_MID_BOARDV1(TABLET, BYT))
+		host->quirks2 |= SDHCI_QUIRK2_POWER_PIN_GPIO_MODE;
+
+	/* change the GPIO pin to GPIO mode */
+	if (host->quirks2 & SDHCI_QUIRK2_POWER_PIN_GPIO_MODE) {
+		/* change to GPIO mode */
+		sd_1p8_en = acpi_get_gpio_by_index(&pdev->dev, 2, NULL);
+		sd_pwr_en = acpi_get_gpio_by_index(&pdev->dev, 3, NULL);
+		lnw_gpio_set_alt(sd_pwr_en, 0);
+		err = gpio_request(sd_pwr_en, "sd_pwr_en");
+		if (err)
+			return -ENODEV;
+		host->gpio_pwr_en = sd_pwr_en;
+		/* disable the power by default */
+		gpio_direction_output(host->gpio_pwr_en, 0);
+		gpio_set_value(host->gpio_pwr_en, 1);
+
+		/* change to GPIO mode */
+		lnw_gpio_set_alt(sd_1p8_en, 0);
+		err = gpio_request(sd_1p8_en, "sd_1p8_en");
+		if (err) {
+			gpio_free(host->gpio_pwr_en);
+			return -ENODEV;
+		}
+		host->gpio_1p8_en = sd_1p8_en;
+		/* 3.3v signaling by default */
+		gpio_direction_output(host->gpio_1p8_en, 0);
+		gpio_set_value(host->gpio_1p8_en, 0);
+	}
+
 	host->mmc->caps2 |= MMC_CAP2_PWCTRL_POWER;
 
 	/* Bayley Bay board */
@@ -386,12 +413,11 @@ static int sdhci_acpi_sd_probe_slot(struct platform_device *pdev)
 	if (!sdhci_intel_host(&cpu))
 		return 0;
 
-	if (cpu == INTEL_CHV_CPU) {
+	if (cpu == INTEL_CHV_CPU)
 		host->gpiobase = ioremap_nocache(INTEL_CHT_GPIO_SOUTHEAST,
 				INTEL_CHT_GPIO_LEN);
-		host->quirks2 |= SDHCI_QUIRK2_CARD_CD_DELAY;
-	} else if (cpu == INTEL_VLV_CPU) {
-		host->mmc->qos = kzalloc(sizeof(struct pm_qos_request),
+	else if (cpu == INTEL_VLV_CPU){
+		host->mmc->qos = kzalloc(sizeof(struct pm_qos_request), 
 				GFP_KERNEL);
 		pm_qos_add_request(host->mmc->qos, PM_QOS_CPU_DMA_LATENCY,
 				PM_QOS_DEFAULT_VALUE);
