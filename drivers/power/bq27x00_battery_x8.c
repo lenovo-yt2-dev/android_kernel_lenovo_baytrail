@@ -411,9 +411,6 @@ static inline int bq27x00_read(struct bq27x00_device_info *di, int reg_index,
 {
 	int val;
 
-	if(di->regs[reg_index] == CMD_INVALID)
-		fg_dbg("BQ27541: INVALID ADDR IDX = %d\n", reg_index);
-	
 	/* Reports 0 for invalid/missing registers */
 	if (!di || !di->regs || di->regs[reg_index] == CMD_INVALID)
 		return 0;
@@ -1183,28 +1180,22 @@ static int bq27x00_battery_get_property(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
 		ret = bq27x00_battery_status(di, val);
-		fg_dbg("POWER_SUPPLY_PROP_STATUS, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:	
 		ret = bq27x00_battery_voltage(di, val);
-		fg_dbg("POWER_SUPPLY_PROP_VOLTAGE_NOW, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 		val->intval = di->cache.flags < 0 ? 0 : 1;
-		fg_dbg("POWER_SUPPLY_PROP_PRESENT, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		ret = bq27x00_battery_current(di, val);
-		fg_dbg("POWER_SUPPLY_PROP_CURRENT_NOW, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY_LEVEL:
 		ret = bq27x00_simple_value(di->cache.raw_capacity, val);
-		fg_dbg("POWER_SUPPLY_PROP_CAPACITY_LEVEL, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
 		ret = bq27x00_battery_qpassed(di, val);
-		fg_dbg("POWER_SUPPLY_PROP_CHARGE_COUNTER, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		if (di->fake_battery) {
@@ -1213,53 +1204,40 @@ static int bq27x00_battery_get_property(struct power_supply *psy,
 		} else {
 			ret = bq27x00_simple_value(di->cache.capacity, val);
 		}
-		fg_dbg("POWER_SUPPLY_PROP_CAPACITY, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
 		ret = bq27x00_battery_temperature(di, val);
-		fg_dbg("POWER_SUPPLY_PROP_TEMP, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_NOW:
 		ret = bq27x00_simple_value(di->cache.time_to_empty, val);
-		fg_dbg("POWER_SUPPLY_PROP_TIME_TO_EMPTY_NOW, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
 		ret = bq27x00_simple_value(di->cache.time_to_empty_avg, val);
-		fg_dbg("POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
 		ret = bq27x00_simple_value(di->cache.time_to_full, val);
-		fg_dbg("POWER_SUPPLY_PROP_TIME_TO_FULL_NOW, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_TECHNOLOGY:
 		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
-		fg_dbg("POWER_SUPPLY_PROP_TECHNOLOGY, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_NOW:
 		ret = bq27x00_simple_value(1000 * di->cache.true_cap, val);
-		fg_dbg("POWER_SUPPLY_PROP_CHARGE_NOW, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
 		ret = bq27x00_simple_value(1000 * di->cache.true_fcc, val);
-		fg_dbg("POWER_SUPPLY_PROP_CHARGE_FULL, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
 		ret = bq27x00_simple_value(di->charge_design_full, val);
-		fg_dbg("POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_CYCLE_COUNT:
 		ret = bq27x00_simple_value(di->cache.cycle_count, val);
-		fg_dbg("POWER_SUPPLY_PROP_CYCLE_COUNT, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_ENERGY_NOW:
 		ret = bq27x00_battery_energy(di, val);
-		fg_dbg("POWER_SUPPLY_PROP_ENERGY_NOW, val = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
 		ret = bq27x00_read(di, BQ27x00_REG_SOH, false);
 		
-		fg_dbg("POWER_SUPPLY_PROP_HEALTH, val = %d\n", val->intval);
-
 		if(ret > 0)
 			val->intval = POWER_SUPPLY_HEALTH_GOOD;
 		else
