@@ -58,6 +58,7 @@ enum {
 	POWER_SUPPLY_HEALTH_COLD,
 	POWER_SUPPLY_HEALTH_WATCHDOG_TIMER_EXPIRE,
 	POWER_SUPPLY_HEALTH_SAFETY_TIMER_EXPIRE,
+	POWER_SUPPLY_HEALTH_LOWCURRENT,
 };
 
 enum {
@@ -184,6 +185,7 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_USB_CDP,	/* Charging Downstream Port */
 	POWER_SUPPLY_TYPE_USB_ACA,	/* Accessory Charger Adapters */
 	POWER_SUPPLY_TYPE_USB_HOST,	/* To support OTG devices */
+	POWER_SUPPLY_TYPE_OTG_DISABLE,	/* To OTG disable status for Blade2 */
 };
 
 enum power_supply_charger_event {
