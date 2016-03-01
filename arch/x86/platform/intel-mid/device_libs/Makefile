@@ -76,6 +76,7 @@ obj-$(subst m,y,$(CONFIG_TOUCHSCREEN_HIMAX_HX8528_ME372CL)) += platform_hx8528_m
 #ifdef CONFIG_TOUCHSCREEN_FTXXXX
 #obj-$(subst m,y,$(CONFIG_TOUCHSCREEN_FTXXXX)) += platform_ftxxxx.o
 #endif
+obj-$(subst m,y,$(CONFIG_BATTERY_BQ27x00_X8)) += platform_bq27500_x8.o
 
 # SPI Devices
 obj-$(subst m,y,$(CONFIG_SERIAL_MRST_MAX3110)) += platform_max3111.o
