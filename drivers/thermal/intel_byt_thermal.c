@@ -937,7 +937,7 @@ static void notify_thermal_event(struct thermal_event te)
 		goto exit;
 	}
 
-	pr_info("Thermal Event: sensor: %s, cur_temp: %ld, event: %d, level: %d\n",
+	pr_debug("Thermal Event: sensor: %s, cur_temp: %ld, event: %d, level: %d\n",
 			tzd->type, cur_temp, te.event, te.level);
 	/*
 	 * Send UEvents only when temperature goes below
