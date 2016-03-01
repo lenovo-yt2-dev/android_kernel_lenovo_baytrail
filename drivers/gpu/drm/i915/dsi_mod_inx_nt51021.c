@@ -370,7 +370,6 @@ static bool inx_nt51021_mode_fixup(struct intel_dsi_device *dsi,
 
 static enum drm_connector_status inx_nt51021_detect(struct intel_dsi_device *dsi)
 {
-	printk("[LCD]:%s\n",__func__);
 	return connector_status_connected;
 }
 

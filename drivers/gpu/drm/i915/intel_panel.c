@@ -683,15 +683,10 @@ void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level)
 			}else{
 				if(intel_dsi_dev->dev_ops->set_backlight_level!= NULL && !backlight_level0)
 					intel_dsi_dev->dev_ops->set_backlight_level(intel_dsi_dev,backlight_buf[level]);
-				else
-					printk("[LCD] NT51021 backlight level:%d, ### why here !!!!\n",level);
 			}
-			printk("[LCD] NT51021 backlight level:%d  actual level:%d\n",level,backlight_buf[level]);
 #else
-		printk("backlight level:%d\n",level);
-
-				lp855x_ext_write_byte(0x04, level);
-			intel_mid_pmic_writeb(0x4E, level);
+		lp855x_ext_write_byte(0x04, level);
+		intel_mid_pmic_writeb(0x4E, level);
 #endif
 		}
                 else
