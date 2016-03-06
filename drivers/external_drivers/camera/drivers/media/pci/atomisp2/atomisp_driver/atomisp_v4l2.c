@@ -318,13 +318,13 @@ int Xe_flash_on(struct v4l2_subdev *sd, u16 delay, u16 pulse)
     return 0;
 }
 /* set reserved memory pool size in page */
-unsigned int repool_pgnr=39936;
+unsigned int repool_pgnr = 32768;
 module_param(repool_pgnr, uint, 0644);
 MODULE_PARM_DESC(repool_pgnr,
 		"Set the reserved memory pool size in page (default:0)");
 
 /* set dynamic memory pool size in page */
-unsigned int dypool_pgnr = 39936;
+unsigned int dypool_pgnr = 32768;
 module_param(dypool_pgnr, uint, 0644);
 MODULE_PARM_DESC(dypool_pgnr,
 		"Set the dynamic memory pool size in page (default:0)");
