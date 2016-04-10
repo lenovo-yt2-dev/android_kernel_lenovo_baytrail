@@ -49,7 +49,6 @@
 #include <asm/cpu_device_id.h>
 
 #include "sdhci.h"
-#include <linux/tablet_config.h>
 #define INTEL_CHT_GPIO_SOUTHEAST	0xfed98000
 #define INTEL_CHT_GPIO_LEN		0x2000
 #define INTEL_CHV_RCOMP_CTRL	0x1180
@@ -404,7 +403,7 @@ static int sdhci_acpi_sd_probe_slot(struct platform_device *pdev)
 static const struct sdhci_acpi_slot sdhci_acpi_slot_int_sd = {
 	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN |
 		SDHCI_QUIRK2_SDR104_BROKEN | SDHCI_QUIRK2_NO_1_8_V,
-        #ifdef BLADE2_13
+        #ifdef CONFIG_BLADE2_13
         .quirks = SDHCI_QUIRK_INVERTED_WRITE_PROTECT,
         .caps2   = MMC_CAP2_FIXED_NCRC | MMC_CAP2_CD_ACTIVE_HIGH,
         #else

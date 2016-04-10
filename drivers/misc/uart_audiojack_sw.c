@@ -23,8 +23,7 @@
  *        function driver will be placed in the same /proc directory, for example:
  *        /proc/racer-switch/
  */
-#include <linux/tablet_config.h>
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/fs.h>

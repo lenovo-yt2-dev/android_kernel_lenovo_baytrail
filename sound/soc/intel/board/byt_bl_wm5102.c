@@ -43,7 +43,6 @@
 #include <linux/lnw_gpio.h>
 #include <linux/delay.h>
 #include "../../codecs/wm5102.h"
-#include <linux/tablet_config.h>
 
 #ifdef CONFIG_SND_SOC_COMMS_SSP
 #include "byt_bl_rt5642.h"
@@ -60,7 +59,7 @@
 
 #define EXT_SPEAKER_ENABLE_PIN 302    // GPIO3
 
-#ifdef BLADE2_13  //13A subspeaker control PIN
+#ifdef CONFIG_BLADE2_13  //13A subspeaker control PIN
 static int sub_woofer_pa_enable_pin = 377;
 #endif
 
@@ -135,7 +134,7 @@ static int byt_ext_speaker_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 static int Sub_woofer_control(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *k, int  event)
 {
@@ -166,7 +165,7 @@ static const struct snd_soc_dapm_widget byt_dapm_widgets[] = {
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("Int Mic", NULL),
 	SND_SOC_DAPM_SPK("Ext Spk", byt_ext_speaker_event),
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 	SND_SOC_DAPM_SPK("Sub Spk", NULL),
 	SND_SOC_DAPM_SUPPLY("Sub woofer", SND_SOC_NOPM, 0, 0,
 			Sub_woofer_control, SND_SOC_DAPM_PRE_PMU|
@@ -181,7 +180,7 @@ static const struct snd_soc_dapm_route byt_audio_map[] = {
 	{"Ext Spk", NULL, "SPKOUTLN"},
 	{"Ext Spk", NULL, "SPKOUTRP"},
 	{"Ext Spk", NULL, "SPKOUTRN"},
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 	{"Sub Spk", NULL, "HPOUT2L"},
 	{"Sub Spk", NULL, "HPOUT2R"},
 #endif
@@ -190,12 +189,12 @@ static const struct snd_soc_dapm_route byt_audio_map[] = {
 	{"IN1L", NULL, "Headset Mic"},
 	{"Int Mic", NULL, "MICBIAS3"},
 	{"IN3L", NULL, "Int Mic"},
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 	{"Sub Spk", NULL, "Sub woofer"},
 #endif        
 };
 
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 static const struct snd_kcontrol_new byt_mc_controls[] = {
 	SOC_DAPM_PIN_SWITCH("Headphone"),
 	SOC_DAPM_PIN_SWITCH("Headset Mic"),
@@ -571,7 +570,7 @@ static int byt_init(struct snd_soc_pcm_runtime *runtime)
 	byt_set_bias_level(card, dapm, SND_SOC_BIAS_OFF);
 	card->dapm.idle_bias_off = true;
 
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 	ret = snd_soc_add_card_controls(card, byt_mc_controls,
 					ARRAY_SIZE(byt_mc_controls));
 	if (ret) {
@@ -615,7 +614,7 @@ static int byt_init(struct snd_soc_pcm_runtime *runtime)
 	snd_soc_dapm_ignore_suspend(&card->dapm, "Headset Mic");
 	snd_soc_dapm_ignore_suspend(&card->dapm, "Headphone");
 	snd_soc_dapm_ignore_suspend(&card->dapm, "Int Mic");
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 	snd_soc_dapm_ignore_suspend(dapm, "Sub Spk");
 	snd_soc_dapm_enable_pin(dapm, "Headset Mic");
 	snd_soc_dapm_enable_pin(dapm, "Headphone");
@@ -840,7 +839,7 @@ static int snd_byt_mc_probe(struct platform_device *pdev)
 		pr_err("snd_byt_mc_probe() spk power gpio config failed %d\n", ret_val);
 		return -EINVAL;
 	}
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 	ret_val = gpio_request_one(sub_woofer_pa_enable_pin,GPIOF_DIR_OUT| GPIOF_INIT_LOW, "Sub-woofer");
 	if(ret_val!=0)
 	{

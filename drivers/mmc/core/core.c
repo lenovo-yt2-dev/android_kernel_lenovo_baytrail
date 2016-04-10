@@ -36,7 +36,6 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/sd.h>
-#include <linux/tablet_config.h>
 #include "core.h"
 #include "bus.h"
 #include "host.h"
@@ -1060,7 +1059,7 @@ static void __mmc_set_clock(struct mmc_host *host, unsigned int hz)
 
 	if (hz > host->f_max)
 		hz = host->f_max;
-    #ifdef BLADE2_13
+    #ifdef CONFIG_BLADE2_13
 	if(!strcmp("mmc2",mmc_hostname(host))){
 		if(hz == HIGH_SPEED_MAX_DTR){
 			hz = HIGH_SPEED_MAX_DTR / 2;

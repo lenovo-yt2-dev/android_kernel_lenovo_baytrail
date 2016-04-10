@@ -39,11 +39,10 @@
 #include "linux/mfd/intel_mid_pmic.h"
 #endif
 #include <linux/gpio.h>
-#include <linux/tablet_config.h>
 #define DP_LINK_CHECK_TIMEOUT	(10 * 1000)
 #define EDP_PSR_MODE 0 /* 0 = HW TIMER, 1 = SW TIMER */
 
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 struct intel_dp *g_intel_dp = NULL;
 #endif
 
@@ -60,7 +59,7 @@ static bool is_edp(struct intel_dp *intel_dp)
 
 	return intel_dig_port->base.type == INTEL_OUTPUT_EDP;
 }
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
  //merge from blade2_13 kk
 static void
 intel_dp_init_edp_port(struct drm_device *dev)
@@ -546,7 +545,7 @@ intel_dp_aux_native_write(struct intel_dp *intel_dp,
 	}
 	return send_bytes;
 }
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 int intel_dp_aux_extern_write( uint16_t address, uint8_t *send, int send_bytes)
 {
 	int ret = 0;
@@ -608,7 +607,7 @@ intel_dp_aux_native_read(struct intel_dp *intel_dp,
 	}
 }
 
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 int intel_dp_aux_extern_read( uint16_t address, uint8_t *recv, int recv_bytes)
 {
 	int ret = 0 ;
@@ -853,7 +852,7 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 	/* Walk through all bpp values. Luckily they're all nicely spaced with 2
 	 * bpc in between. */
 	bpp = pipe_config->pipe_bpp;
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
     //merge from blade2_13 kk
 	/* use the pipe bpp setting,discare the bios setting */
 	dev_priv->vbt.edp_bpp = 0;
@@ -1328,7 +1327,7 @@ void ironlake_edp_backlight_on(struct intel_dp *intel_dp)
 
 	if (!is_edp(intel_dp))
 		return;
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 #if 0
   // if open it , it would cause the backlight can not work 2015-1-13 fuzr1
    //if open it the system 
@@ -1367,7 +1366,7 @@ void ironlake_edp_backlight_off(struct intel_dp *intel_dp)
 		return;
 
 	/*intel_panel_disable_backlight(dev);*/
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
   /*FIX ME*/ //merge from blade2_13 kk
 #if 0
   // if open it , it would cause the backlight can not work 2015-1-13 fuzr1
@@ -4027,7 +4026,7 @@ intel_dp_init_connector(struct intel_digital_port *intel_dig_port,
 	enum port port = intel_dig_port->port;
 	const char *name = NULL;
 	int type, error;
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 	g_intel_dp = &intel_dig_port->dp;
 #endif
 	/* Preserve the current hw state. */
@@ -4178,7 +4177,7 @@ intel_dp_init(struct drm_device *dev, int output_reg, enum port port)
 		kfree(intel_dig_port);
 		return;
 	}
-#ifdef BLADE2_13 
+#ifdef CONFIG_BLADE2_13 
     //merge from blade2_13 kk
 	intel_dp_init_edp_port(dev);
 

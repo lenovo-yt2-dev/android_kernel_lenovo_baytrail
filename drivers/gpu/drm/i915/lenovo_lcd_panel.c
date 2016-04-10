@@ -6,12 +6,11 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include "lenovo_lcd_panel.h"
-#include <linux/tablet_config.h>
 #include <linux/gpio.h>
 #include "linux/mfd/intel_mid_pmic.h"
 
 #define NAME_SIZE 25
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 static struct lcd_panel lenovo_lcd_panel;
 #else
 #define GPIO1P5 381
@@ -24,7 +23,7 @@ static struct lcd_panel lenovo_lcd_panel;
 extern int i915_dpst_switch(bool on);
 extern bool i915_get_dpst_status(void);
 struct mutex lcd_mutex;
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 char enable_ce_command[1]={0x08};
 char disable_ce_command[1]={0x00};
 char enable_cabc_command[1] = {0x10};
@@ -36,7 +35,7 @@ extern struct intel_dp *g_intel_dp;
 ssize_t lenovo_lcd_get_cabc(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	ssize_t ret = 0;
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 	int index = 1;
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 	struct hal_panel_ctrl_data ctrl;
@@ -73,7 +72,7 @@ ssize_t lenovo_lcd_get_cabc(struct device *dev, struct device_attribute *attr, c
 
 ssize_t lenovo_lcd_set_cabc(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 //	char tmp[10];
 
 	if (strncmp(buf, "on", 2) == 0)
@@ -130,7 +129,7 @@ ssize_t lenovo_lcd_get_ce(struct device *dev, struct device_attribute *attr, cha
 {
 	ssize_t ret = 0;
 
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 	int index = 1;
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 	struct hal_panel_ctrl_data ctrl;
@@ -167,7 +166,7 @@ ssize_t lenovo_lcd_get_ce(struct device *dev, struct device_attribute *attr, cha
 
 ssize_t lenovo_lcd_set_ce(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 	if (strncmp(buf, "1", 1) == 0)
 	{
 		intel_dp_aux_extern_write(0x720,enable_ce_command,1);
@@ -214,7 +213,7 @@ ssize_t lenovo_lcd_set_ce(struct device *dev, struct device_attribute *attr, con
 ssize_t lenovo_lcd_get_name(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret = 0;
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 
     /*printk("[LCD]: %s: ==jinjt==line=%d\n",__func__,__LINE__);*/
@@ -259,7 +258,7 @@ ssize_t lenovo_lcd_get_dpst(struct device *dev, struct device_attribute *attr, c
 {
 	ssize_t ret = 0;
     bool status;
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 
     printk("[LCD]: %s: ==jinjt== line=%d\n",__func__,__LINE__);
@@ -300,7 +299,7 @@ static struct attribute *lenovo_lcd_attrs[] = {
 static struct attribute_group lenovo_lcd_attr_group = {
 	.attrs = lenovo_lcd_attrs,
 };
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 static int lenovo_lcd_panel_open(struct inode *inode, struct file *filp)
 {
 	int ret = -1;
@@ -325,7 +324,7 @@ static long lenovo_lcd_panel_ioctl(struct file *filp, unsigned int cmd, unsigned
 	struct lcd_panel_dev *lcd_panel = lenovo_lcd_panel.lcd_device;
 	struct intel_dsi *dsi = lcd_panel->dsi;
 	struct hal_panel_ctrl_data *hal_panel_data = (struct hal_panel_ctrl_data *)argp;
-#ifndef BLADE2_13	
+#ifndef CONFIG_BLADE2_13	
     struct drm_device *dev = dsi->base.base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 #endif
@@ -490,7 +489,7 @@ static int lenovo_lcd_panel_dev_init(struct cdev *cdev, dev_t *devno)
 	return ret;
 }
 #endif 
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
 int lenovo_lcd_panel_register(struct lcd_panel_dev *lcd_panel_device)
 {
 	return 1;
@@ -501,7 +500,7 @@ static int __init lcd_panel_init(void)
 
 	int ret = 0;
 	struct kobject *lcd_kobject;
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 	
 	struct cdev *lcd_cdev;
 	dev_t *lcd_devno;
@@ -532,7 +531,7 @@ static int __init lcd_panel_init(void)
 		
 	if(lcd_kobject)
 	{   
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
                 lenovo_lcd_panel.lcd_kobj = lcd_kobject;
 #endif
 		ret = sysfs_create_group(lcd_kobject, &lenovo_lcd_attr_group);
@@ -547,7 +546,7 @@ static int __init lcd_panel_init(void)
 
 static void __exit lcd_panel_exit(void)
 {
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
 	struct cdev *lcd_cdev = &lenovo_lcd_panel.lcd_panel_cdev;
 	struct class *lcd_class = lenovo_lcd_panel.lcd_panel_class;
 	dev_t lcd_devno =  lenovo_lcd_panel.lcd_panel_devno;

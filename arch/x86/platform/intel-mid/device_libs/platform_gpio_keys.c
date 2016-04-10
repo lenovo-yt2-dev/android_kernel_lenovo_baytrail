@@ -28,7 +28,6 @@
 #include <asm/acpi.h>
 #include <asm/hw_irq.h>
 #include <asm/intel-mid.h>
-#include <linux/tablet_config.h>
 #include "platform_gpio_keys.h"
 
 #ifdef CONFIG_SFI
@@ -125,10 +124,10 @@ static struct gpio_keys_button lesskey_button_rolock[] = {
 };
 
 static struct gpio_keys_button lesskey_button_vol[] = {
-#if defined(BLADE2_8) || defined(BLADE2_10)
+#if defined(CONFIG_BLADE2_8) || defined(CONFIG_BLADE2_10)
 	{KEY_VOLUMEUP,		-1, 1, "volume_up",	EV_KEY, .acpi_idx = 2},
 	{KEY_VOLUMEDOWN,	-1, 1, "volume_down",	EV_KEY, .acpi_idx = 3},
-#elif defined(BLADE2_13)
+#elif defined(CONFIG_BLADE2_13)
 	{KEY_VOLUMEUP,		-1, 1, "volume_up",	EV_KEY, .acpi_idx = 3},
 	{KEY_VOLUMEDOWN,	-1, 1, "volume_down",	EV_KEY, .acpi_idx = 2},
 #endif

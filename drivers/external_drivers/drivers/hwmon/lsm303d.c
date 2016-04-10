@@ -58,7 +58,6 @@ Revision 1-0-5 2013/10/23
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 #include <linux/earlysuspend.h>
-#include <linux/tablet_config.h>
 #include "lsm303d.h"
 
 #define	I2C_AUTO_INCREMENT	(0x80)
@@ -1750,7 +1749,7 @@ static ssize_t attr_set_cali_data_x(struct kobject *kobj,struct kobj_attribute *
 
     printk("%s: ######val = %ld\n", __func__, val);
 	mutex_lock(&stat->lock);
-#if defined(BLADE2_8)
+#if defined(CONFIG_BLADE2_8)
 	stat->pdata_acc->cali_sw[1] = -val;
 #else
 	stat->pdata_acc->cali_sw[0] = -val;
@@ -1783,7 +1782,7 @@ static ssize_t attr_set_cali_data_y(struct kobject *kobj,struct kobj_attribute *
 
     printk("%s: ######val = %ld\n", __func__, val);
 	mutex_lock(&stat->lock);
-#if defined(BLADE2_8)
+#if defined(CONFIG_BLADE2_8)
 	stat->pdata_acc->cali_sw[0] = val;
 #else
 	stat->pdata_acc->cali_sw[1] = -val;

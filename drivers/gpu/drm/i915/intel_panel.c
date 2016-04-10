@@ -38,7 +38,6 @@
 #include <asm/spid.h>
 #include <linux/gpio.h>
 #include "intel_dsi.h"
-#include <linux/tablet_config.h>
 #define PCI_LBPC 0xf4 /* legacy/combination backlight modes */
 
 
@@ -273,7 +272,7 @@ void intel_gmch_panel_fitting(struct intel_crtc *intel_crtc,
 				SCALING_SRCSIZE_MASK) + 1;
 		scaling_src_h = (intel_crtc->scaling_src_size &
 				SCALING_SRCSIZE_MASK) + 1;
-#ifdef BLADE2_13		
+#ifdef CONFIG_BLADE2_13		
             //2015-1-20 for BLADETL-58 recovery mode is no display specail on blade2-13 by fuzr1"   
             if(adjusted_mode->vdisplay >PFIT_SIZE_LIMIT || adjusted_mode->hdisplay >PFIT_SIZE_LIMIT)goto out;
 #endif			
@@ -460,7 +459,7 @@ static u32 i915_read_blc_pwm_ctl(struct drm_device *dev)
 		}
 	} else {
 		val = I915_READ(BLC_PWM_CTL);
-#ifndef BLADE2_13
+#ifndef CONFIG_BLADE2_13
               val=0x01000100; //set max level to 255
               I915_WRITE(BLC_PWM_CTL,val);
 #endif
@@ -1061,7 +1060,7 @@ static void intel_panel_init_backlight(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
-#ifdef BLADE2_13
+#ifdef CONFIG_BLADE2_13
        u32 val;
        DRM_INFO("====> is_mipi_from_vbt %d, is_mipi %d\n", dev_priv->is_mipi_from_vbt, dev_priv->is_mipi);
        /* FIXME: use if instead of #ifdef */

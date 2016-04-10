@@ -48,7 +48,6 @@
 #ifdef CONFIG_DLP
 #include <drm/intel_dual_display.h>
 #endif
-#include <linux/tablet_config.h>
 #define MAX_BRIGHTNESS	255
 unsigned int set_gamma_enable;
 /*extern*/ int __wait_seqno(struct intel_ring_buffer *ring, u32 seqno,

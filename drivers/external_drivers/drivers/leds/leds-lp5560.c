@@ -32,14 +32,13 @@
 #include <linux/uaccess.h>
 #include <linux/leds.h>
 #include <linux/gpio.h>
-#include <linux/tablet_config.h>
 #include <asm/io.h>
 #include "leds-lp5560.h"
 
 //#define USE_HRTIMER
-#if defined(BLADE2_8) || defined(BLADE2_10)
+#if defined(CONFIG_BLADE2_8) || defined(CONFIG_BLADE2_10)
     #define LED_CTRL_GPIO	112
-#elif defined(BLADE2_13)
+#elif defined(CONFIG_BLADE2_13)
     #define LED_CTRL_GPIO	51
 #endif
 

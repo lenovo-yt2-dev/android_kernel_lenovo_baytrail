@@ -2436,6 +2436,18 @@ config PF450CL
        bool "ASUS PF450CL Product"
        depends on X86_MDFLD
 
+config BLADE2_8
+	bool "Lenovo Yoga Tablet 2 product (8 inch variant)"
+	default n
+
+config BLADE2_10
+	bool "Lenovo Yoga Tablet 2 product (10 inch variant)"
+	default n
+
+config BLADE2_13
+	bool "Lenovo Yoga Tablet 2 product (13 inch variant)"
+	default n
+
 source "net/Kconfig"
 
 source "drivers/Kconfig"
