@@ -1,0 +1,16 @@
+obj-$(CONFIG_MID_PWM)			+= intel_mid_pwm.o
+obj-$(CONFIG_SENSORS_L3G4200D_POLL)	+= l3g4200d_poll.o
+#obj-$(CONFIG_SENSORS_LIS3DH_ACC)        += lis3dh_acc.o
+obj-$(CONFIG_SENSORS_LPS331AP)		+= lps331ap.o
+obj-$(CONFIG_SENSORS_LSM303_MAG)	+= lsm303dlhc_compass.o
+obj-$(CONFIG_SENSORS_MID_VDD)		+= intel_mid_vdd.o
+obj-$(CONFIG_SENSORS_MRFL_OCD)		+= intel_mrfl_ocd.o
+obj-$(CONFIG_SENSORS_PSH_MRLD)		+= psh_ia_common.o psh.o
+obj-$(CONFIG_SENSORS_PSH_BYT)		+= psh_ia_common.o psh_byt.o
+obj-$(CONFIG_GENERAL_SENSOR)            += sensor_general.o sensor_rawdata_proc.o
+obj-$(CONFIG_PS_STM8T143)		+= ps_stm8t143.o
+obj-$(CONFIG_SENSORS_SK3018)		+= sk3018.o
+obj-$(CONFIG_SENSORS_KIONIX)		+= kionix_accel.o
+#liumiao modify for gsensor
+#wqf modify for psensor
+obj-$(CONFIG_INPUT_CAPELLA_CM36671)     += cm36671.o
