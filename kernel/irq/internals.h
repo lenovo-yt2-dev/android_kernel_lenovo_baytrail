@@ -7,12 +7,6 @@
  */
 #include <linux/irqdesc.h>
 
-#ifdef CONFIG_SPARSE_IRQ
-# define IRQ_BITMAP_BITS	(NR_IRQS + 8196)
-#else
-# define IRQ_BITMAP_BITS	NR_IRQS
-#endif
-
 #define istate core_internal_state__do_not_mess_with_it
 
 extern bool noirqdebug;

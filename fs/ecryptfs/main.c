@@ -176,7 +176,7 @@ enum { ecryptfs_opt_sig, ecryptfs_opt_ecryptfs_sig,
        ecryptfs_opt_encrypted_view, ecryptfs_opt_fnek_sig,
        ecryptfs_opt_fn_cipher, ecryptfs_opt_fn_cipher_key_bytes,
        ecryptfs_opt_unlink_sigs, ecryptfs_opt_mount_auth_tok_only,
-       ecryptfs_opt_check_dev_ruid,
+       ecryptfs_opt_check_dev_ruid, ecryptfs_opt_hardware_key_id,
        ecryptfs_opt_err };
 
 static const match_table_t tokens = {
@@ -194,6 +194,7 @@ static const match_table_t tokens = {
 	{ecryptfs_opt_unlink_sigs, "ecryptfs_unlink_sigs"},
 	{ecryptfs_opt_mount_auth_tok_only, "ecryptfs_mount_auth_tok_only"},
 	{ecryptfs_opt_check_dev_ruid, "ecryptfs_check_dev_ruid"},
+	{ecryptfs_opt_hardware_key_id, "ecryptfs_hardware_key_id=%u"},
 	{ecryptfs_opt_err, NULL}
 };
 
@@ -391,6 +392,16 @@ static int ecryptfs_parse_options(struct ecryptfs_sb_info *sbi, char *options,
 		case ecryptfs_opt_check_dev_ruid:
 			*check_ruid = 1;
 			break;
+		case ecryptfs_opt_hardware_key_id:
+		{
+			if (kstrtouint(args[0].from, 10,
+				       &mount_crypt_stat->hardware_key_id)) {
+				pr_err("eCryptfs: invalid hardware key id");
+				break;
+			}
+			mount_crypt_stat->flags |= ECRYPTFS_HARDWARE_KEY;
+			break;
+		}
 		case ecryptfs_opt_err:
 		default:
 			printk(KERN_WARNING

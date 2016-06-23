@@ -27,6 +27,7 @@
 #include <linux/i2c.h>
 #include <linux/fb.h>
 #include <drm/drm_edid.h>
+#include <drm/drm_crtc.h>
 #include <drm/drmP.h>
 #include "intel_drv.h"
 #include "i915_drv.h"
@@ -70,6 +71,19 @@ int intel_ddc_get_modes(struct drm_connector *connector,
 
 	return ret;
 }
+
+void intel_cleanup_modes(struct drm_connector *connector)
+{
+	struct drm_display_mode *mode = NULL;
+	struct drm_display_mode *t = NULL;
+
+	list_for_each_entry_safe(mode, t, &connector->probed_modes, head)
+		drm_mode_remove(connector, mode);
+
+	list_for_each_entry_safe(mode, t, &connector->modes, head)
+		drm_mode_remove(connector, mode);
+}
+
 
 static const struct drm_prop_enum_list force_audio_names[] = {
 	{ HDMI_AUDIO_OFF_DVI, "force-dvi" },
@@ -125,4 +139,33 @@ intel_attach_broadcast_rgb_property(struct drm_connector *connector)
 	}
 
 	drm_object_attach_property(&connector->base, prop, 0);
+}
+
+static const struct drm_prop_enum_list pfit_names[] = {
+	{ 0, "Auto scale" },
+	{ 1, "PillarBox" },
+	{ 2, "LetterBox" },
+};
+
+void
+intel_attach_force_pfit_property(struct drm_connector *connector)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_property *prop;
+	struct drm_mode_object *obj = &connector->base;
+
+	prop = dev_priv->force_pfit_property;
+	if (prop == NULL) {
+		prop = drm_property_create_enum(dev, 0,
+						"pfit",
+						pfit_names,
+						ARRAY_SIZE(pfit_names));
+		if (prop == NULL)
+			return;
+
+		dev_priv->force_pfit_property = prop;
+	}
+
+	drm_object_attach_property(obj, prop, 0);
 }

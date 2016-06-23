@@ -14,8 +14,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/kernel.h>
@@ -40,11 +38,9 @@
 #include <linux/mei.h>
 
 #include "mei_dev.h"
-#include "hw-me.h"
 #include "client.h"
-
-/* AMT device is a singleton on the platform */
-static struct pci_dev *mei_pdev;
+#include "hw-me-regs.h"
+#include "hw-me.h"
 
 /* mei_pci_tbl - PCI Device ID Table */
 static DEFINE_PCI_DEVICE_TABLE(mei_me_pci_tbl) = {
@@ -88,8 +84,6 @@ static DEFINE_PCI_DEVICE_TABLE(mei_me_pci_tbl) = {
 
 MODULE_DEVICE_TABLE(pci, mei_me_pci_tbl);
 
-static DEFINE_MUTEX(mei_mutex);
-
 /**
  * mei_quirk_probe - probe for devices that doesn't valid ME interface
  *
@@ -126,17 +120,12 @@ static int mei_me_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct mei_me_hw *hw;
 	int err;
 
-	mutex_lock(&mei_mutex);
 
 	if (!mei_me_quirk_probe(pdev, ent)) {
 		err = -ENODEV;
 		goto end;
 	}
 
-	if (mei_pdev) {
-		err = -EEXIST;
-		goto end;
-	}
 	/* enable pci dev */
 	err = pci_enable_device(pdev);
 	if (err) {
@@ -195,20 +184,19 @@ static int mei_me_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (err)
 		goto release_irq;
 
-	mei_pdev = pdev;
 	pci_set_drvdata(pdev, dev);
 
 	schedule_delayed_work(&dev->timer_work, HZ);
-
-	mutex_unlock(&mei_mutex);
 
 	pr_debug("initialization successful.\n");
 
 	return 0;
 
 release_irq:
+
+	mei_cancel_work(dev);
+
 	mei_disable_interrupts(dev);
-	flush_scheduled_work();
 	free_irq(pdev->irq, dev);
 disable_msi:
 	pci_disable_msi(pdev);
@@ -220,7 +208,6 @@ release_regions:
 disable_device:
 	pci_disable_device(pdev);
 end:
-	mutex_unlock(&mei_mutex);
 	dev_err(&pdev->dev, "initialization failed.\n");
 	return err;
 }
@@ -238,9 +225,6 @@ static void mei_me_remove(struct pci_dev *pdev)
 	struct mei_device *dev;
 	struct mei_me_hw *hw;
 
-	if (mei_pdev != pdev)
-		return;
-
 	dev = pci_get_drvdata(pdev);
 	if (!dev)
 		return;
@@ -250,8 +234,6 @@ static void mei_me_remove(struct pci_dev *pdev)
 
 	dev_err(&pdev->dev, "stop\n");
 	mei_stop(dev);
-
-	mei_pdev = NULL;
 
 	/* disable interrupts */
 	mei_disable_interrupts(dev);
@@ -323,16 +305,13 @@ static int mei_me_pci_resume(struct device *device)
 		return err;
 	}
 
-	mutex_lock(&dev->device_lock);
-	dev->dev_state = MEI_DEV_POWER_UP;
-	mei_clear_interrupts(dev);
-	mei_reset(dev, 1);
-	mutex_unlock(&dev->device_lock);
-
+	err = mei_restart(dev);
+	if (err)
+		return err;
 	/* Start timer if stopped in suspend */
 	schedule_delayed_work(&dev->timer_work, HZ);
 
-	return err;
+	return 0;
 }
 static SIMPLE_DEV_PM_OPS(mei_me_pm_ops, mei_me_pci_suspend, mei_me_pci_resume);
 #define MEI_ME_PM_OPS	(&mei_me_pm_ops)

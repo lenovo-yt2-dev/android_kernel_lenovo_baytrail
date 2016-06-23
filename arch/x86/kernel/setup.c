@@ -110,6 +110,7 @@
 #include <asm/mce.h>
 #include <asm/alternative.h>
 #include <asm/prom.h>
+#include <asm/intel-mid.h>
 
 /*
  * max_low_pfn_mapped: highest direct mapped pfn under 4GB
@@ -1091,7 +1092,9 @@ void __init setup_arch(char **cmdline_p)
 			(max_pfn_mapped<<PAGE_SHIFT) - 1);
 #endif
 
+#ifndef CONFIG_XEN
 	reserve_real_mode();
+#endif
 
 	trim_platform_memory_ranges();
 	trim_low_memory_range();
@@ -1100,7 +1103,9 @@ void __init setup_arch(char **cmdline_p)
 
 	early_trap_pf_init();
 
+#ifndef CONFIG_XEN
 	setup_real_mode();
+#endif
 
 	memblock.current_limit = get_max_mapped();
 	dma_contiguous_reserve(0);
@@ -1195,6 +1200,10 @@ void __init setup_arch(char **cmdline_p)
 	e820_mark_nosave_regions(max_low_pfn);
 
 	x86_init.resources.reserve_resources();
+
+#ifdef CONFIG_INTEL_MID_PSTORE_RAM
+	pstore_ram_reserve_memory();
+#endif
 
 	e820_setup_gap();
 

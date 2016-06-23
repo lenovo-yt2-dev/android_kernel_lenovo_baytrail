@@ -16,4 +16,16 @@ struct bq27000_platform_data {
 	int (*read)(struct device *dev, unsigned int);
 };
 
+/*
+ * bq27x00 platform specific data:
+ * soc_int_irq (optional)
+ * bat_low_irq (optional)
+ * board rev specific thermistor translation hook (optional)
+ */
+struct bq27x00_platform_data {
+	int soc_int_irq;
+	int bat_low_irq;
+	int (*translate_temp)(int temperature);
+};
+
 #endif

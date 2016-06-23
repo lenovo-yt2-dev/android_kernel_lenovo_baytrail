@@ -198,30 +198,21 @@ static const char *lm49453_mic2mode_text[] = {"Single Ended", "Differential"};
 static const SOC_ENUM_SINGLE_DECL(lm49453_mic2mode_enum, LM49453_P0_MICR_REG, 5,
 				  lm49453_mic2mode_text);
 
-static const char *lm49453_dmic_cfg_text[] = {"DMICDAT1", "DMICDAT2"};
+static const char *lm49453_dmix_input_text[] = { "HP", "SPK", "AMIC", "DMIC" };
 
-static const SOC_ENUM_SINGLE_DECL(lm49453_dmic12_cfg_enum,
-				  LM49453_P0_DIGITAL_MIC1_CONFIG_REG,
-				  7, lm49453_dmic_cfg_text);
-
-static const SOC_ENUM_SINGLE_DECL(lm49453_dmic34_cfg_enum,
-				  LM49453_P0_DIGITAL_MIC2_CONFIG_REG,
-				  7, lm49453_dmic_cfg_text);
+static const SOC_ENUM_SINGLE_DECL(lm49453_dmix_input_sel_enum,
+			LM49453_P0_DMIX_CLK_SEL_REG, 0, lm49453_dmix_input_text);
 
 /* MUX Controls */
-static const char *lm49453_adcl_mux_text[] = { "MIC1", "Aux_L" };
+static const char *lm49453_adcl_mux_text[] = { "Aux_L", "MIC1" };
 
-static const char *lm49453_adcr_mux_text[] = { "MIC2", "Aux_R" };
+static const char *lm49453_adcr_mux_text[] = { "Aux_R", "MIC2" };
 
 static const struct soc_enum lm49453_adcl_enum =
-	SOC_ENUM_SINGLE(LM49453_P0_ANALOG_MIXER_ADC_REG, 0,
-			ARRAY_SIZE(lm49453_adcl_mux_text),
-			lm49453_adcl_mux_text);
+	SOC_ENUM_SINGLE(LM49453_P0_ANALOG_MIXER_ADC_REG, 0, 2, lm49453_adcl_mux_text);
 
 static const struct soc_enum lm49453_adcr_enum =
-	SOC_ENUM_SINGLE(LM49453_P0_ANALOG_MIXER_ADC_REG, 1,
-			ARRAY_SIZE(lm49453_adcr_mux_text),
-			lm49453_adcr_mux_text);
+	SOC_ENUM_SINGLE(LM49453_P0_ANALOG_MIXER_ADC_REG, 1, 2, lm49453_adcr_mux_text);
 
 static const struct snd_kcontrol_new lm49453_adcl_mux_control =
 	SOC_DAPM_ENUM("ADC Left Mux", lm49453_adcl_enum);
@@ -530,10 +521,6 @@ static const struct snd_kcontrol_new lm49453_snd_controls[] = {
 	SOC_DOUBLE_R_TLV("DMIC2 Volume", LM49453_P0_DMIC2_LEVELL_REG,
 			  LM49453_P0_DMIC2_LEVELR_REG, 0, 63, 0, adc_dac_tlv),
 
-	SOC_DAPM_ENUM("Mic2Mode", lm49453_mic2mode_enum),
-	SOC_DAPM_ENUM("DMIC12 SRC", lm49453_dmic12_cfg_enum),
-	SOC_DAPM_ENUM("DMIC34 SRC", lm49453_dmic34_cfg_enum),
-
 	/* Capture path filter enable */
 	SOC_SINGLE("DMIC1 HPFilter Switch", LM49453_P0_ADC_FX_ENABLES_REG,
 					    0, 1, 0),
@@ -583,7 +570,12 @@ static const struct snd_kcontrol_new lm49453_snd_controls[] = {
 	SOC_SINGLE("Port1 Capture Switch", LM49453_P0_AUDIO_PORT1_BASIC_REG,
 		    2, 1, 0),
 	SOC_SINGLE("Port2 Capture Switch", LM49453_P0_AUDIO_PORT2_BASIC_REG,
-		    2, 1, 0)
+		    2, 1, 0),
+	SOC_SINGLE("Earpiece Switch", LM49453_P0_EP_REG, 0, 1, 0),
+	SOC_SINGLE("DMIC12 Switch", LM49453_P0_DIGITAL_MIC1_CONFIG_REG, 7, 1, 0),
+	SOC_SINGLE("DMIC34 Switch", LM49453_P0_DIGITAL_MIC2_CONFIG_REG, 7, 1, 0),
+	SOC_ENUM("DMIX CLK Selection", lm49453_dmix_input_sel_enum),
+	SOC_ENUM("Mic2Mode", lm49453_mic2mode_enum),
 
 };
 
@@ -608,6 +600,9 @@ static const struct snd_soc_dapm_widget lm49453_dapm_widgets[] = {
 	SND_SOC_DAPM_INPUT("AUXL"),
 	SND_SOC_DAPM_INPUT("AUXR"),
 
+	SND_SOC_DAPM_MICBIAS("AMIC1Bias", LM49453_P0_MICL_REG, 6, 0),
+	SND_SOC_DAPM_MICBIAS("AMIC2Bias", LM49453_P0_MICR_REG, 6, 0),
+
 	SND_SOC_DAPM_PGA("PORT1_1_RX", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("PORT1_2_RX", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("PORT1_3_RX", SND_SOC_NOPM, 0, 0, NULL, 0),
@@ -619,14 +614,9 @@ static const struct snd_soc_dapm_widget lm49453_dapm_widgets[] = {
 	SND_SOC_DAPM_PGA("PORT2_1_RX", SND_SOC_NOPM, 0, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("PORT2_2_RX", SND_SOC_NOPM, 0, 0, NULL, 0),
 
-	SND_SOC_DAPM_SUPPLY("AMIC1Bias", LM49453_P0_MICL_REG, 6, 0, NULL, 0),
-	SND_SOC_DAPM_SUPPLY("AMIC2Bias", LM49453_P0_MICR_REG, 6, 0, NULL, 0),
-
 	/* playback path driver enables */
 	SND_SOC_DAPM_OUT_DRV("Headset Switch",
 			LM49453_P0_PMC_SETUP_REG, 0, 0, NULL, 0),
-	SND_SOC_DAPM_OUT_DRV("Earpiece Switch",
-			LM49453_P0_EP_REG, 0, 0, NULL, 0),
 	SND_SOC_DAPM_OUT_DRV("Speaker Left Switch",
 			LM49453_P0_DIS_PKVL_FB_REG, 0, 1, NULL, 0),
 	SND_SOC_DAPM_OUT_DRV("Speaker Right Switch",
@@ -635,6 +625,7 @@ static const struct snd_soc_dapm_widget lm49453_dapm_widgets[] = {
 			LM49453_P0_DIS_PKVL_FB_REG, 2, 1, NULL, 0),
 	SND_SOC_DAPM_OUT_DRV("Haptic Right Switch",
 			LM49453_P0_DIS_PKVL_FB_REG, 3, 1, NULL, 0),
+
 
 	/* DAC */
 	SND_SOC_DAPM_DAC("HPL DAC", "Headset", SND_SOC_NOPM, 0, 0),
@@ -646,11 +637,8 @@ static const struct snd_soc_dapm_widget lm49453_dapm_widgets[] = {
 	SND_SOC_DAPM_DAC("LOL DAC", "Lineout", SND_SOC_NOPM, 0, 0),
 	SND_SOC_DAPM_DAC("LOR DAC", "Lineout", SND_SOC_NOPM, 0, 0),
 
-
-	SND_SOC_DAPM_PGA("AUXL Input",
-			LM49453_P0_ANALOG_MIXER_ADC_REG, 2, 0, NULL, 0),
-	SND_SOC_DAPM_PGA("AUXR Input",
-			LM49453_P0_ANALOG_MIXER_ADC_REG, 3, 0, NULL, 0),
+	SND_SOC_DAPM_PGA("AUXL Input", SND_SOC_NOPM, 0, 0, NULL, 0),
+	SND_SOC_DAPM_PGA("AUXR Input", SND_SOC_NOPM, 0, 0, NULL, 0),
 
 	SND_SOC_DAPM_PGA("Sidetone", SND_SOC_NOPM, 0, 0, NULL, 0),
 
@@ -668,21 +656,18 @@ static const struct snd_soc_dapm_widget lm49453_dapm_widgets[] = {
 	SND_SOC_DAPM_MUX("ADCR Mux", SND_SOC_NOPM, 0, 0,
 			  &lm49453_adcr_mux_control),
 
-	SND_SOC_DAPM_MUX("Mic1 Input",
-			SND_SOC_NOPM, 0, 0, &lm49453_adcl_mux_control),
-
-	SND_SOC_DAPM_MUX("Mic2 Input",
-			SND_SOC_NOPM, 0, 0, &lm49453_adcr_mux_control),
+	SND_SOC_DAPM_PGA("Mic1 Input", SND_SOC_NOPM, 0, 0, NULL, 0),
+	SND_SOC_DAPM_PGA("Mic2 Input", SND_SOC_NOPM, 0, 0, NULL, 0),
 
 	/* AIF */
-	SND_SOC_DAPM_AIF_IN("PORT1_SDI", NULL, 0,
+	SND_SOC_DAPM_AIF_IN("PORT1_SDI", "Headset", 0,
 			    LM49453_P0_PULL_CONFIG1_REG, 2, 0),
-	SND_SOC_DAPM_AIF_IN("PORT2_SDI", NULL, 0,
+	SND_SOC_DAPM_AIF_IN("PORT2_SDI", "Headset", 0,
 			    LM49453_P0_PULL_CONFIG1_REG, 6, 0),
 
-	SND_SOC_DAPM_AIF_OUT("PORT1_SDO", NULL, 0,
+	SND_SOC_DAPM_AIF_OUT("PORT1_SDO", "Capture", 0,
 			     LM49453_P0_PULL_CONFIG1_REG, 3, 0),
-	SND_SOC_DAPM_AIF_OUT("PORT2_SDO", NULL, 0,
+	SND_SOC_DAPM_AIF_OUT("PORT2_SDO", "Capture", 0,
 			      LM49453_P0_PULL_CONFIG1_REG, 7, 0),
 
 	/* Port1 TX controls */
@@ -819,7 +804,7 @@ static const struct snd_soc_dapm_route lm49453_audio_map[] = {
 	{ "HPR Mixer", "DMIC1L Switch", "DMIC1 Left" },
 	{ "HPR Mixer", "DMIC1R Switch", "DMIC1 Right" },
 	{ "HPR Mixer", "DMIC2L Switch", "DMIC2 Left" },
-	{ "HPR Mixer", "DMIC2L Switch", "DMIC2 Right" },
+	{ "HPR Mixer", "DMIC2R Switch", "DMIC2 Right" },
 	{ "HPR Mixer", "Sidetone Switch", "Sidetone" },
 
 	{ "HPR DAC", NULL, "HPR Mixer" },
@@ -828,7 +813,7 @@ static const struct snd_soc_dapm_route lm49453_audio_map[] = {
 	{ "HPOUTR", "Headset Switch", "HPR DAC"},
 
 	/* EP map */
-	{ "EPOUT", "Earpiece Switch", "HPL DAC" },
+	{ "EPOUT", "Earpiece Switch", "LSL DAC" },
 
 	/* Speaker map */
 	{ "LSL Mixer", "Port1_1 Switch", "PORT1_1_RX" },
@@ -923,7 +908,7 @@ static const struct snd_soc_dapm_route lm49453_audio_map[] = {
 	{ "HAR Mixer", "DMIC1R Switch", "DMIC1 Right" },
 	{ "HAR Mixer", "DMIC2L Switch", "DMIC2 Left" },
 	{ "HAR Mixer", "DMIC2R Switch", "DMIC2 Right" },
-	{ "HAR Mixer", "Sideton Switch", "Sidetone" },
+	{ "HAR Mixer", "Sidetone Switch", "Sidetone" },
 
 	{ "HAR DAC", NULL, "HAR Mixer" },
 
@@ -1076,8 +1061,10 @@ static const struct snd_soc_dapm_route lm49453_audio_map[] = {
 	{ "PORT2_SDO", "Port2 Capture Switch", "P2_1_TX"},
 	{ "PORT2_SDO", "Port2 Capture Switch", "P2_2_TX"},
 
-	{ "Mic1 Input", NULL, "AMIC1" },
-	{ "Mic2 Input", NULL, "AMIC2" },
+	{ "AMIC1Bias", NULL, "AMIC1"},
+	{ "AMIC2Bias", NULL, "AMIC2"},
+	{ "Mic1 Input", NULL, "AMIC1Bias"},
+	{ "Mic2 Input", NULL, "AMIC2Bias"},
 
 	{ "AUXL Input", NULL, "AUXL" },
 	{ "AUXR Input", NULL, "AUXR" },
@@ -1093,10 +1080,10 @@ static const struct snd_soc_dapm_route lm49453_audio_map[] = {
 	{ "ADC Left", NULL, "ADCL Mux"},
 	{ "ADC Right", NULL, "ADCR Mux"},
 
-	{ "DMIC1 Left", NULL, "DMIC1DAT"},
-	{ "DMIC1 Right", NULL, "DMIC1DAT"},
-	{ "DMIC2 Left", NULL, "DMIC2DAT"},
-	{ "DMIC2 Right", NULL, "DMIC2DAT"},
+	{ "DMIC1 Left", "DMIC12 Switch", "DMIC1DAT"},
+	{ "DMIC1 Right", "DMIC12 Switch", "DMIC1DAT"},
+	{ "DMIC2 Left", "DMIC34 Switch", "DMIC2DAT"},
+	{ "DMIC2 Right", "DMIC34 Switch", "DMIC2DAT"},
 
 	/* Sidetone map */
 	{ "Sidetone Mixer", NULL, "ADC Left" },
@@ -1108,6 +1095,99 @@ static const struct snd_soc_dapm_route lm49453_audio_map[] = {
 
 	{ "Sidetone", "Sidetone Switch", "Sidetone Mixer" },
 };
+
+bool lm49453_jack_check_config5(struct snd_soc_codec *codec)
+{
+	unsigned int volt_electret, mic_impedance, hp_l_range, hp_r_range, tmp;
+
+	volt_electret = snd_soc_read(codec, LM49453_P0_HSD_VEL_L_FINALL_REG);
+	mic_impedance = snd_soc_read(codec, LM49453_P0_HSD_RO_FINALL_REG);
+	tmp = snd_soc_read(codec, LM49453_P0_HSD_R_HP_RANGE_REG);
+	hp_r_range = tmp & 0x7;
+	hp_l_range = (tmp >> 3) & 0x7;
+
+	/* check if inserted headphone is actually a valid one */
+	if (volt_electret <= 0xDA && mic_impedance <= 0x27)
+		/* check if measured resistances fall within range */
+		if ((1 <= hp_l_range && hp_l_range <= 5) &&
+		    (1 <= hp_r_range && hp_r_range <= 5))
+			return true;
+	return false;
+}
+EXPORT_SYMBOL_GPL(lm49453_jack_check_config5);
+
+inline void lm49453_restart_hsd(struct snd_soc_codec *codec)
+{
+	snd_soc_update_bits(codec, LM49453_P0_PMC_SETUP_REG,
+			    LM49453_PMC_SETUP_CHIP_EN,
+			    LM49453_CHIP_EN);
+	snd_soc_update_bits(codec, LM49453_P0_PMC_SETUP_REG,
+			    LM49453_PMC_SETUP_CHIP_EN,
+			    LM49453_CHIP_EN_HSD_DETECT);
+}
+EXPORT_SYMBOL_GPL(lm49453_restart_hsd);
+
+int lm49453_set_reg_on_page(struct snd_soc_codec *codec, unsigned int page_no,
+			    unsigned int reg, unsigned int val)
+{
+	int ret;
+	mutex_lock(&codec->mutex);
+	snd_soc_write(codec, LM49453_PAGE_REG, page_no);
+	ret = snd_soc_write(codec, reg, val);
+	snd_soc_write(codec, LM49453_PAGE_REG, LM49453_PAGE0_SELECT);
+	mutex_unlock(&codec->mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(lm49453_set_reg_on_page);
+
+void lm49453_set_mic_bias(struct snd_soc_codec *codec,
+			  const char *bias_widget, bool enable)
+{
+	pr_debug("%s %s\n", enable ? "enable" : "disable", bias_widget);
+	if (enable)
+		snd_soc_dapm_force_enable_pin(&codec->dapm, bias_widget);
+	else
+		snd_soc_dapm_disable_pin(&codec->dapm, bias_widget);
+	snd_soc_dapm_sync(&codec->dapm);
+}
+EXPORT_SYMBOL_GPL(lm49453_set_mic_bias);
+
+int lm49453_check_bp(struct snd_soc_codec *codec, int status)
+{
+	unsigned int bp_reg;
+	bp_reg = snd_soc_read(codec, LM49453_P0_HSD_IRQ3_REG);
+	pr_debug("%s: button press: 0x%x\n", __func__, bp_reg >> 4);
+	if (bp_reg & LM49453_PPB_SHORT_PRESS)
+		return SND_JACK_HEADSET | SND_JACK_BTN_0;
+	else if (bp_reg & LM49453_PPB_LONG_PRESS)
+		return SND_JACK_HEADSET | SND_JACK_BTN_1;
+	else if (bp_reg & LM49453_PPB_LONG_RELEASE)
+		return SND_JACK_HEADSET;
+	return status;
+}
+EXPORT_SYMBOL_GPL(lm49453_check_bp);
+
+int lm49453_get_jack_type(struct snd_soc_codec *codec)
+{
+#define LM49453_HSD_PIN_CONFIG_MASK		0x0F
+	unsigned int hs_type;
+
+	hs_type = snd_soc_read(codec, LM49453_P0_HSD_PIN_CONFIG_REG);
+	pr_debug("%s: jack pin config: 0x%x\n", __func__, hs_type);
+	switch (hs_type & LM49453_HSD_PIN_CONFIG_MASK) {
+	case LM49453_JACK_CONFIG1:
+	case LM49453_JACK_CONFIG2:
+		return SND_JACK_HEADSET;
+	case LM49453_JACK_CONFIG3:
+	case LM49453_JACK_CONFIG4:
+		return SND_JACK_MICROPHONE;
+	case LM49453_JACK_CONFIG5:
+		return SND_JACK_HEADPHONE;
+	default:
+		return 0;
+	}
+}
+EXPORT_SYMBOL_GPL(lm49453_get_jack_type);
 
 static int lm49453_hw_params(struct snd_pcm_substream *substream,
 			     struct snd_pcm_hw_params *params,
@@ -1126,22 +1206,21 @@ static int lm49453_hw_params(struct snd_pcm_substream *substream,
 	case 32000:
 	case 24000:
 	case 48000:
-		clk_div = 256;
+		clk_div = 1;
 		break;
 	case 11025:
 	case 22050:
 	case 44100:
-		clk_div = 216;
+		clk_div = 2;
 		break;
 	case 96000:
-		clk_div = 127;
+		clk_div = 4;
 		break;
 	default:
 		return -EINVAL;
 	}
 
 	snd_soc_write(codec, LM49453_P0_ADC_CLK_DIV_REG, clk_div);
-	snd_soc_write(codec, LM49453_P0_DAC_HP_CLK_DIV_REG, clk_div);
 
 	return 0;
 }
@@ -1191,9 +1270,7 @@ static int lm49453_set_dai_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
 		return -EINVAL;
 	}
 
-	snd_soc_update_bits(codec, LM49453_P0_AUDIO_PORT1_BASIC_REG,
-			    LM49453_AUDIO_PORT1_BASIC_FMT_MASK|BIT(0)|BIT(5),
-			    (aif_val | mode | clk_phase));
+	/* PCM mode not handled */
 
 	snd_soc_write(codec, LM49453_P0_AUDIO_PORT1_RX_MSB_REG, clk_shift);
 
@@ -1276,17 +1353,20 @@ static int lm49453_set_bias_level(struct snd_soc_codec *codec,
 		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF)
 			regcache_sync(lm49453->regmap);
 
-		snd_soc_update_bits(codec, LM49453_P0_PMC_SETUP_REG,
-				    LM49453_PMC_SETUP_CHIP_EN, LM49453_CHIP_EN);
 		break;
 
 	case SND_SOC_BIAS_OFF:
+		/* need to set to 0 first for codec to be turned off */
 		snd_soc_update_bits(codec, LM49453_P0_PMC_SETUP_REG,
 				    LM49453_PMC_SETUP_CHIP_EN, 0);
+		snd_soc_update_bits(codec, LM49453_P0_PMC_SETUP_REG,
+				    LM49453_PMC_SETUP_CHIP_EN,
+				    LM49453_CHIP_EN_HSD_DETECT);
 		break;
 	}
 
 	codec->dapm.bias_level = level;
+	pr_debug("%s: codec(%s) bias: %d\n", __func__, codec->name, level);
 
 	return 0;
 }
@@ -1299,35 +1379,30 @@ static struct snd_soc_dai_ops lm49453_headset_dai_ops = {
 	.hw_params	= lm49453_hw_params,
 	.set_sysclk	= lm49453_set_dai_sysclk,
 	.set_fmt	= lm49453_set_dai_fmt,
-	.digital_mute	= lm49453_hp_mute,
 };
 
 static struct snd_soc_dai_ops lm49453_speaker_dai_ops = {
 	.hw_params	= lm49453_hw_params,
 	.set_sysclk	= lm49453_set_dai_sysclk,
 	.set_fmt	= lm49453_set_dai_fmt,
-	.digital_mute	= lm49453_ls_mute,
 };
 
 static struct snd_soc_dai_ops lm49453_haptic_dai_ops = {
 	.hw_params	= lm49453_hw_params,
 	.set_sysclk	= lm49453_set_dai_sysclk,
 	.set_fmt	= lm49453_set_dai_fmt,
-	.digital_mute	= lm49453_ha_mute,
 };
 
 static struct snd_soc_dai_ops lm49453_ep_dai_ops = {
 	.hw_params	= lm49453_hw_params,
 	.set_sysclk	= lm49453_set_dai_sysclk,
 	.set_fmt	= lm49453_set_dai_fmt,
-	.digital_mute	= lm49453_ep_mute,
 };
 
 static struct snd_soc_dai_ops lm49453_lineout_dai_ops = {
 	.hw_params	= lm49453_hw_params,
 	.set_sysclk	= lm49453_set_dai_sysclk,
 	.set_fmt	= lm49453_set_dai_fmt,
-	.digital_mute	= lm49453_lo_mute,
 };
 
 /* LM49453 dai structure. */
@@ -1336,7 +1411,7 @@ static struct snd_soc_dai_driver lm49453_dai[] = {
 		.name = "LM49453 Headset",
 		.playback = {
 			.stream_name = "Headset",
-			.channels_min = 2,
+			.channels_min = 1,
 			.channels_max = 2,
 			.rates = SNDRV_PCM_RATE_8000_192000,
 			.formats = LM49453_FORMATS,
@@ -1349,7 +1424,6 @@ static struct snd_soc_dai_driver lm49453_dai[] = {
 			.formats = LM49453_FORMATS,
 		},
 		.ops = &lm49453_headset_dai_ops,
-		.symmetric_rates = 1,
 	},
 	{
 		.name = "LM49453 Speaker",
@@ -1413,7 +1487,7 @@ static int lm49453_probe(struct snd_soc_codec *codec)
 {
 	struct lm49453_priv *lm49453 = snd_soc_codec_get_drvdata(codec);
 	int ret = 0;
-
+	pr_debug("lm49453 probe called...\n");
 	codec->control_data = lm49453->regmap;
 
 	ret = snd_soc_codec_set_cache_io(codec, 8, 8, SND_SOC_REGMAP);
@@ -1421,6 +1495,58 @@ static int lm49453_probe(struct snd_soc_codec *codec)
 		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
 		return ret;
 	}
+
+	/* PMC setup */
+	snd_soc_write(codec, LM49453_P0_PMC_SETUP_REG, 0x14);
+
+	/* PLL CLK SELECTION-1 */
+	snd_soc_write(codec, LM49453_P0_PLL_CLK_SEL1_REG, 0x00);
+
+	/* PLL CLK SELECTION-2 */
+	snd_soc_write(codec, LM49453_P0_PLL_CLK_SEL2_REG, 0x09);
+	/* PMC CLK DEV */
+	snd_soc_write(codec, LM49453_P0_PMC_CLK_DIV_REG, 0x00);
+
+	/* DMIC CLK DIV */
+	snd_soc_write(codec, LM49453_P0_DMIC_CLK_DIV_REG, 0x00);
+
+	/* PLL setting  - use the MCLK 19.2MHz as input
+	   and generates 12.288Mhz for codec */
+	snd_soc_write(codec, LM49453_P0_PLL_HF_M_REG, 0x18);
+	snd_soc_write(codec, LM49453_P0_PLL_NL_REG, 0x5c);
+	snd_soc_write(codec, LM49453_P0_PLL_N_MODL_REG, 0x0);
+	snd_soc_write(codec, LM49453_P0_PLL_N_MODH_REG, 0x0);
+	snd_soc_write(codec, LM49453_P0_PLL_P1_REG, 0x16);
+
+	/* DAC CLK SEL */
+	snd_soc_write(codec, LM49453_P0_DAC_CLK_SEL_REG, 0x09);
+
+	/* DMIC CLK SEL */
+	snd_soc_write(codec, LM49453_P0_DMIX_CLK_SEL_REG, 0x00);
+
+	/* FIXME DAC mute defaults should be configured through mixer */
+	snd_soc_write(codec, LM49453_P0_DAC_MUTED_REG, 0xc0);
+
+	/* ADC mixer */
+	snd_soc_write(codec, LM49453_P0_ANALOG_MIXER_ADC_REG, 0x3);
+
+	/* TDM mode setting using the Port1 of codec with Salve mode */
+	snd_soc_write(codec, LM49453_P0_AUDIO_PORT1_BASIC_REG, 0x26);
+	snd_soc_write(codec, LM49453_P0_AUDIO_PORT1_SYNC_RATE_REG, 0x63);
+	snd_soc_write(codec, LM49453_P0_AUDIO_PORT1_SYNC_SDO_SETUP_REG, 0x00);
+	snd_soc_write(codec, LM49453_P0_AUDIO_PORT1_DATA_WIDTH_REG, 0x00);
+	snd_soc_write(codec, LM49453_P0_AUDIO_PORT1_RX_MSB_REG, 0x00);
+	snd_soc_write(codec, LM49453_P0_AUDIO_PORT1_TX_MSB_REG, 0x00);
+	snd_soc_write(codec, LM49453_P0_AUDIO_PORT1_TDM_CHANNELS_REG, 0x1b);
+
+	/* Configure STEREO_LINK to allow left & right channel volume configuation independently */
+	snd_soc_update_bits(codec, LM49453_P0_DMIC1_LEVELL_REG, LM49453_P0_LEVELL_STEREO_LINK, 0);
+	snd_soc_update_bits(codec, LM49453_P0_DMIC2_LEVELL_REG, LM49453_P0_LEVELL_STEREO_LINK, 0);
+	snd_soc_update_bits(codec, LM49453_P0_ADC_LEVELL_REG, LM49453_P0_LEVELL_STEREO_LINK, 0);
+	snd_soc_update_bits(codec, LM49453_P0_DAC_HP_LEVELL_REG, LM49453_P0_LEVELL_STEREO_LINK, 0);
+	snd_soc_update_bits(codec, LM49453_P0_DAC_LO_LEVELL_REG, LM49453_P0_LEVELL_STEREO_LINK, 0);
+	snd_soc_update_bits(codec, LM49453_P0_DAC_LS_LEVELL_REG, LM49453_P0_LEVELL_STEREO_LINK, 0);
+	snd_soc_update_bits(codec, LM49453_P0_DAC_HA_LEVELL_REG, LM49453_P0_LEVELL_STEREO_LINK, 0);
 
 	return 0;
 }
@@ -1458,20 +1584,20 @@ static const struct regmap_config lm49453_regmap_config = {
 };
 
 static int lm49453_i2c_probe(struct i2c_client *i2c,
-			     const struct i2c_device_id *id)
+				       const struct i2c_device_id *id)
 {
 	struct lm49453_priv *lm49453;
 	int ret = 0;
 
 	lm49453 = devm_kzalloc(&i2c->dev, sizeof(struct lm49453_priv),
 				GFP_KERNEL);
-
+	pr_debug("lm49453 i2c probe\n");
 	if (lm49453 == NULL)
 		return -ENOMEM;
 
 	i2c_set_clientdata(i2c, lm49453);
 
-	lm49453->regmap = devm_regmap_init_i2c(i2c, &lm49453_regmap_config);
+	lm49453->regmap = regmap_init_i2c(i2c, &lm49453_regmap_config);
 	if (IS_ERR(lm49453->regmap)) {
 		ret = PTR_ERR(lm49453->regmap);
 		dev_err(&i2c->dev, "Failed to allocate register map: %d\n",
@@ -1482,20 +1608,26 @@ static int lm49453_i2c_probe(struct i2c_client *i2c,
 	ret =  snd_soc_register_codec(&i2c->dev,
 				      &soc_codec_dev_lm49453,
 				      lm49453_dai, ARRAY_SIZE(lm49453_dai));
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to register codec: %d\n", ret);
+		regmap_exit(lm49453->regmap);
+		return ret;
+	}
 
 	return ret;
 }
 
 static int lm49453_i2c_remove(struct i2c_client *client)
 {
+	struct lm49453_priv *lm49453 = i2c_get_clientdata(client);
+
 	snd_soc_unregister_codec(&client->dev);
+	regmap_exit(lm49453->regmap);
 	return 0;
 }
 
 static const struct i2c_device_id lm49453_i2c_id[] = {
-	{ "lm49453", 0 },
+	{ "lm49453_codec", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, lm49453_i2c_id);
@@ -1510,7 +1642,27 @@ static struct i2c_driver lm49453_i2c_driver = {
 	.id_table = lm49453_i2c_id,
 };
 
-module_i2c_driver(lm49453_i2c_driver);
+/*module_i2c_driver(lm49453_i2c_driver);*/
+static int __init lm49453_modinit(void)
+{
+	int ret;
+	pr_debug("LM49453 enter in %s:\n", __func__);
+	ret = i2c_add_driver(&lm49453_i2c_driver);
+	if (ret != 0)
+		pr_err("Failed to register LM49453 I2C driver: %d\n", ret);
+
+	pr_debug("LM49453 exited successfully in %s:\n", __func__);
+	return ret;
+}
+module_init(lm49453_modinit);
+
+static void __exit lm49453_exit(void)
+{
+	pr_debug("LM49453 enter in %s:\n", __func__);
+	i2c_del_driver(&lm49453_i2c_driver);
+	pr_debug("LM49453 exited successfully in %s:\n", __func__);
+}
+module_exit(lm49453_exit);
 
 MODULE_DESCRIPTION("ASoC LM49453 driver");
 MODULE_AUTHOR("M R Swami Reddy <MR.Swami.Reddy@ti.com>");

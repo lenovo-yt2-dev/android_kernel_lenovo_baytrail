@@ -268,4 +268,16 @@ endif # NETWORK_FILESYSTEMS
 source "fs/nls/Kconfig"
 source "fs/dlm/Kconfig"
 
+config ODM_FS_DATA_PT_CHECK
+	bool "ODM_FS_DATA_PT_CHECK"
+	default n
+	help
+	  Support for data partition low memory check.
+	
+config ODM_SDCARD_PT_CHECK
+	bool "ODM_SDCARD_PT_CHECK"
+	depends on ODM_FS_DATA_PT_CHECK
+	default n
+	help
+	  Support for data partition low memory check.  
 endmenu

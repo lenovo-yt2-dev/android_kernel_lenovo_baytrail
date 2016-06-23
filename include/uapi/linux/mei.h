@@ -107,4 +107,25 @@ struct mei_connect_client_data {
 	};
 };
 
+/**
+ * DOC: IOCTL_MEI_SETUP_DMA
+ *
+ * populated with the opaque handle for the allocation.
+ */
+#define IOCTL_MEI_SETUP_DMA_BUF _IOWR('H' , 0x02, struct mei_client_dma_data)
+#define IOCTL_MEI_UNSET_DMA_BUF _IOW('H' , 0x03, struct mei_client_dma_handle)
+
+/* FIXME: this is not final */
+struct mei_client_dma_data {
+	union {
+		unsigned long userptr;
+	};
+	__u32         length;
+	__u32         handle;
+};
+
+struct mei_client_dma_handle {
+	__u32         handle;
+};
+
 #endif /* _LINUX_MEI_H  */

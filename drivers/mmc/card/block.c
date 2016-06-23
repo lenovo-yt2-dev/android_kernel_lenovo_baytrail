@@ -35,6 +35,9 @@
 #include <linux/capability.h>
 #include <linux/compat.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/mmc.h>
+
 #include <linux/mmc/ioctl.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
@@ -64,6 +67,8 @@ MODULE_ALIAS("mmc:block");
 				  (rq_data_dir(req) == WRITE))
 #define PACKED_CMD_VER	0x01
 #define PACKED_CMD_WR	0x02
+
+#define MAX_DTR_DDR50	52000000
 
 static DEFINE_MUTEX(block_mutex);
 
@@ -96,6 +101,7 @@ struct mmc_blk_data {
 #define MMC_BLK_CMD23	(1 << 0)	/* Can do SET_BLOCK_COUNT for multiblock */
 #define MMC_BLK_REL_WR	(1 << 1)	/* MMC Reliable write support */
 #define MMC_BLK_PACKED_CMD	(1 << 2)	/* MMC packed command support */
+#define MMC_BLK_SUSPENDED	(1 << 3)	/* MMC block device suspended */
 
 	unsigned int	usage;
 	unsigned int	read_only;
@@ -106,7 +112,8 @@ struct mmc_blk_data {
 #define MMC_BLK_WRITE		BIT(1)
 #define MMC_BLK_DISCARD		BIT(2)
 #define MMC_BLK_SECDISCARD	BIT(3)
-
+#define MMC_BLK_RPMB		BIT(4)
+#define MMC_BLK_USER		BIT(5)
 	/*
 	 * Only set in main mmc_blk_data associated
 	 * with mmc_card with mmc_set_drvdata, and keeps
@@ -146,6 +153,9 @@ static inline void mmc_blk_clear_packed(struct mmc_queue_req *mqrq)
 	packed->blocks = 0;
 }
 
+static int mmc_rpmb_req_process(struct mmc_blk_data *,
+		struct mmc_ioc_rpmb_req *);
+
 static struct mmc_blk_data *mmc_blk_get(struct gendisk *disk)
 {
 	struct mmc_blk_data *md;
@@ -163,11 +173,7 @@ static struct mmc_blk_data *mmc_blk_get(struct gendisk *disk)
 
 static inline int mmc_get_devidx(struct gendisk *disk)
 {
-	int devmaj = MAJOR(disk_devt(disk));
-	int devidx = MINOR(disk_devt(disk)) / perdev_minors;
-
-	if (!devmaj)
-		devidx = disk->first_minor / perdev_minors;
+	int devidx = disk->first_minor / perdev_minors;
 	return devidx;
 }
 
@@ -257,6 +263,10 @@ static ssize_t force_ro_show(struct device *dev, struct device_attribute *attr,
 	int ret;
 	struct mmc_blk_data *md = mmc_blk_get(dev_to_disk(dev));
 
+	if (!md)
+		return -EINVAL;
+
+
 	ret = snprintf(buf, PAGE_SIZE, "%d",
 		       get_disk_ro(dev_to_disk(dev)) ^
 		       md->read_only);
@@ -271,6 +281,9 @@ static ssize_t force_ro_store(struct device *dev, struct device_attribute *attr,
 	char *end;
 	struct mmc_blk_data *md = mmc_blk_get(dev_to_disk(dev));
 	unsigned long set = simple_strtoul(buf, &end, 0);
+	if (!md)
+		return -EINVAL;
+
 	if (end == buf) {
 		ret = -EINVAL;
 		goto out;
@@ -418,7 +431,7 @@ static int mmc_blk_ioctl_cmd(struct block_device *bdev,
 	struct mmc_data data = {0};
 	struct mmc_request mrq = {NULL};
 	struct scatterlist sg;
-	int err;
+	int err = 0;
 	int is_rpmb = false;
 	u32 status = 0;
 
@@ -561,11 +574,50 @@ cmd_rel_host:
 	mmc_release_host(card->host);
 
 cmd_done:
-	mmc_blk_put(md);
+	if (md)
+		mmc_blk_put(md);
 cmd_err:
 	kfree(idata->buf);
 	kfree(idata);
 	return err;
+}
+
+static int mmc_blk_ioctl_rpmb_req(struct block_device *bdev,
+		struct mmc_ioc_rpmb_req __user *ptr)
+{
+	struct mmc_ioc_rpmb_req req;
+	struct mmc_blk_data *md = NULL;
+	int err = 0;
+
+	/* The caller must have CAP_SYS_RAWIO */
+	if (!capable(CAP_SYS_RAWIO))
+		return -EPERM;
+
+	memset(&req, 0, sizeof(req));
+
+	if (copy_from_user(&req, ptr, sizeof(req)))
+		return -EFAULT;
+
+	md = mmc_blk_get(bdev->bd_disk);
+	if (!md) {
+		pr_err("%s: NO eMMC block data. Try it later\n",
+				__func__);
+		return -ENODEV;
+	}
+	/* handle RPMB request event */
+	err = mmc_rpmb_req_process(md, &req);
+	if (err) {
+		mmc_blk_put(md);
+		return err;
+	}
+	/*
+	 * feedback to user space
+	 */
+	if (copy_to_user(ptr, &req, sizeof(req)))
+		return -EFAULT;
+
+	mmc_blk_put(md);
+	return 0;
 }
 
 static int mmc_blk_ioctl(struct block_device *bdev, fmode_t mode,
@@ -574,6 +626,9 @@ static int mmc_blk_ioctl(struct block_device *bdev, fmode_t mode,
 	int ret = -EINVAL;
 	if (cmd == MMC_IOC_CMD)
 		ret = mmc_blk_ioctl_cmd(bdev, (struct mmc_ioc_cmd __user *)arg);
+	else if (cmd == MMC_IOC_RPMB_REQ)
+		ret = mmc_blk_ioctl_rpmb_req(bdev,
+				(struct mmc_ioc_rpmb_req __user *)arg);
 	return ret;
 }
 
@@ -596,6 +651,30 @@ static const struct block_device_operations mmc_bdops = {
 #endif
 };
 
+static int mmc_rpmb_reset(struct mmc_host *host, u8 part_config)
+{
+	int err = 0;
+
+	if (!mmc_card_mmc(host->card))
+		return err;
+
+	if ((part_config & 0x07) == EXT_CSD_PART_CONFIG_ACC_RPMB &&
+	    mmc_card_hs200(host->card)) {
+		pr_info("%s: disable eMMC HS200 on rpmb part\n", __func__);
+		host->card->last_max_dtr = host->card->ext_csd.hs_max_dtr;
+		host->card->ext_csd.hs_max_dtr = MAX_DTR_DDR50;
+		err = mmc_hw_reset(host);
+	} else if ((part_config & 0x07) != EXT_CSD_PART_CONFIG_ACC_RPMB &&
+	    host->card->last_max_dtr > MAX_DTR_DDR50) {
+		pr_info("%s: enable eMMC HS200 on non-rpmb part\n", __func__);
+		host->card->ext_csd.hs_max_dtr = host->card->last_max_dtr;
+		host->card->last_max_dtr = 0;
+		err = mmc_hw_reset(host);
+	}
+
+	return err;
+}
+
 static inline int mmc_blk_part_switch(struct mmc_card *card,
 				      struct mmc_blk_data *md)
 {
@@ -610,6 +689,10 @@ static inline int mmc_blk_part_switch(struct mmc_card *card,
 
 		part_config &= ~EXT_CSD_PART_CONFIG_ACC_MASK;
 		part_config |= md->part_type;
+
+		if (mmc_rpmb_reset(card->host, part_config))
+			pr_warn("%s: eMMC rpmb reset failed\n",
+				mmc_hostname(card->host));
 
 		ret = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
 				 EXT_CSD_PART_CONFIG, part_config,
@@ -728,18 +811,22 @@ static int mmc_blk_cmd_error(struct request *req, const char *name, int error,
 			req->rq_disk->disk_name, "timed out", name, status);
 
 		/* If the status cmd initially failed, retry the r/w cmd */
-		if (!status_valid)
+		if (!status_valid) {
+			pr_err("%s: status not valid, retrying timeout\n", req->rq_disk->disk_name);
 			return ERR_RETRY;
-
+		}
 		/*
 		 * If it was a r/w cmd crc error, or illegal command
 		 * (eg, issued in wrong state) then retry - we should
 		 * have corrected the state problem above.
 		 */
-		if (status & (R1_COM_CRC_ERROR | R1_ILLEGAL_COMMAND))
+		if (status & (R1_COM_CRC_ERROR | R1_ILLEGAL_COMMAND)) {
+			pr_err("%s: command error, retrying timeout\n", req->rq_disk->disk_name);
 			return ERR_RETRY;
+		}
 
 		/* Otherwise abort the command */
+		pr_err("%s: not retrying timeout\n", req->rq_disk->disk_name);
 		return ERR_ABORT;
 
 	default:
@@ -773,7 +860,7 @@ static int mmc_blk_cmd_recovery(struct mmc_card *card, struct request *req,
 {
 	bool prev_cmd_status_valid = true;
 	u32 status, stop_status = 0;
-	int err, retry;
+	int err;
 
 	if (mmc_card_removed(card))
 		return ERR_NOMEDIUM;
@@ -783,18 +870,13 @@ static int mmc_blk_cmd_recovery(struct mmc_card *card, struct request *req,
 	 * and why there was no response.  If the first attempt fails,
 	 * we can't be sure the returned status is for the r/w command.
 	 */
-	for (retry = 2; retry >= 0; retry--) {
-		err = get_card_status(card, &status, 0);
-		if (!err)
-			break;
-
-		prev_cmd_status_valid = false;
-		pr_err("%s: error %d sending status command, %sing\n",
-		       req->rq_disk->disk_name, err, retry ? "retry" : "abort");
-	}
+	err = get_card_status(card, &status, 0);
 
 	/* We couldn't get a response from the card.  Give up. */
 	if (err) {
+		prev_cmd_status_valid = false;
+		pr_err("%s: error %d sending status command\n",
+			req->rq_disk->disk_name, err);
 		/* Check if the card is removed */
 		if (mmc_detect_card_removed(card->host))
 			return ERR_NOMEDIUM;
@@ -838,9 +920,23 @@ static int mmc_blk_cmd_recovery(struct mmc_card *card, struct request *req,
 		return mmc_blk_cmd_error(req, "r/w cmd", brq->cmd.error,
 				prev_cmd_status_valid, status);
 
+	/* Check for stop cmd errors */
+	if (mmc_card_sd(card) && brq->stop.error == -ETIMEDOUT)
+		return mmc_blk_cmd_error(req, "stop cmd", brq->stop.error,
+				prev_cmd_status_valid, status);
+
 	/* Data errors */
-	if (!brq->stop.error)
-		return ERR_CONTINUE;
+	if (!brq->stop.error) {
+		/*
+		 * Didn't re-send stop command, and if card status
+		 * is already in transfer state, let's have
+		 * a retry.
+		 */
+		if (R1_CURRENT_STATE(status) == R1_STATE_TRAN)
+			return ERR_RETRY;
+		else
+			return ERR_CONTINUE;
+	}
 
 	/* Now for stop errors.  These aren't fatal to the transfer. */
 	pr_err("%s: error %d sending stop command, original cmd response %#x, card status %#x\n",
@@ -863,10 +959,25 @@ static int mmc_blk_reset(struct mmc_blk_data *md, struct mmc_host *host,
 {
 	int err;
 
+	pr_err("%s: mmc_blk_reset: md->reset_done (0x%x), type (0x%x)\n",
+		md->disk->disk_name, md->reset_done, type);
+
 	if (md->reset_done & type)
 		return -EEXIST;
 
 	md->reset_done |= type;
+	/*
+	 * It was observed that some kind of eMMC device may fail to response
+	 * to CMD suddenly during normal usage. And the issue dispeared if
+	 * the same eMMC device working in DDR50. So disabling HS200 and force
+	 * the eMMC device working in DDR50 before reset the eMMC device.
+	 */
+	if ((host->caps2 & MMC_CAP2_HS200_1_8V_SDR) &&
+	    (host->caps2 & MMC_CAP2_HS200_DIS)) {
+		pr_warn("%s: disable eMMC HS200 due to error\n", __func__);
+		host->caps2 &= ~MMC_CAP2_HS200_1_8V_SDR;
+		host->card->last_max_dtr = 0;
+	}
 	err = mmc_hw_reset(host);
 	/* Ensure we switch back to the correct partition */
 	if (err != -EOPNOTSUPP) {
@@ -890,6 +1001,118 @@ static inline void mmc_blk_reset_success(struct mmc_blk_data *md, int type)
 {
 	md->reset_done &= ~type;
 }
+
+static int mmc_rpmb_req_process(struct mmc_blk_data *md,
+		struct mmc_ioc_rpmb_req *req)
+{
+	struct mmc_core_rpmb_req rpmb_req;
+	struct mmc_card *card = NULL;
+	int ret;
+
+	if (!md || !req)
+		return -EINVAL;
+
+	if (!(md->flags & MMC_BLK_CMD23) ||
+			(md->part_type != EXT_CSD_PART_CONFIG_ACC_RPMB))
+		return -EOPNOTSUPP;
+
+	card = md->queue.card;
+	if (!card || !mmc_card_mmc(card) || !card->ext_csd.rpmb_size)
+		return -ENODEV;
+
+	memset(&rpmb_req, 0, sizeof(struct mmc_core_rpmb_req));
+	rpmb_req.req = req;
+	/* check request */
+	ret = mmc_rpmb_pre_frame(&rpmb_req, card);
+	if (ret) {
+		pr_err("%s: prepare frame failed\n", mmc_hostname(card->host));
+		return ret;
+	}
+
+	mmc_claim_host(card->host);
+
+	if (md->flags & MMC_BLK_SUSPENDED) {
+		pr_warn("%s: MMC block device is already suspended\n",
+				mmc_hostname(card->host));
+		ret = -EPERM;
+		goto out;
+	}
+
+	/* wait for background operation finished */
+	mmc_stop_bkops(card);
+
+	/*
+	 * before start, let's change to RPMB partition first
+	 */
+	ret = mmc_blk_part_switch(card, md);
+	if (ret) {
+		pr_err("%s: Invalid RPMB partition switch (%d)!\n",
+				mmc_hostname(card->host), ret);
+		/*
+		 * In case partition is not in user data area, make
+		 * a force partition switch.
+		 * we need reset eMMC card at here
+		 */
+		ret = mmc_blk_reset(md, card->host, MMC_BLK_RPMB);
+		if (!ret)
+			mmc_blk_reset_success(md, MMC_BLK_RPMB);
+		else
+			pr_err("%s: eMMC card reset failed (%d)\n",
+					mmc_hostname(card->host), ret);
+		goto out;
+	}
+
+	ret = mmc_rpmb_partition_ops(&rpmb_req, card);
+	if (ret)
+		pr_err("%s: failed (%d) to handle RPMB request type (%d)!\n",
+				mmc_hostname(card->host), ret, req->type);
+out:
+	mmc_release_host(card->host);
+	mmc_rpmb_post_frame(&rpmb_req);
+	return ret;
+}
+
+int mmc_access_rpmb(struct mmc_queue *mq)
+{
+	struct mmc_blk_data *md = mq->data;
+	/*
+	 * If this is a RPMB partition access, return ture
+	 */
+	if (md && md->part_type == EXT_CSD_PART_CONFIG_ACC_RPMB)
+		return true;
+
+	return false;
+}
+EXPORT_SYMBOL_GPL(mmc_access_rpmb);
+
+int mmc_rpmb_req_handle(struct device *emmc, struct mmc_ioc_rpmb_req *req)
+{
+	int ret = 0;
+	struct gendisk *disk    = NULL;
+	struct mmc_blk_data *md = NULL;
+
+	if (!emmc || !req)
+		return -EINVAL;
+
+	disk = dev_to_disk(emmc);
+	if (!disk) {
+		pr_err("%s: NO eMMC disk found. Try it later\n",
+				__func__);
+		return -ENODEV;
+	}
+
+	md = mmc_blk_get(disk);
+	if (!md) {
+		pr_err("%s: NO eMMC block data. Try it later\n",
+				__func__);
+		return -ENODEV;
+	}
+	ret = mmc_rpmb_req_process(md, req);
+	mmc_blk_put(md);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(mmc_rpmb_req_handle);
 
 static int mmc_blk_issue_discard_rq(struct mmc_queue *mq, struct request *req)
 {
@@ -978,7 +1201,8 @@ retry:
 		if (err)
 			goto out_retry;
 	}
-
+	if(!strcmp(mmc_card_name(card), "AWMB3R"))
+		arg = MMC_DISCARD_ARG;
 	err = mmc_erase(card, from, nr, arg);
 	if (err == -EIO)
 		goto out_retry;
@@ -1001,10 +1225,17 @@ retry:
 		if (err)
 			goto out;
 	}
-
-	if (mmc_can_sanitize(card))
-		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
-				 EXT_CSD_SANITIZE_START, 1, 0);
+#if 0
+	if (mmc_can_sanitize(card)) {
+		trace_mmc_blk_erase_start(EXT_CSD_SANITIZE_START, 0, 0);
+		err = __mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+				 EXT_CSD_SANITIZE_START, 1, 0, false);
+		/* send status cmd to check */
+		if (!err)
+			err = mmc_busy_wait(card->host);
+		trace_mmc_blk_erase_end(EXT_CSD_SANITIZE_START, 0, 0);
+	}
+#endif
 out_retry:
 	if (err && !mmc_blk_reset(md, card->host, type))
 		goto retry;
@@ -1702,7 +1933,7 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 	struct mmc_blk_data *md = mq->data;
 	struct mmc_card *card = md->queue.card;
 	struct mmc_blk_request *brq = &mq->mqrq_cur->brq;
-	int ret = 1, disable_multi = 0, retry = 0, type;
+	int ret = 1, disable_multi = 0, type;
 	enum mmc_blk_status status;
 	struct mmc_queue_req *mq_rq;
 	struct request *req = rqc;
@@ -1786,8 +2017,6 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 				break;
 			goto cmd_abort;
 		case MMC_BLK_RETRY:
-			if (retry++ < 5)
-				break;
 			/* Fall through */
 		case MMC_BLK_ABORT:
 			if (!mmc_blk_reset(md, card->host, type))
@@ -1892,18 +2121,32 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	struct mmc_card *card = md->queue.card;
 	struct mmc_host *host = card->host;
 	unsigned long flags;
+	unsigned int cmd_flags = 0;
+
+#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
+	if (mmc_bus_needs_resume(card->host))
+		mmc_resume_bus(card->host);
+#endif
 
 	if (req && !mq->mqrq_prev->req)
 		/* claim host only for the first request */
 		mmc_claim_host(card->host);
 
+	if (req)
+		cmd_flags = req->cmd_flags;
+
 	ret = mmc_blk_part_switch(card, md);
 	if (ret) {
-		if (req) {
-			blk_end_request_all(req, -EIO);
+		pr_err("%s: switch part failed. Try to reset eMMC\n",
+				mmc_hostname(card->host));
+		if (mmc_blk_reset(md, card->host, MMC_BLK_USER)) {
+			if (req)
+				blk_end_request_all(req, -EIO);
+			ret = 0;
+			goto out;
 		}
-		ret = 0;
-		goto out;
+		pr_info("%s: Reset eMMC success\n", mmc_hostname(card->host));
+		mmc_blk_reset_success(md, MMC_BLK_USER);
 	}
 
 	mq->flags &= ~MMC_QUEUE_NEW_REQUEST;
@@ -1932,7 +2175,7 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 
 out:
 	if ((!req && !(mq->flags & MMC_QUEUE_NEW_REQUEST)) ||
-	     (req && (req->cmd_flags & MMC_REQ_SPECIAL_MASK)))
+	     (req && (cmd_flags & MMC_REQ_SPECIAL_MASK)))
 		/*
 		 * Release host when there are no more requests
 		 * and after special request(discard, flush) is done.
@@ -1957,7 +2200,7 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 					      int area_type)
 {
 	struct mmc_blk_data *md;
-	int devidx, ret;
+	int devidx, ret, name_idx;
 
 	devidx = find_first_zero_bit(dev_use, max_devices);
 	if (devidx >= max_devices)
@@ -1977,7 +2220,13 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	 * index anymore so we keep track of a name index.
 	 */
 	if (!subname) {
-		md->name_idx = find_first_zero_bit(name_use, max_devices);
+		name_idx = find_first_zero_bit(name_use, max_devices);
+		if (name_idx == 0 && !mmc_card_mmc(card)) {
+			__set_bit(0, name_use);
+			name_idx = find_first_zero_bit(name_use, max_devices);
+			__clear_bit(0, name_use);
+		}
+		md->name_idx = name_idx;
 		__set_bit(md->name_idx, name_use);
 	} else
 		md->name_idx = ((struct mmc_blk_data *)
@@ -2015,6 +2264,7 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	md->disk->queue = md->queue.queue;
 	md->disk->driverfs_dev = parent;
 	set_disk_ro(md->disk, md->read_only || default_ro);
+	md->disk->flags = GENHD_FL_EXT_DEVT;
 	if (area_type & MMC_BLK_DATA_AREA_RPMB)
 		md->disk->flags |= GENHD_FL_NO_PART_SCAN;
 
@@ -2329,6 +2579,9 @@ static int mmc_blk_probe(struct mmc_card *card)
 	mmc_set_drvdata(card, md);
 	mmc_fixup_device(card, blk_fixups);
 
+#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
+	mmc_set_bus_resume_policy(card->host, 1);
+#endif
 	if (mmc_add_disk(md))
 		goto out;
 
@@ -2354,6 +2607,9 @@ static void mmc_blk_remove(struct mmc_card *card)
 	mmc_release_host(card->host);
 	mmc_blk_remove_req(md);
 	mmc_set_drvdata(card, NULL);
+#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
+	mmc_set_bus_resume_policy(card->host, 0);
+#endif
 }
 
 #ifdef CONFIG_PM
@@ -2366,6 +2622,19 @@ static int mmc_blk_suspend(struct mmc_card *card)
 		mmc_queue_suspend(&md->queue);
 		list_for_each_entry(part_md, &md->part, part) {
 			mmc_queue_suspend(&part_md->queue);
+			if (part_md->part_type ==
+				EXT_CSD_PART_CONFIG_ACC_RPMB) {
+				/*
+				 * RPMB partition is accessed by API directly.
+				 * Driver need to set a flag when suspending
+				 * MMC block device to notify API that the
+				 * accessing of RPMB partition needs to be
+				 * stopped
+				 */
+				mmc_claim_host(card->host);
+				part_md->flags |= MMC_BLK_SUSPENDED;
+				mmc_release_host(card->host);
+			}
 		}
 	}
 	return 0;
@@ -2385,6 +2654,18 @@ static int mmc_blk_resume(struct mmc_card *card)
 		mmc_queue_resume(&md->queue);
 		list_for_each_entry(part_md, &md->part, part) {
 			mmc_queue_resume(&part_md->queue);
+			if (part_md->part_type ==
+					EXT_CSD_PART_CONFIG_ACC_RPMB) {
+				/*
+				 * RPMB partition is accessed by API directly.
+				 * Driver need to clear MMC_BLK_SUSPENDED flag
+				 * to make sure the next RPMB partition access
+				 * request won't be blocked
+				 */
+				mmc_claim_host(card->host);
+				part_md->flags &= ~MMC_BLK_SUSPENDED;
+				mmc_release_host(card->host);
+			}
 		}
 	}
 	return 0;
@@ -2394,9 +2675,39 @@ static int mmc_blk_resume(struct mmc_card *card)
 #define mmc_blk_resume	NULL
 #endif
 
+static void mmc_blk_shutdown(struct device *dev)
+{
+	struct mmc_card *card = mmc_dev_to_card(dev);
+	struct mmc_host *mmc = card->host;
+	struct mmc_blk_data *md = mmc_get_drvdata(card);
+	struct mmc_blk_data *part_md;
+
+	/*
+	 * stop the mmc queue so that no mmc card requests
+	 * can be sent to mmc driver
+	 */
+	if (md) {
+		mmc_queue_suspend(&md->queue);
+		list_for_each_entry(part_md, &md->part, part) {
+			mmc_queue_suspend(&part_md->queue);
+			if (part_md->part_type ==
+					EXT_CSD_PART_CONFIG_ACC_RPMB) {
+				mmc_claim_host(mmc);
+				part_md->flags |= MMC_BLK_SUSPENDED;
+				mmc_release_host(mmc);
+			}
+		}
+	}
+
+	mmc_claim_host(mmc);
+	mmc_cache_ctrl(mmc, 0);
+	mmc_release_host(mmc);
+}
+
 static struct mmc_driver mmc_driver = {
 	.drv		= {
 		.name	= "mmcblk",
+		.shutdown = mmc_blk_shutdown,
 	},
 	.probe		= mmc_blk_probe,
 	.remove		= mmc_blk_remove,

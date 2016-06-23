@@ -1290,13 +1290,13 @@ sub ERROR {
 }
 sub WARN {
 	if (report("WARNING", $_[0], $_[1])) {
-		our $clean = 0;
+		#our $clean = 0;
 		our $cnt_warn++;
 	}
 }
 sub CHK {
 	if ($check && report("CHECK", $_[0], $_[1])) {
-		our $clean = 0;
+		#our $clean = 0;
 		our $cnt_chk++;
 	}
 }
@@ -1785,7 +1785,7 @@ sub process {
 		    $line =~ /^\+\s*"[^"]*"\s*(?:\s*|,|\)\s*;)\s*$/) &&
 		    $length > $max_line_length)
 		{
-			WARN("LONG_LINE",
+			CHK("LONG_LINE",
 			     "line over $max_line_length characters\n" . $herecurr);
 		}
 
@@ -3044,7 +3044,7 @@ sub process {
 					ERROR("MULTISTATEMENT_MACRO_USE_DO_WHILE",
 					      "Macros with multiple statements should be enclosed in a do - while loop\n" . "$herectx");
 				} else {
-					ERROR("COMPLEX_MACRO",
+					WARN("COMPLEX_MACRO",
 					      "Macros with complex values should be enclosed in parenthesis\n" . "$herectx");
 				}
 			}

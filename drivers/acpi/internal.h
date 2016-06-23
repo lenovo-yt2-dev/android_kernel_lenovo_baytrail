@@ -33,6 +33,7 @@ static inline void acpi_pci_slot_init(void) { }
 void acpi_pci_root_init(void);
 void acpi_pci_link_init(void);
 void acpi_pci_root_hp_init(void);
+void acpi_processor_init(void);
 void acpi_platform_init(void);
 int acpi_sysfs_init(void);
 #ifdef CONFIG_ACPI_CONTAINER
@@ -56,6 +57,8 @@ void acpi_cmos_rtc_init(void);
 static inline void acpi_cmos_rtc_init(void) {}
 #endif
 
+extern bool acpi_force_hot_remove;
+
 void acpi_sysfs_add_hotplug_profile(struct acpi_hotplug_profile *hotplug,
 				    const char *name);
 int acpi_scan_add_handler_with_hotplug(struct acpi_scan_handler *handler,
@@ -73,6 +76,11 @@ void acpi_lpss_init(void);
 #else
 static inline void acpi_lpss_init(void) {}
 #endif
+#ifdef CONFIG_INTEL_MID_LPSS
+void acpi_mid_lpss_init(void);
+#else
+static inline void acpi_mid_lpss_init(void) {}
+#endif
 
 /* --------------------------------------------------------------------------
                      Device Node Initialization / Removal
@@ -86,6 +94,8 @@ void acpi_init_device_object(struct acpi_device *device, acpi_handle handle,
 			     int type, unsigned long long sta);
 void acpi_device_add_finalize(struct acpi_device *device);
 void acpi_free_pnp_ids(struct acpi_device_pnp *pnp);
+int acpi_bind_one(struct device *dev, acpi_handle handle);
+int acpi_unbind_one(struct device *dev);
 
 /* --------------------------------------------------------------------------
                                   Power Resource
@@ -158,5 +168,16 @@ struct platform_device;
 
 int acpi_create_platform_device(struct acpi_device *adev,
 				const struct acpi_device_id *id);
+
+/*--------------------------------------------------------------------------
+					Video
+  -------------------------------------------------------------------------- */
+#if defined(CONFIG_ACPI_VIDEO) || defined(CONFIG_ACPI_VIDEO_MODULE)
+bool acpi_video_backlight_quirks(void);
+bool acpi_video_verify_backlight_support(void);
+#else
+static inline bool acpi_video_backlight_quirks(void) { return false; }
+static inline bool acpi_video_verify_backlight_support(void) { return false; }
+#endif
 
 #endif /* _ACPI_INTERNAL_H_ */

@@ -34,3 +34,15 @@ config INTEL_MEI_ME
 	  82Q33 Express
 	  82X38/X48 Express
 
+config INTEL_MEI_TXE
+	tristate "Intel Trusted Execution Engine"
+	select INTEL_MEI
+	depends on X86 && PCI
+	help
+	  TXE support for Trusted Execution Engine Interface
+
+	  Security and Media services for Intel SoC with the MEI
+	  hardware interface
+
+	  Supported SoCs:
+	  Intel BYT

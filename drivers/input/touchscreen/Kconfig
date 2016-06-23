@@ -889,3 +889,46 @@ config TOUCHSCREEN_TPS6507X
 	  module will be called tps6507x_ts.
 
 endif
+
+#lxh add for tp; begin;2014-04-29 
+config TOUCHSCREEN_SYNAPTICS_DSX_I2C
+	tristate "Synaptics DSX I2C touchscreen"
+	depends on I2C
+	help
+	  Say Y here if you have a Synaptics DSX I2C touchscreen
+	  connected to your system.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called synaptics_dsx_i2c.
+
+config TOUCHSCREEN_SYNAPTICS_DSX_RMI_DEV
+	tristate "Synaptics DSX touchscreen char device"
+	depends on TOUCHSCREEN_SYNAPTICS_DSX_I2C
+	help
+	  This enables support for direct register access for Synaptics DSX
+	  touchscreens.
+
+config TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE
+	tristate "Synaptics DSX touchscreen firmware update"
+	depends on TOUCHSCREEN_SYNAPTICS_DSX_I2C
+	help
+	  This enables support for firmware update for Synaptics DSX
+	  touchscreens.
+
+config TOUCHSCREEN_SYNAPTICS_DSX_TEST_REPORTING
+	tristate "Synaptics DSX test reporting module"
+	depends on TOUCHSCREEN_SYNAPTICS_DSX_I2C
+	help
+	  Say Y here to enable support for retrieving production test reports.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called synaptics_dsx_test_reporting.
+
+
+#lxh add for tp; end;2014-04-29
+
+

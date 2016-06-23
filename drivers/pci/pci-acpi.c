@@ -18,6 +18,7 @@
 #include <linux/pci-acpi.h>
 #include <linux/pm_runtime.h>
 #include <linux/pm_qos.h>
+#include <linux/intel_mid_pm.h>
 #include "pci.h"
 
 /**
@@ -147,6 +148,10 @@ phys_addr_t acpi_pci_root_get_mcfg_addr(acpi_handle handle)
 static pci_power_t acpi_pci_choose_state(struct pci_dev *pdev)
 {
 	int acpi_state, d_max;
+	pci_power_t target_state = byt_cht_pci_choose_state(pdev);
+
+	if (target_state != PCI_POWER_ERROR)
+		return target_state;
 
 	if (pdev->no_d3cold)
 		d_max = ACPI_STATE_D3_HOT;
@@ -175,6 +180,9 @@ static bool acpi_pci_power_manageable(struct pci_dev *dev)
 {
 	acpi_handle handle = DEVICE_ACPI_HANDLE(&dev->dev);
 
+	if (byt_cht_pci_power_manageable(dev))
+		return true;
+
 	return handle ? acpi_bus_power_manageable(handle) : false;
 }
 
@@ -189,7 +197,11 @@ static int acpi_pci_set_power_state(struct pci_dev *dev, pci_power_t state)
 		[PCI_D3hot] = ACPI_STATE_D3,
 		[PCI_D3cold] = ACPI_STATE_D3
 	};
-	int error = -EINVAL;
+	int error;
+
+	error = byt_cht_pci_set_power_state(dev, state);
+	if (!error)
+		return 0;
 
 	/* If the ACPI device has _EJ0, ignore the device */
 	if (!handle || ACPI_SUCCESS(acpi_get_handle(handle, "_EJ0", &tmp)))

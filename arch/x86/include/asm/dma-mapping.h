@@ -31,13 +31,17 @@ extern struct dma_map_ops *dma_ops;
 
 static inline struct dma_map_ops *get_dma_ops(struct device *dev)
 {
-#ifndef CONFIG_X86_DEV_DMA_OPS
+#if defined(CONFIG_X86_32) || defined(CONFIG_X86_64)
 	return dma_ops;
 #else
-	if (unlikely(!dev) || !dev->archdata.dma_ops)
+	if (unlikely(!dev))
+		return dma_ops;
+#ifdef CONFIG_X86_DMA_OPS
+	 if (!dev->archdata.dma_ops)
 		return dma_ops;
 	else
 		return dev->archdata.dma_ops;
+#endif
 #endif
 }
 

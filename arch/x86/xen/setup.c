@@ -222,10 +222,11 @@ static void __init xen_set_identity_and_release_chunk(
 		(void)HYPERVISOR_update_va_mapping(
 			(unsigned long)__va(pfn << PAGE_SHIFT),
 			mfn_pte(pfn, PAGE_KERNEL_IO), 0);
-
+#ifndef CONFIG_X86_INTEL_MID
 	if (start_pfn < nr_pages)
 		*released += xen_release_chunk(
 			start_pfn, min(end_pfn, nr_pages));
+#endif
 
 	*identity += set_phys_range_identity(start_pfn, end_pfn);
 }
@@ -446,8 +447,10 @@ char * __init xen_memory_setup(void)
 	 * reserve ISA memory anyway because too many things poke
 	 * about in there.
 	 */
+#ifndef CONFIG_X86_INTEL_MID
 	e820_add_region(ISA_START_ADDRESS, ISA_END_ADDRESS - ISA_START_ADDRESS,
-			E820_RESERVED);
+		E820_RESERVED);
+#endif
 
 	/*
 	 * Reserve Xen bits:
@@ -548,6 +551,8 @@ void __cpuinit xen_enable_syscall(void)
 #endif /* CONFIG_X86_64 */
 }
 
+void (*xen_oem_arch_setup)(void);
+
 void __init xen_arch_setup(void)
 {
 	xen_panic_handler_init();
@@ -578,10 +583,10 @@ void __init xen_arch_setup(void)
 	       COMMAND_LINE_SIZE : MAX_GUEST_CMDLINE);
 
 	/* Set up idle, making sure it calls safe_halt() pvop */
-	disable_cpuidle();
-	disable_cpufreq();
 	WARN_ON(xen_set_default_idle());
 	fiddle_vdso();
+	if (xen_oem_arch_setup)
+		xen_oem_arch_setup();
 #ifdef CONFIG_NUMA
 	numa_off = 1;
 #endif

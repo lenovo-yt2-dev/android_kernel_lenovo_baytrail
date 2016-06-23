@@ -21,6 +21,9 @@
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+#include <linux/data_pt_check.h>
+#endif
 
 typedef ssize_t (*io_fn_t)(struct file *, char __user *, size_t, loff_t *);
 typedef ssize_t (*iov_fn_t)(struct kiocb *, const struct iovec *,
@@ -437,7 +440,14 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 		return -EINVAL;
 	if (unlikely(!access_ok(VERIFY_READ, buf, count)))
 		return -EFAULT;
-
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	/*Check flag first, then check file path and last check task name
+	*/
+	if(vfs_check_current_path(file, count) != 0){
+		//printk("write: Not allowed write\n");
+		return -ENOSPC;
+	}
+#endif
 	ret = rw_verify_area(WRITE, file, pos, count);
 	if (ret >= 0) {
 		count = ret;

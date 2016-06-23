@@ -63,6 +63,104 @@ rtc_sysfs_show_time(struct device *dev, struct device_attribute *attr,
 	return retval;
 }
 
+// Begin shen.zhiyong@byd.com 20140609 add for autoCIT RTC test
+static ssize_t
+rtc_sysfs_set_date(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t n)
+{
+	struct rtc_time tm;
+	struct rtc_device *rtc = to_rtc_device(dev);
+	ssize_t retval;
+	unsigned long i=0,j=0,flag=0, year, month, day;
+	char tmp_date[64];
+	
+	while (buf[i]!='\0')
+	{
+		if (buf[i] == ':')
+		{
+			flag++;
+			if(1 == flag)
+			{
+				year = simple_strtoul(tmp_date, NULL, 10);
+				memset(tmp_date, 0, sizeof(tmp_date));
+			}
+			else if(2 == flag)
+			{
+				month= simple_strtoul(tmp_date, NULL, 10);
+				memset(tmp_date, 0, sizeof(tmp_date));
+			}
+			j = 0;
+		}
+		else
+		{
+			tmp_date[j]=buf[i];
+			j++;
+		}
+		if(buf[i+1] == '\0')
+		{
+			day = simple_strtoul(tmp_date, NULL, 10);
+			memset(tmp_date, 0, sizeof(tmp_date));
+		}
+		i++;
+	}
+	rtc_read_time(to_rtc_device(dev), &tm);
+	tm.tm_year = (int)year - 1900;
+	tm.tm_mon = (int)month - 1;
+	tm.tm_mday = (int)day;
+	retval = rtc_set_time(rtc, &tm);
+
+	return (retval < 0) ? retval : n;
+}
+
+static ssize_t
+rtc_sysfs_set_time(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t n)
+{
+	struct rtc_time tm;
+	struct rtc_device *rtc = to_rtc_device(dev);
+	ssize_t retval;
+	unsigned long int i=0,j=0,flag=0, hour, min, sec;
+	char tmp_date[64];
+
+	while (buf[i]!='\0')
+	{
+		if (buf[i] == ':')
+		{
+			flag++;
+			if(1 == flag)
+			{
+				hour = simple_strtoul(tmp_date, NULL, 10);
+				memset(tmp_date, 0, sizeof(tmp_date));
+			}
+			else if(2 == flag)
+			{
+				min = simple_strtoul(tmp_date, NULL, 10);
+				memset(tmp_date, 0, sizeof(tmp_date));
+			}
+			j = 0;
+		}
+		else
+		{
+			tmp_date[j]=buf[i];
+			j++;
+		}
+		if(buf[i+1] == '\0')
+		{
+			sec = simple_strtoul(tmp_date, NULL, 10);
+			memset(tmp_date, 0, sizeof(tmp_date));
+		}
+		i++;
+	}
+	rtc_read_time(to_rtc_device(dev), &tm);
+	tm.tm_hour = (int)hour;
+	tm.tm_min = (int)min;
+	tm.tm_sec = (int)sec;
+	retval = rtc_set_time(rtc, &tm);
+
+	return (retval < 0) ? retval : n;
+}
+//End shen.zhiyong@byd.com 20140609
+
 static ssize_t
 rtc_sysfs_show_since_epoch(struct device *dev, struct device_attribute *attr,
 		char *buf)
@@ -124,8 +222,8 @@ rtc_sysfs_show_hctosys(struct device *dev, struct device_attribute *attr,
 
 static struct device_attribute rtc_attrs[] = {
 	__ATTR(name, S_IRUGO, rtc_sysfs_show_name, NULL),
-	__ATTR(date, S_IRUGO, rtc_sysfs_show_date, NULL),
-	__ATTR(time, S_IRUGO, rtc_sysfs_show_time, NULL),
+	__ATTR(date, S_IRUGO | S_IWUSR, rtc_sysfs_show_date, rtc_sysfs_set_date),// shen.zhiyong@byd.com add for rtc test
+	__ATTR(time, S_IRUGO | S_IWUSR, rtc_sysfs_show_time, rtc_sysfs_set_time),// shen.zhiyong@byd.com add for rtc test
 	__ATTR(since_epoch, S_IRUGO, rtc_sysfs_show_since_epoch, NULL),
 	__ATTR(max_user_freq, S_IRUGO | S_IWUSR, rtc_sysfs_show_max_user_freq,
 			rtc_sysfs_set_max_user_freq),

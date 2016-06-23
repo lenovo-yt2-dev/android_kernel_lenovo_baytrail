@@ -26,7 +26,6 @@
 #include <linux/mei_cl_bus.h>
 
 #include "mei_dev.h"
-#include "hw-me.h"
 #include "client.h"
 
 #define to_mei_cl_driver(d) container_of(d, struct mei_cl_driver, driver)
@@ -47,7 +46,7 @@ static int mei_cl_device_match(struct device *dev, struct device_driver *drv)
 	id = driver->id_table;
 
 	while (id->name[0]) {
-		if (!strcmp(dev_name(dev), id->name))
+		if (!strncmp(dev_name(dev), id->name, sizeof(id->name)))
 			return 1;
 
 		id++;
@@ -71,7 +70,7 @@ static int mei_cl_device_probe(struct device *dev)
 
 	dev_dbg(dev, "Device probe\n");
 
-	strncpy(id.name, dev_name(dev), MEI_CL_NAME_SIZE);
+	strncpy(id.name, dev_name(dev), sizeof(id.name));
 
 	return driver->probe(device, &id);
 }
@@ -243,7 +242,7 @@ static int ___mei_cl_send(struct mei_cl *cl, u8 *buf, size_t length,
 	/* Check if we have an ME client device */
 	id = mei_me_cl_by_id(dev, cl->me_client_id);
 	if (id < 0)
-		return -ENODEV;
+		return id;
 
 	if (length > dev->me_clients[id].props.max_msg_length)
 		return -EINVAL;

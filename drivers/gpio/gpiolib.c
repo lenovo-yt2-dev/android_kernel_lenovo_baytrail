@@ -244,6 +244,9 @@ static DEFINE_MUTEX(sysfs_lock);
 
 /*
  * /sys/class/gpio/gpioN... only for GPIOs that are exported
+ *   /pinmux
+ *      * configures GPIO or alternate function
+ *      * r/w as zero (normal GPIO) or alternate function number
  *   /direction
  *      * MAY BE OMITTED if kernel won't allow direction changes
  *      * is read/write as "in" or "out"
@@ -262,6 +265,54 @@ static DEFINE_MUTEX(sysfs_lock);
  *      * also affects existing and subsequent "falling" and "rising"
  *        /edge configuration
  */
+static ssize_t gpio_pinmux_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	const struct gpio_desc	*desc = dev_get_drvdata(dev);
+	unsigned		gpio = desc - gpio_desc;
+	struct gpio_chip	*chip;
+	ssize_t			status = -EINVAL;
+
+	mutex_lock(&sysfs_lock);
+
+	chip = desc->chip;
+
+	if (!test_bit(FLAG_EXPORT, &desc->flags))
+		status = -EIO;
+	else if (chip->get_pinmux != NULL)
+		status = sprintf(buf, "%d\n", chip->get_pinmux(gpio));
+
+	mutex_unlock(&sysfs_lock);
+	return status;
+}
+
+static ssize_t gpio_pinmux_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	const struct gpio_desc	*desc = dev_get_drvdata(dev);
+	unsigned		gpio = desc - gpio_desc;
+	ssize_t			status = -EINVAL;
+	struct gpio_chip	*chip;
+	long	mux;
+
+	mutex_lock(&sysfs_lock);
+
+	chip = desc->chip;
+
+	if (!test_bit(FLAG_EXPORT, &desc->flags))
+		status = -EIO;
+	else if (chip->set_pinmux != NULL) {
+		status = kstrtol(buf, 0, &mux);
+		if (status == 0)
+			chip->set_pinmux(gpio, mux);
+	}
+
+	mutex_unlock(&sysfs_lock);
+	return status ? : size;
+}
+
+static DEVICE_ATTR(pinmux, 0644,
+		gpio_pinmux_show, gpio_pinmux_store);
 
 static ssize_t gpio_direction_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -796,6 +847,10 @@ static int gpiod_export(struct gpio_desc *desc, bool direction_may_change)
 			    desc_to_gpio(desc));
 	if (IS_ERR(dev)) {
 		status = PTR_ERR(dev);
+			if (!status)
+				status = device_create_file(dev,
+						&dev_attr_pinmux);
+
 		goto fail_unlock;
 	}
 
@@ -2041,6 +2096,67 @@ void gpio_set_value_cansleep(unsigned gpio, int value)
 	return gpiod_set_value_cansleep(gpio_to_desc(gpio), value);
 }
 EXPORT_SYMBOL_GPL(gpio_set_value_cansleep);
+
+static void gpiolib_show(struct gpio_chip *chip)
+{
+	unsigned		i;
+	unsigned		gpio = chip->base;
+	struct gpio_desc	*gdesc = &chip->desc[0];
+	int			is_out;
+
+	for (i = 0; i < chip->ngpio; i++, gpio++, gdesc++) {
+		gpiod_get_direction(gdesc);
+		is_out = test_bit(FLAG_IS_OUT, &gdesc->flags);
+		printk(" gpio-%-3d (%-20.20s) %s %s",
+			gpio, gdesc->label,
+			is_out ? "out" : "in ",
+			chip->get
+				? (chip->get(chip, i) ? "hi" : "lo")
+				: "?  ");
+		printk("\n");
+	}
+}
+
+
+void gpio_print_all()
+{
+	struct gpio_chip	*chip = NULL;
+	unsigned		gpio;
+	int			started = 0;
+
+	/* REVISIT this isn't locked against gpio_chip removal ... */
+
+	for (gpio = 0; gpio_is_valid(gpio)&&gpio<200; gpio++) {
+		struct device *dev;
+
+		if (chip == gpio_desc[gpio].chip)
+			continue;
+		chip = gpio_desc[gpio].chip;
+		if (!chip)
+			continue;
+
+		printk("%sGPIOs %d-%d",
+				started ? "\n" : "",
+				chip->base, chip->base + chip->ngpio - 1);
+		dev = chip->dev;
+		if (dev)
+			printk(", %s/%s",
+				dev->bus ? dev->bus->name : "no-bus",
+				dev_name(dev));
+		if (chip->label)
+			printk(", %s", chip->label);
+		if (chip->can_sleep)
+			printk(", can sleep");
+		printk(":\n");
+
+		started = 1;
+		gpiolib_show(chip);
+	}
+	return 0;
+}
+
+EXPORT_SYMBOL_GPL(gpio_print_all);
+
 
 #ifdef CONFIG_DEBUG_FS
 

@@ -35,6 +35,7 @@
 #define LP8557_CONFIG			0x10
 #define LP8557_EPROM_START		0x10
 #define LP8557_EPROM_END		0x1E
+#define LP8557_AOTO_LED_STRINGS  0x4
 
 #define DEFAULT_BL_NAME		"lcd-backlight"
 #define MAX_BRIGHTNESS		255
@@ -71,6 +72,34 @@ struct lp855x {
 	struct lp855x_platform_data *pdata;
 	struct pwm_device *pwm;
 };
+
+/* FIXME: If the platform has more than one LP855x chip then need
+ * to port the code here.
+ */
+struct lp855x *lpdata;
+
+int lp855x_ext_write_byte(u8 reg, u8 data)
+{
+	if (lpdata == NULL)
+		return -EINVAL;
+
+	return i2c_smbus_write_byte_data(lpdata->client, reg, data);
+}
+
+int lp855x_ext_read_byte(u8 reg)
+{
+	int ret;
+	u8 tmp;
+
+	if (lpdata == NULL)
+		return -EINVAL;
+
+	ret = i2c_smbus_read_byte_data(lpdata->client, reg);
+	if (ret < 0)
+		dev_err(lpdata->dev, "failed to read 0x%.2x\n", reg);
+
+	return ret;
+}
 
 static int lp855x_write_byte(struct lp855x *lp, u8 reg, u8 data)
 {
@@ -189,6 +218,10 @@ static int lp855x_configure(struct lp855x *lp)
 		goto err;
 
 	val = pd->device_control;
+	
+	/*enable the ic to detect how many led strings been connected to the lp8557*/
+	val|= LP8557_AOTO_LED_STRINGS;
+	
 	ret = lp855x_write_byte(lp, lp->cfg->reg_devicectrl, val);
 	if (ret)
 		goto err;
@@ -409,9 +442,17 @@ static int lp855x_probe(struct i2c_client *cl, const struct i2c_device_id *id)
 	if (!i2c_check_functionality(cl->adapter, I2C_FUNC_SMBUS_I2C_BLOCK))
 		return -EIO;
 
+	/* FIXME: If the platform has more than one LP855x chip then need
+	 * to port the code here.
+	 */
+	if (lpdata)
+		return -ENODEV;
+
 	lp = devm_kzalloc(&cl->dev, sizeof(struct lp855x), GFP_KERNEL);
 	if (!lp)
 		return -ENOMEM;
+
+	lpdata = lp;
 
 	if (pdata->period_ns > 0)
 		lp->mode = PWM_BASED;
@@ -450,6 +491,7 @@ static int lp855x_probe(struct i2c_client *cl, const struct i2c_device_id *id)
 err_sysfs:
 	lp855x_backlight_unregister(lp);
 err_dev:
+	lpdata = NULL;
 	return ret;
 }
 

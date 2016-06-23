@@ -53,6 +53,7 @@
 #include <linux/usb/otg.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
+#include <linux/usb/ulpi.h>
 
 #include "core.h"
 #include "gadget.h"
@@ -256,7 +257,8 @@ static void dwc3_event_buffers_cleanup(struct dwc3 *dwc)
 		dwc3_writel(dwc->regs, DWC3_GEVNTADRLO(n), 0);
 		dwc3_writel(dwc->regs, DWC3_GEVNTADRHI(n), 0);
 		dwc3_writel(dwc->regs, DWC3_GEVNTSIZ(n), 0);
-		dwc3_writel(dwc->regs, DWC3_GEVNTCOUNT(n), 0);
+		dwc3_writel(dwc->regs, DWC3_GEVNTCOUNT(n),
+			dwc3_readl(dwc->regs, DWC3_GEVNTCOUNT(n)));
 	}
 }
 
@@ -297,6 +299,7 @@ static int dwc3_core_init(struct dwc3 *dwc)
 	unsigned long		timeout;
 	u32			reg;
 	int			ret;
+	struct usb_phy		*usb_phy;
 
 	reg = dwc3_readl(dwc->regs, DWC3_GSNPSID);
 	/* This should read as U3 followed by revision number */
@@ -325,6 +328,18 @@ static int dwc3_core_init(struct dwc3 *dwc)
 	} while (true);
 
 	dwc3_core_soft_reset(dwc);
+
+	/* DCTL core soft reset may cause PHY hang, delay 1 ms and check ulpi */
+	mdelay(1);
+
+	if (!dwc->utmi_phy) {
+		usb_phy = usb_get_phy(USB_PHY_TYPE_USB2);
+		if (usb_phy &&
+			usb_phy_io_read(usb_phy, ULPI_VENDOR_ID_LOW) < 0)
+			dev_err(dwc->dev,
+				"ULPI not working after DCTL soft reset\n");
+		usb_put_phy(usb_phy);
+	}
 
 	reg = dwc3_readl(dwc->regs, DWC3_GCTL);
 	reg &= ~DWC3_GCTL_SCALEDOWN_MASK;

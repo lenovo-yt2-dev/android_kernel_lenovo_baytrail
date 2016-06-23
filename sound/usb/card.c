@@ -53,6 +53,8 @@
 #include <sound/pcm_params.h>
 #include <sound/initval.h>
 
+#include <linux/extcon-usb.h>
+
 #include "usbaudio.h"
 #include "card.h"
 #include "midi.h"
@@ -112,6 +114,23 @@ MODULE_PARM_DESC(autoclock, "Enable auto-clock selection for UAC2 devices (defau
 static DEFINE_MUTEX(register_mutex);
 static struct snd_usb_audio *usb_chip[SNDRV_CARDS];
 static struct usb_driver usb_audio_driver;
+
+
+static inline void usb_headset_report(int status)
+{
+	switch (status) {
+	case USB_HEADSET_DGTL:
+		usb_extcon_headset_report(USB_HEADSET_DGTL);
+		break;
+	case USB_HEADSET_PULL_OUT:
+		usb_extcon_headset_report(USB_HEADSET_PULL_OUT);
+		break;
+	default:
+		snd_printk(KERN_ERR "Invalid USB headset status %d\n",
+			status);
+		break;
+	}
+}
 
 /*
  * disconnect streams
@@ -631,6 +650,7 @@ static int usb_audio_probe(struct usb_interface *intf,
 	chip = snd_usb_audio_probe(interface_to_usbdev(intf), intf, id);
 	if (chip) {
 		usb_set_intfdata(intf, chip);
+		usb_headset_report(USB_HEADSET_DGTL);
 		return 0;
 	} else
 		return -EIO;
@@ -638,6 +658,7 @@ static int usb_audio_probe(struct usb_interface *intf,
 
 static void usb_audio_disconnect(struct usb_interface *intf)
 {
+	usb_headset_report(USB_HEADSET_PULL_OUT);
 	snd_usb_audio_disconnect(interface_to_usbdev(intf),
 				 usb_get_intfdata(intf));
 }

@@ -15,6 +15,30 @@
 #include <linux/audit.h>
 #include <linux/slab.h>
 #include <linux/bug.h>
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+
+#include <linux/mount.h>
+#include <linux/dcache.h>
+
+static inline struct dentry * retrieve_root_mount_dentry(const struct dentry * dir){
+	struct dentry * d_dentry_current = (struct dentry*)dir;
+	struct dentry * d_dentry_parent = NULL;
+	while(d_dentry_current != NULL){
+		d_dentry_parent = d_dentry_current->d_parent;
+		if(d_dentry_parent == d_dentry_current){
+			break;
+		} else {
+			d_dentry_current = d_dentry_parent;	
+		}
+	}
+	return d_dentry_current;
+}
+static inline void fsnotify_mount_root(const struct dentry * dentry, __u32 mask, const unsigned char *name, u32 cookie)
+{
+	struct dentry* root_dentry_ptr = retrieve_root_mount_dentry(dentry);
+	fsnotify(root_dentry_ptr->d_inode, mask, dentry->d_inode, FSNOTIFY_EVENT_INODE, name ? name :dentry->d_name.name, cookie);
+}
+#endif
 
 /*
  * fsnotify_d_instantiate - instantiate a dentry for inode
@@ -56,7 +80,9 @@ static inline int fsnotify_perm(struct file *file, int mask)
 	ret = fsnotify_parent(path, NULL, fsnotify_mask);
 	if (ret)
 		return ret;
-
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	fsnotify(path->mnt->mnt_root->d_inode, mask, path, FSNOTIFY_EVENT_PATH, path->dentry->d_name.name, 0);
+#endif
 	return fsnotify(inode, fsnotify_mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
 }
 
@@ -139,6 +165,9 @@ static inline void fsnotify_nameremove(struct dentry *dentry, int isdir)
 		mask |= FS_ISDIR;
 
 	fsnotify_parent(NULL, dentry, mask);
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	fsnotify_mount_root(dentry, mask, NULL, 0);
+#endif
 }
 
 /*
@@ -158,6 +187,9 @@ static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
 	audit_inode_child(inode, dentry, AUDIT_TYPE_CHILD_CREATE);
 
 	fsnotify(inode, FS_CREATE, dentry->d_inode, FSNOTIFY_EVENT_INODE, dentry->d_name.name, 0);
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	fsnotify_mount_root(dentry, FS_CREATE, NULL, 0);
+#endif
 }
 
 /*
@@ -169,7 +201,9 @@ static inline void fsnotify_link(struct inode *dir, struct inode *inode, struct 
 {
 	fsnotify_link_count(inode);
 	audit_inode_child(dir, new_dentry, AUDIT_TYPE_CHILD_CREATE);
-
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	fsnotify_mount_root(new_dentry, FS_CREATE, NULL, 0);
+#endif
 	fsnotify(dir, FS_CREATE, inode, FSNOTIFY_EVENT_INODE, new_dentry->d_name.name, 0);
 }
 
@@ -184,6 +218,9 @@ static inline void fsnotify_mkdir(struct inode *inode, struct dentry *dentry)
 	audit_inode_child(inode, dentry, AUDIT_TYPE_CHILD_CREATE);
 
 	fsnotify(inode, mask, d_inode, FSNOTIFY_EVENT_INODE, dentry->d_name.name, 0);
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	fsnotify_mount_root(dentry, mask, NULL, 0);
+#endif
 }
 
 /*
@@ -200,6 +237,9 @@ static inline void fsnotify_access(struct file *file)
 
 	if (!(file->f_mode & FMODE_NONOTIFY)) {
 		fsnotify_parent(path, NULL, mask);
+	#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+		fsnotify(path->mnt->mnt_root->d_inode, mask, path, FSNOTIFY_EVENT_PATH, path->dentry->d_name.name, 0);
+	#endif
 		fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
 	}
 }
@@ -218,6 +258,9 @@ static inline void fsnotify_modify(struct file *file)
 
 	if (!(file->f_mode & FMODE_NONOTIFY)) {
 		fsnotify_parent(path, NULL, mask);
+	#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+		fsnotify(path->mnt->mnt_root->d_inode, mask, path, FSNOTIFY_EVENT_PATH, path->dentry->d_name.name, 0);
+	#endif
 		fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
 	}
 }
@@ -235,6 +278,9 @@ static inline void fsnotify_open(struct file *file)
 		mask |= FS_ISDIR;
 
 	fsnotify_parent(path, NULL, mask);
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	fsnotify(path->mnt->mnt_root->d_inode, mask, path, FSNOTIFY_EVENT_PATH, path->dentry->d_name.name, 0);
+#endif
 	fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
 }
 
@@ -253,6 +299,9 @@ static inline void fsnotify_close(struct file *file)
 
 	if (!(file->f_mode & FMODE_NONOTIFY)) {
 		fsnotify_parent(path, NULL, mask);
+	#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+		fsnotify(path->mnt->mnt_root->d_inode, mask, path, FSNOTIFY_EVENT_PATH, path->dentry->d_name.name, 0);
+	#endif
 		fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
 	}
 }
@@ -269,6 +318,9 @@ static inline void fsnotify_xattr(struct dentry *dentry)
 		mask |= FS_ISDIR;
 
 	fsnotify_parent(NULL, dentry, mask);
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	fsnotify_mount_root(dentry, mask, NULL, 0);
+#endif
 	fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
 }
 
@@ -304,6 +356,9 @@ static inline void fsnotify_change(struct dentry *dentry, unsigned int ia_valid)
 			mask |= FS_ISDIR;
 
 		fsnotify_parent(NULL, dentry, mask);
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+		fsnotify_mount_root(dentry, mask, NULL, 0);
+#endif
 		fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
 	}
 }

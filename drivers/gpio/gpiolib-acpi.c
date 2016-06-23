@@ -280,6 +280,36 @@ int acpi_get_gpio_by_index(struct device *dev, int index,
 EXPORT_SYMBOL_GPL(acpi_get_gpio_by_index);
 
 /**
+ * acpi_get_gpio_by_name() - get a GPIO number from device resources
+ * @dev: pointer to a device to get GPIO from
+ * @name: Name declared in the device scope
+ * @info: info pointer to fill in (optional)
+ *
+ * Function goes through ACPI resources for @dev and evaluates if any variable
+ * @name exists, then uses the integer value of this variable as an index to
+ * call acpi_get_gpio_by_index().
+ *
+ * If the variable @name does not exist, negative errno is returned.
+ *
+ * */
+int acpi_get_gpio_by_name(struct device *dev, char *name,
+			  struct acpi_gpio_info *info)
+{
+	acpi_integer index;
+
+	if (!name)
+		return -EINVAL;
+
+	if (!ACPI_FAILURE(acpi_evaluate_integer(
+				  DEVICE_ACPI_HANDLE(dev),
+				  name, NULL, &index)))
+		return acpi_get_gpio_by_index(dev, (int)index, info);
+
+	return -ENODEV;
+}
+EXPORT_SYMBOL_GPL(acpi_get_gpio_by_name);
+
+/**
  * acpi_gpiochip_free_interrupts() - Free GPIO _EVT ACPI event interrupts.
  * @chip:      gpio chip
  *

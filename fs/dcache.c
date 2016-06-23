@@ -295,6 +295,10 @@ static void dentry_unlink_inode(struct dentry * dentry)
 	dentry_rcuwalk_barrier(dentry);
 	spin_unlock(&dentry->d_lock);
 	spin_unlock(&inode->i_lock);
+#ifdef CONFIG_ODM_FS_DATA_PT_CHECK
+	if(!inode->i_nlink)
+		fsnotify_mount_root(dentry, FS_DELETE_SELF, NULL, 0);
+#endif
 	if (!inode->i_nlink)
 		fsnotify_inoderemove(inode);
 	if (dentry->d_op && dentry->d_op->d_iput)

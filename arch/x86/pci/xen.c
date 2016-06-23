@@ -24,7 +24,15 @@
 #include <xen/events.h>
 #include <asm/xen/pci.h>
 
-static int xen_pcifront_enable_irq(struct pci_dev *dev)
+#ifndef CONFIG_ACPI
+#define ACPI_LEVEL_SENSITIVE            ((u8) 0x00)
+#define ACPI_EDGE_SENSITIVE             ((u8) 0x01)
+#define ACPI_ACTIVE_HIGH                ((u8) 0x00)
+#define ACPI_ACTIVE_LOW                 ((u8) 0x01)
+#endif
+
+
+int xen_pcifront_enable_irq(struct pci_dev *dev)
 {
 	int rc;
 	int share = 1;
@@ -55,7 +63,7 @@ static int xen_pcifront_enable_irq(struct pci_dev *dev)
 	return 0;
 }
 
-#ifdef CONFIG_ACPI
+#ifdef CONFIG_XEN_DOM0
 static int xen_register_pirq(u32 gsi, int gsi_override, int triggering,
 			     bool set_pirq)
 {
@@ -113,7 +121,7 @@ static int acpi_register_gsi_xen_hvm(struct device *dev, u32 gsi,
 }
 
 #ifdef CONFIG_XEN_DOM0
-static int xen_register_gsi(u32 gsi, int gsi_override, int triggering, int polarity)
+int xen_register_gsi(u32 gsi, int gsi_override, int triggering, int polarity)
 {
 	int rc, irq;
 	struct physdev_setup_gsi setup_gsi;
@@ -433,6 +441,7 @@ int __init pci_xen_hvm_init(void)
 #ifdef CONFIG_XEN_DOM0
 static __init void xen_setup_acpi_sci(void)
 {
+#ifdef CONFIG_ACPI
 	int rc;
 	int trigger, polarity;
 	int gsi = acpi_sci_override_gsi;
@@ -473,7 +482,7 @@ static __init void xen_setup_acpi_sci(void)
 
 	gsi = xen_register_gsi(gsi, gsi_override, trigger, polarity);
 	printk(KERN_INFO "xen: acpi sci %d\n", gsi);
-
+#endif
 	return;
 }
 
@@ -487,13 +496,17 @@ int __init pci_xen_initial_domain(void)
 	x86_msi.restore_msi_irqs = xen_initdom_restore_msi_irqs;
 #endif
 	xen_setup_acpi_sci();
+#ifdef CONFIG_ACPI
 	__acpi_register_gsi = acpi_register_gsi_xen;
+#endif
 	/* Pre-allocate legacy irqs */
 	for (irq = 0; irq < NR_IRQS_LEGACY; irq++) {
 		int trigger, polarity;
 
+#ifdef CONFIG_ACPI
 		if (acpi_get_override_irq(irq, &trigger, &polarity) == -1)
 			continue;
+#endif
 
 		xen_register_pirq(irq, -1 /* no GSI override */,
 			trigger ? ACPI_LEVEL_SENSITIVE : ACPI_EDGE_SENSITIVE,
@@ -501,7 +514,7 @@ int __init pci_xen_initial_domain(void)
 	}
 	if (0 == nr_ioapics) {
 		for (irq = 0; irq < NR_IRQS_LEGACY; irq++)
-			xen_bind_pirq_gsi_to_irq(irq, irq, 0, "xt-pic");
+			xen_bind_pirq_gsi_to_irq(irq, irq, 1, "xt-pic");
 	}
 	return 0;
 }

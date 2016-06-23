@@ -81,12 +81,16 @@ static struct acpi_bus_type *acpi_get_bus_type(struct device *dev)
 static acpi_status acpi_dev_present(acpi_handle handle, u32 lvl_not_used,
 				  void *not_used, void **ret_p)
 {
+	unsigned long long sta;
+	acpi_status status;
 	struct acpi_device *adev = NULL;
 
 	acpi_bus_get_device(handle, &adev);
 	if (adev) {
 		*ret_p = handle;
-		return AE_CTRL_TERMINATE;
+		status = acpi_bus_get_status_handle(handle, &sta);
+		if (ACPI_SUCCESS(status) && (sta & ACPI_STA_DEVICE_ENABLED))
+			return AE_CTRL_TERMINATE;
 	}
 	return AE_OK;
 }
@@ -172,7 +176,7 @@ acpi_handle acpi_find_child(acpi_handle parent, u64 addr, bool is_bridge)
 }
 EXPORT_SYMBOL_GPL(acpi_find_child);
 
-static int acpi_bind_one(struct device *dev, acpi_handle handle)
+int acpi_bind_one(struct device *dev, acpi_handle handle)
 {
 	struct acpi_device *acpi_dev;
 	acpi_status status;
@@ -255,8 +259,9 @@ static int acpi_bind_one(struct device *dev, acpi_handle handle)
 	kfree(physical_node);
 	goto err;
 }
+EXPORT_SYMBOL_GPL(acpi_bind_one);
 
-static int acpi_unbind_one(struct device *dev)
+int acpi_unbind_one(struct device *dev)
 {
 	struct acpi_device_physical_node *entry;
 	struct acpi_device *acpi_dev;
@@ -305,6 +310,7 @@ err:
 	dev_err(dev, "Oops, 'acpi_handle' corrupt\n");
 	return -EINVAL;
 }
+EXPORT_SYMBOL_GPL(acpi_unbind_one);
 
 static int acpi_platform_notify(struct device *dev)
 {
