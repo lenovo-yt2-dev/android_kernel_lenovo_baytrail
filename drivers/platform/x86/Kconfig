@@ -643,6 +643,14 @@ config ACPI_CMPC
 	  keys as input device, backlight device, tablet and accelerometer
 	  devices.
 
+config INTEL_PMC_IPC
+	bool "Intel PMC IPC Support"
+	default y
+	---help---
+	  IPC is used to bridge the communications between kernel and PMC on
+	  some embedded Intel x86 platforms. This is not needed for PC-type
+	  machines.
+
 config INTEL_SCU_IPC
 	bool "Intel SCU IPC Support"
 	depends on X86_INTEL_MID
@@ -700,6 +708,16 @@ config INTEL_PMIC_CHARGER
 	  from USB PHY for USB connect, we should use the UDBDET interrupt for USB connect.
 
 	  If unsure, say N.
+
+config INTEL_FG_HELPER
+	tristate "Intel Fuel gauge helper"
+	help
+	  This driver exposes a device file interface to store and restore
+          Fuel gauge configuration data.
+          Any fuel gauge driver can use the interfaces exposed by this
+          driver to store and retrieve their configuration data.
+
+          If unsure, say N.
 
 config INTEL_MODEM_NVRAM
 	tristate "modem NVRAM driver for Intel CTP/MERR platforms"

@@ -169,6 +169,10 @@ static struct console early_serial_console = {
 	.index =	-1,
 };
 
+#ifdef CONFIG_INTEL_NORTHPEAK_EARLY_PRINTK
+extern struct console early_npk_console;
+#endif
+
 static inline void early_console_register(struct console *con, int keep_early)
 {
 	if (con->index != -1) {
@@ -238,6 +242,10 @@ static int __init setup_early_printk(char *buf)
 		}
 		if (!strncmp(buf, "pti", 3))
 			early_console_register(&early_pti_console, keep);
+#endif
+#ifdef CONFIG_INTEL_NORTHPEAK_EARLY_PRINTK
+		if (!strncmp(buf, "npk", 3))
+			early_console_register(&early_npk_console, keep);
 #endif
 		buf++;
 	}

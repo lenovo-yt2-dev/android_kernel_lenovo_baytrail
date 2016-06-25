@@ -3,4 +3,3 @@
 #
 
 obj-$(CONFIG_ODM_FS_DATA_PT_CHECK)		+= data_pt_check.o
-obj-$(CONFIG_DMI)				+= dmi_fw_info.o

@@ -855,6 +855,17 @@ static const struct snd_kcontrol_new line2p_mix[] = {
 SOC_DAPM_SINGLE("Right Output Switch", WM8993_LINE_MIXER2, 0, 1, 0),
 };
 
+static const char *hpvirtual_mux_text[] = {
+	"Enable",
+	"Disable",
+};
+
+static const struct soc_enum  hpvirtual_enum =
+	SOC_ENUM_SINGLE(0, 0, 2,  hpvirtual_mux_text);
+
+static const struct snd_kcontrol_new hpvirtual_mux =
+	SOC_DAPM_ENUM_VIRT("HPVIRTUAL",  hpvirtual_enum);
+
 static const struct snd_soc_dapm_widget analogue_dapm_widgets[] = {
 SND_SOC_DAPM_INPUT("IN1LN"),
 SND_SOC_DAPM_INPUT("IN1LP"),
@@ -941,7 +952,8 @@ SND_SOC_DAPM_OUT_DRV_E("LINEOUT2N Driver", WM8993_POWER_MANAGEMENT_3, 11, 0,
 SND_SOC_DAPM_OUT_DRV_E("LINEOUT2P Driver", WM8993_POWER_MANAGEMENT_3, 10, 0,
 		       NULL, 0, lineout_event,
 		       SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
-
+SND_SOC_DAPM_VIRT_MUX_E("HPVIRTUAL", SND_SOC_NOPM, 0, 0, &hpvirtual_mux,
+			NULL, SND_SOC_DAPM_PRE_POST_PMD),
 SND_SOC_DAPM_OUTPUT("SPKOUTLP"),
 SND_SOC_DAPM_OUTPUT("SPKOUTLN"),
 SND_SOC_DAPM_OUTPUT("SPKOUTRP"),
@@ -1070,8 +1082,9 @@ static const struct snd_soc_dapm_route analogue_routes[] = {
 	{ "Headphone PGA", NULL, "CLK_SYS" },
 	{ "Headphone PGA", NULL, "Headphone Supply" },
 
-	{ "HPOUT1L", NULL, "Headphone PGA" },
-	{ "HPOUT1R", NULL, "Headphone PGA" },
+	{ "HPVIRTUAL", "Enable", "Headphone PGA"},
+	{ "HPOUT1L", NULL, "HPVIRTUAL"},
+	{ "HPOUT1R", NULL, "HPVIRTUAL"},
 
 	{ "LINEOUT1N Driver", NULL, "VMID" },
 	{ "LINEOUT1P Driver", NULL, "VMID" },

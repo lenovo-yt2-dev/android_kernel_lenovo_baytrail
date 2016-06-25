@@ -102,7 +102,8 @@ static struct rpmsg_lock global_lock = {
 };
 
 #define is_global_locked_prev		(global_lock.locked_prev)
-#define set_global_locked_prev(lock)	(global_lock.locked_prev = lock)
+#define get_global_locked_prev()	(global_lock.locked_prev++)
+#define put_global_locked_prev()	(global_lock.locked_prev--)
 #define global_locked_by_current	(global_lock.lock.owner == current)
 
 void rpmsg_global_lock(void)
@@ -124,10 +125,11 @@ static void rpmsg_lock(void)
 {
 	if (!mutex_trylock(&global_lock.lock)) {
 		if (global_locked_by_current)
-			set_global_locked_prev(1);
+			get_global_locked_prev();
 		else
 			rpmsg_global_lock();
-	}
+	} else
+		atomic_inc(&global_lock.pending);
 }
 
 static void rpmsg_unlock(void)
@@ -135,7 +137,7 @@ static void rpmsg_unlock(void)
 	if (!is_global_locked_prev)
 		rpmsg_global_unlock();
 	else
-		set_global_locked_prev(0);
+		put_global_locked_prev();
 }
 
 int rpmsg_send_command(struct rpmsg_instance *instance, u32 cmd,

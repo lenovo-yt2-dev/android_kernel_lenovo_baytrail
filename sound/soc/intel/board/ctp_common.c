@@ -40,6 +40,7 @@
 #include <asm/platform_ctp_audio.h>
 #include <sound/pcm.h>
 #include <sound/jack.h>
+#include <linux/input.h>
 #include <sound/soc.h>
 #include "ctp_common.h"
 
@@ -586,6 +587,7 @@ static int snd_ctp_jack_init(struct snd_soc_pcm_runtime *runtime,
 		pr_err("jack creation failed\n");
 		return ret;
 	}
+	snd_jack_set_key(ctx->ctp_jack.jack, SND_JACK_BTN_0, KEY_MEDIA);
 	ret = snd_soc_jack_add_gpios(&ctx->ctp_jack, 2, ctx->hs_gpio_ops);
 	if (ret) {
 		pr_err("adding jack GPIO failed\n");

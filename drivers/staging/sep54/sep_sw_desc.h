@@ -46,15 +46,6 @@
 	SEP_SW_DESC_ ## desc_field ## _BIT_SIZE,			      \
 	new_val)
 
-#define SEP_SW_DESC_GET_COOKIE(desc_p)\
-	((struct sep_op_ctx *)phys_to_virt(((u32 *)desc_p)[SEP_SW_DESC_COOKIE_WORD_OFFSET]))
-#define SEP_SW_DESC_SET_COOKIE(desc_p, op_ctx) \
-do {\
-	u32 __ctx_ptr__ = virt_to_phys(op_ctx) & (DMA_BIT_MASK(32));\
-	memcpy(((u32 *)desc_p) + SEP_SW_DESC_COOKIE_WORD_OFFSET,\
-	&__ctx_ptr__, sizeof(u32));\
-} while (0)
-
 /* Type specific descriptor fields access */
 #define SEP_SW_DESC_GET4TYPE(desc_p, desc_type, desc_field) BITFIELD_GET(     \
 	((u32 *)(desc_p))                                                \

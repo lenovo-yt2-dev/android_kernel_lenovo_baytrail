@@ -26,6 +26,7 @@
 
 #include "ehci.h"
 #include "pci-quirks.h"
+#include "ehci-sram.h"
 
 #define DRIVER_DESC "EHCI PCI platform driver"
 
@@ -55,20 +56,22 @@ static void sram_init(struct usb_hcd *hcd)
 	void __iomem		*base = NULL;
 	void __iomem		*addr = NULL;
 
+	ehci_info(ehci, "HCD SRAM enable %d\n", hcd->has_sram);
+
 	if (!hcd->has_sram)
 		return;
+
 	ehci->sram_addr = pci_resource_start(pdev, 1);
 	ehci->sram_size = pci_resource_len(pdev, 1);
-	ehci_info(ehci, "Found HCD SRAM at %x size:%x\n",
-		ehci->sram_addr, ehci->sram_size);
+	ehci_info(ehci, "Found HCD SRAM at %x size:%x\n", ehci->sram_addr, ehci->sram_size);
 
 	if (pci_request_region(pdev, 1, kobject_name(&pdev->dev.kobj))) {
 		ehci_warn(ehci, "SRAM request failed\n");
 		hcd->has_sram = 0;
 		return;
-	} else if (!dma_declare_coherent_memory(&pdev->dev, ehci->sram_addr,
-			ehci->sram_addr, ehci->sram_size, DMA_MEMORY_MAP)) {
-		ehci_warn(ehci, "SRAM DMA declare failed\n");
+	} else if (!ehci_sram_declare(&pdev->dev, ehci->sram_addr,
+				      ehci->sram_addr, ehci->sram_size, DMA_MEMORY_MAP)) {
+		ehci_warn(ehci, "SRAM declare failed\n");
 		pci_release_region(pdev, 1);
 		hcd->has_sram = 0;
 		return;
@@ -98,7 +101,7 @@ static void sram_deinit(struct usb_hcd *hcd)
 
 	if (!hcd->has_sram)
 		return;
-	dma_release_declared_memory(&pdev->dev);
+	ehci_sram_release(&pdev->dev);
 	pci_release_region(pdev, 1);
 
 	/* If host is suspended, SRAM backup memory should be freed */
@@ -314,19 +317,20 @@ static int ehci_pci_setup(struct usb_hcd *hcd)
 			pm_runtime_set_active(&pdev->dev);
 #endif
 		} else if (pdev->device == 0x119D) {
-#ifdef WIFI_ONLY
+#ifndef CONFIG_MDM_CTRL
 			/* disable HSIC controller */
-			pr_info("yangyi enter right\n");
+			pr_info("%s,disable HSIC\n", __func__);
 			pci_set_power_state(pdev, PCI_D3cold);
 			return -ENODEV;
 #endif
+
 			ehci_info(ehci, "Detected HSIC HC\n");
 			hcd->has_tt = 1;
 			ehci->has_hostpc = 1;
 
 			hcd->has_wakeup_irq = 1;
 
-			hcd->has_sram = 0;
+			hcd->has_sram = 1;
 			hcd->sram_no_payload = 1;
 			sram_init(hcd);
 
@@ -587,18 +591,16 @@ static int ehci_pci_suspend(struct usb_hcd *hcd, bool do_wakeup)
 			struct pci_dev  *pdev =
 				to_pci_dev(hcd->self.controller);
 
-			if (pdev->device != 0x119D) {
-				hostpc_reg = &ehci->regs->hostpc[port];
-				temp = ehci_readl(ehci, hostpc_reg);
+			hostpc_reg = &ehci->regs->hostpc[port];
+			temp = ehci_readl(ehci, hostpc_reg);
 
-				if (!(temp & HOSTPC_PHCD))
-					ehci_writel(ehci, temp | HOSTPC_PHCD,
-							hostpc_reg);
-				temp = ehci_readl(ehci, hostpc_reg);
-				ehci_dbg(ehci, "Port %d PHY low-power mode %s\n",
-					port, (temp & HOSTPC_PHCD) ?
-						"succeeded" : "failed");
-			}
+			if (!(temp & HOSTPC_PHCD))
+				ehci_writel(ehci, temp | HOSTPC_PHCD,
+						hostpc_reg);
+			temp = ehci_readl(ehci, hostpc_reg);
+			ehci_dbg(ehci, "Port %d PHY low-power mode %s\n",
+				port, (temp & HOSTPC_PHCD) ?
+					"succeeded" : "failed");
 		}
 		spin_unlock_irqrestore(&ehci->lock, flags);
 	}

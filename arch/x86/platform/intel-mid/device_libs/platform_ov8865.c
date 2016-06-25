@@ -13,9 +13,15 @@
 #include <linux/delay.h>
 #include <linux/atomisp_platform.h>
 #include <asm/intel_scu_ipcutil.h>
+#include <asm/intel_scu_pmic.h>
 #include <asm/intel-mid.h>
 #include <media/v4l2-subdev.h>
+#include <linux/regulator/consumer.h>
 #include <linux/mfd/intel_mid_pmic.h>
+
+#ifdef CONFIG_INTEL_SOC_PMC
+#include <asm/intel_soc_pmc.h>
+#endif
 
 #ifdef CONFIG_VLV2_PLAT_CLK
 #include <linux/vlv2_plat_clock.h>
@@ -30,12 +36,19 @@
  */
 #define CAMERA_0_RESET 126	/* GP_CAMERASB09, Low to reset */
 #define CAMERA_0_PWDN 123	/* GP_CAMERASB06, Low to power down*/
-#define CAMERA_DOVDD_EN 0 /* GP_CAMERASB05, High to enable */
-#define CAMERA_VCM_EN 119	/* GP_CAMERASB02, High to enable */
-#define CAMERA_AVDD_EN 51	/* GPIO_S0_51, High to enable */
-#define CAMERA_DVDD_EN 125	/* GP_CAMERASB08, High to enable */
+//#define CAMERA_DOVDD_EN 0 /* GP_CAMERASB05, High to enable */
+//#define CAMERA_VCM_EN 119	/* GP_CAMERASB02, High to enable */
+//#define CAMERA_AVDD_EN 51	/* GPIO_S0_51, High to enable */
+//#define CAMERA_DVDD_EN 125	/* GP_CAMERASB08, High to enable */
 
 #define CAMERA_0_RESET_CRV2 CAMERA_0_RESET
+
+#ifdef CONFIG_INTEL_SOC_PMC
+#define OSC_CAM0_CLK 0x0
+#define CLK_19P2MHz 0x1
+#define CLK_ON	0x01
+#define CLK_OFF	0x02
+#endif
 
 #ifdef CONFIG_VLV2_PLAT_CLK
 #define OSC_CAM0_CLK 0x0
@@ -53,17 +66,17 @@
 static int camera_vprog1_on = 0;
 static int camera_reset = -1;
 static int camera_power_down = -1;
-static int camera_vcm_en = -1;
+//static int camera_vcm_en = -1;
 
-static int camera_dovdd_en =-1;
-static int camera_avdd_en = -1;
-static int camera_dvdd_en = -1;
+//static int camera_dovdd_en =-1;
+//static int camera_avdd_en = -1;
+//static int camera_dvdd_en = -1;
 
 
 /*
  * MRFLD VV primary camera sensor - OV8865 platform data
  */
-extern int blade_power_pins(void);
+//extern int blade_power_pins(void);
 /*#define OV8865_PLAT_DEBUG 1*/
 
 #ifdef OV8865_PLAT_DEBUG
@@ -78,9 +91,9 @@ static void ov8865_verify_gpio_power(void)
 	OV8865_PLAT_LOG("CAMERA: start check ov8865 gpio\n");
 	OV8865_PLAT_LOG("CAMERA_1_RESET: %d\n", gpio_get_value(CAMERA_0_RESET));
 	OV8865_PLAT_LOG("CAMERA_1_PWDN: %d\n", gpio_get_value(CAMERA_0_PWDN));
-	OV8865_PLAT_LOG("CAMERA_DOVDD_EN: %d\n", gpio_get_value(CAMERA_DOVDD_EN));
-	OV8865_PLAT_LOG("CAMERA_AVDD_EN: %d\n", gpio_get_value(CAMERA_AVDD_EN));
-	OV8865_PLAT_LOG("CAMERA_DVDD_EN: %d\n", gpio_get_value(CAMERA_DVDD_EN));
+	//OV8865_PLAT_LOG("CAMERA_DOVDD_EN: %d\n", gpio_get_value(CAMERA_DOVDD_EN));
+	//OV8865_PLAT_LOG("CAMERA_AVDD_EN: %d\n", gpio_get_value(CAMERA_AVDD_EN));
+	//OV8865_PLAT_LOG("CAMERA_DVDD_EN: %d\n", gpio_get_value(CAMERA_DVDD_EN));
 	OV8865_PLAT_LOG("VPROG_3P3V  addr:0x%x value:%x\n", VPROG_3P3V, intel_mid_pmic_readb(VPROG_3P3V));
 	OV8865_PLAT_LOG("VPROG_2P8V  addr:0x%x value:%x\n", VPROG_2P8V, intel_mid_pmic_readb(VPROG_2P8V));
 	OV8865_PLAT_LOG("VPROG_1P8V  addr:0x%x value:%x\n", VPROG_1P8V, intel_mid_pmic_readb(VPROG_1P8V));
@@ -144,6 +157,16 @@ static int ov8865_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 
 static int ov8865_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 {
+#if CONFIG_INTEL_SOC_PMC
+	if (flag) {
+		int ret;
+		ret = pmc_pc_set_freq(OSC_CAM0_CLK, CLK_19P2MHz);
+		if (ret)
+			return ret;
+		return pmc_pc_configure(OSC_CAM0_CLK, CLK_ON);
+	}
+	return pmc_pc_configure(OSC_CAM0_CLK, CLK_OFF);
+#else
 #if defined(CONFIG_INTEL_SCU_IPC_UTIL)
 	static const unsigned int clock_khz = 19200;
 #endif
@@ -169,7 +192,7 @@ static int ov8865_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 	pr_err("ov8865 clock is not set.\n");
 	return 0;
 #endif
-
+#endif
 }
 static int ov8865_power_pins(void)
 {
@@ -177,7 +200,8 @@ static int ov8865_power_pins(void)
 
 	if (IS_BYT) {
 		//blade_power_pins();
-
+		/*
+		//avdd and dvdd is supported by V1P8SX,not GPIOs,so delete here by wdy
 		if (camera_avdd_en < 0) {
 			camera_avdd_en = CAMERA_AVDD_EN;
 			ret = gpio_request(camera_avdd_en, "camera_avdd_en");
@@ -200,6 +224,7 @@ static int ov8865_power_pins(void)
 			}
 			ret = gpio_direction_output(camera_dvdd_en, 0);
 		}
+		*/
 		
 		if (camera_power_down < 0) {
 			camera_power_down = CAMERA_0_PWDN;
@@ -234,6 +259,8 @@ static int ov8865_power_pins_free(void)
 {
 	int ret = -1;
 	if(IS_BYT){
+	/*
+	//avdd and dvdd is supported by V1P8SX,not GPIOs,so delete here by wdy
 	if (camera_avdd_en >= 0) {
 			gpio_free(camera_avdd_en);	
 			camera_avdd_en = -1;
@@ -245,11 +272,12 @@ static int ov8865_power_pins_free(void)
 			camera_dvdd_en = -1;
 			printk("free camera gpio %s  %d ",__FUNCTION__,__LINE__);
 		}
+	*/
 	
 	if (camera_power_down >= 0) {
 			gpio_free(camera_power_down);
 			camera_power_down = -1;
-			printk("free camera gpio %s  %d ",__FUNCTION__,__LINE__);
+			OV8865_PLAT_LOG("free camera gpio %s  %d ",__FUNCTION__,__LINE__);
 		}
 	
 		ret = 0;
@@ -262,36 +290,39 @@ static int ov8865_power_ctrl(struct v4l2_subdev *sd, int flag)
 {	
 	int ret = 0;
 	int value = 0;
-
+	
 	if(flag == camera_vprog1_on){
-		printk("%s %d  flag== camera_vprog1_on,return with do nothing  flag= %d\n",__FUNCTION__,__LINE__,flag);
+		OV8865_PLAT_LOG("camera operation logic error,already is opened or closed ,flag = %d\n",flag);
 		return 0;
 	}
 	
-	ret = ov8865_power_pins();
-	if(ret)
+	if(ov8865_power_pins())
 			goto free_gpio;
 
 	if (flag) {
 		if (!camera_vprog1_on) {
 #ifdef CONFIG_CRYSTAL_COVE
-			/* AVDD on First */
+			/*
+			//AVDD on First ///do we need to enable 3p3v??
+			
 			value = intel_mid_pmic_readb(VPROG_3P3V);
 			value = value | VPROG_ENABLE;
-			OV8865_PLAT_LOG("try to enable VPROG_3P3V: value=0x%x\n", value);
+			OV8865_PLAT_LOG("try to enable VPROG_3P3V @%s, value=0x%x\n",__FUNCTION__ ,value);
 			ret = intel_mid_pmic_writeb(VPROG_3P3V, value);
-			gpio_set_value(camera_avdd_en, 1);
+			
+			//gpio_set_value(camera_avdd_en, 1);
 
 			usleep_range(2000, 2100);
+			*/
 			/* DOVDD  On*/
-			OV8865_PLAT_LOG("try to enable VPROG_1P8V\n");
+			OV8865_PLAT_LOG("try to enable VPROG_1P8V @%s \n",__FUNCTION__);
 			ret = intel_mid_pmic_writeb(VPROG_1P8V, VPROG_ENABLE);
 			if(ret){
 				printk("1p8v failed   %s  %d  ",__FUNCTION__,__LINE__);
 				goto fail_1p8v;
 			}
 			usleep_range(2000, 2100);
-			gpio_set_value(camera_dvdd_en, 1);
+			//gpio_set_value(camera_dvdd_en, 1);
 			
 			/* VCM 2P8 power on*/
 			/*printk("try to enable VPROG_2P8V\n");
@@ -303,9 +334,9 @@ static int ov8865_power_ctrl(struct v4l2_subdev *sd, int flag)
 			*/
 			
 			/* power up sequence control via GPIO*/
-			printk("ov8865_power_ctrl power down \n");
+			printk("ov8865_power_ctrl power up \n");
 			gpio_direction_output(camera_power_down, 0);
-			gpio_set_value(camera_power_down, 0);
+			//gpio_set_value(camera_power_down, 0);//not need,delete by wdy
 			
 			usleep_range(1000, 1500);
 
@@ -325,14 +356,13 @@ static int ov8865_power_ctrl(struct v4l2_subdev *sd, int flag)
 		if (camera_vprog1_on) {
 #ifdef CONFIG_CRYSTAL_COVE
 			/* power down sequence control via GPIO*/
-			gpio_set_value(camera_dvdd_en, 0);
-			gpio_set_value(camera_avdd_en, 0);
+			//gpio_set_value(camera_dvdd_en, 0);
+			//gpio_set_value(camera_avdd_en, 0);
 			//gpio_set_value(camera_vcm_en, 0);
 			usleep_range(2500, 3500);
 			
 			gpio_set_value(camera_power_down, 1);
 			//gpio_set_value(camera_dovdd_en, 0);
-
 			/* power down power rail*/
 			//ret = intel_mid_pmic_writeb(VPROG_2P8V, VPROG_DISABLE);
 			//if (ret)
@@ -355,13 +385,9 @@ static int ov8865_power_ctrl(struct v4l2_subdev *sd, int flag)
 	}
 
 fail_1p8v:
-	ret = intel_mid_pmic_writeb(VPROG_1P8V, VPROG_DISABLE);
-	printk("VPROG_DISABLE_1p8v  %s  %d  ret = %d \n",__FUNCTION__,__LINE__,ret);
-	
-	
+	ret = intel_mid_pmic_writeb(VPROG_1P8V, VPROG_DISABLE);	
 free_gpio:
 	ret = ov8865_power_pins_free();
-	printk("ov8865 gpio free %s  %d  ret = %d \n",__FUNCTION__,__LINE__,ret);
 	return ret;
 }
 

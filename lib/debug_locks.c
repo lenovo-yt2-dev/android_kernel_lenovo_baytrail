@@ -24,6 +24,22 @@
 int debug_locks = 1;
 EXPORT_SYMBOL_GPL(debug_locks);
 
+static int __init debug_locks_setup(char *str)
+{
+	unsigned long enabled;
+	int ret;
+
+	ret = kstrtoul(str, 10, &enabled);
+	if (ret)
+		return ret;
+
+	if (!enabled)
+		__debug_locks_off();
+
+	return 0;
+}
+early_param("debug_locks", debug_locks_setup);
+
 /*
  * The locking-testsuite uses <debug_locks_silent> to get a
  * 'silent failure': nothing is printed to the console when

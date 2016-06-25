@@ -118,6 +118,10 @@ void *merfld_wm8958_audio_platform_data(void *info)
 		platform_device_put(pdev);
 		return NULL;
 	}
+	/* Speaker boost gpio is required on moorefield mofd_v0 PR1 phone
+	 * If its not populated get_gpio_by_name will return -1 */
+	mrfld_audio_pdata.spk_gpio = get_gpio_by_name("spkr_boost_en");
+	pr_info("Speaker boost gpio is %d\n", mrfld_audio_pdata.spk_gpio);
 	if (platform_device_add_data(pdev, &mrfld_audio_pdata,
 				     sizeof(mrfld_audio_pdata))) {
 		pr_err("failed to add mrfld_wm8958 platform data\n");

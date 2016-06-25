@@ -161,7 +161,7 @@ static struct  wm8958_custom_config custom_config = {
 static struct wm8994_pdata wm8994_pdata = {
 	/* configure gpio1 function: 0x0001(Logic level input/output) */
 	.gpio_defaults[0] = 0x0003,
-	.irq_flags = IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
+	.irq_flags = IRQF_TRIGGER_RISING | IRQF_ONESHOT,
 	/* FIXME: Below are 1811A specfic, we need to use SPID for these */
 
 	/* configure gpio3/4/5/7 function for AIF2 voice */
@@ -178,6 +178,31 @@ static struct wm8994_pdata wm8994_pdata = {
 	.ldo[0]	= { 0, &wm8994_ldo1_data }, /* set actual value at wm8994_platform_data() */
 	.ldo[1]	= { 0, &wm8994_ldo2_data },
 	.ldo_ena_always_driven = 1,
+
+	.mic_id_delay = 300, /*300ms delay*/
+	.micdet_delay = 500,
+	.micb_en_delay = 5000, /* Keeps MICBIAS2 high for 5sec during jack insertion/removal */
+
+	.custom_cfg = &custom_config,
+};
+
+static struct wm8994_pdata wm8994_mofd_pr_pdata = {
+	/* configure gpio1 function as irq */
+	.gpio_defaults[0] = 0x0003,
+
+	/* configure gpio 6 as output to control DMIC clock */
+	/* Pull up, Invert, CMOS, default value=1 (driven low due to invert) */
+	.gpio_defaults[5] = 0x4441,
+	/* configure gpio8/9/10/11 function for AIF3 BT */
+	/* GPIO8 => DAC3 (Rx) pin, configure it as alt fn & i/p */
+	/* GPIO9 => ADC3 (Tx) pin, configure it as alt fn & o/p */
+	/* GPIO10 => LRCLK (FS) pin, configure it as alt fn & o/p */
+	/* GPIO11 => BCLK pin, configure it as alt fn & o/p */
+	.gpio_defaults[7] = 0x1000,
+	.gpio_defaults[8] = 0x0100,
+	.gpio_defaults[9] = 0x0100,
+	.gpio_defaults[10] = 0x0100,
+	.irq_flags = IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
 
 	.mic_id_delay = 300, /*300ms delay*/
 	.micdet_delay = 500,
@@ -204,21 +229,54 @@ static int wm8994_get_irq_data(struct wm8994_pdata *pdata,
 	return codec_gpio;
 }
 
+static int wm8994_fill_mofd_pr_data(struct wm8994_pdata *pdata)
+{
+	if (!pdata) {
+		pr_err("%s: pdata is NULL\n", __func__);
+		return -EINVAL;
+	}
+
+	/* Only MOFD v0-PR0 & v1-PR0, utilizes the LDOs */
+	if (INTEL_MID_BOARD(3, PHONE, MOFD, V0, PRO, PR0) ||
+		INTEL_MID_BOARD(3, PHONE, MOFD, V1, PRO, PR0)) {
+
+		pr_debug("%s: Assign LDOs to MOFD PR0's pdata...\n", __func__);
+		pdata->ldo[0].enable = pdata->ldo[1].enable = 0;
+		pdata->ldo[0].init_data = &wm8994_ldo1_data;
+		pdata->ldo[1].init_data = &wm8994_ldo2_data;
+		pdata->ldo_ena_always_driven = 1;
+	}
+
+	return 0;
+}
+
 void __init *wm8994_platform_data(void *info)
 {
 	struct i2c_board_info *i2c_info = (struct i2c_board_info *)info;
-	int irq = 0;
+	int irq = 0, ret = 0;
+	struct wm8994_pdata *pdata = &wm8994_pdata;
 
 	if ((INTEL_MID_BOARD(1, PHONE, MRFL)) ||
-		   (INTEL_MID_BOARD(1, TABLET, MRFL)) ||
-		   (INTEL_MID_BOARD(1, PHONE, MOFD)) ||
-		   (INTEL_MID_BOARD(1, TABLET, MOFD))) {
-
+		   (INTEL_MID_BOARD(1, TABLET, MRFL))) {
 		platform_add_devices(wm8958_reg_devices,
-			ARRAY_SIZE(wm8958_reg_devices));
+				ARRAY_SIZE(wm8958_reg_devices));
+		irq = wm8994_get_irq_data(pdata, i2c_info, "audiocodec_int");
+		if (irq < 0)
+			return NULL;
+	} else if ((INTEL_MID_BOARD(1, PHONE, MOFD)) ||
+		   (INTEL_MID_BOARD(1, TABLET, MOFD))) {
+		platform_add_devices(wm8958_reg_devices,
+				ARRAY_SIZE(wm8958_reg_devices));
 
-		irq = wm8994_get_irq_data(&wm8994_pdata, i2c_info,
-							"audiocodec_int");
+		/* if it is not VV, then use PR pdata */
+		if (!(SPID_PRODUCT(INTEL, MOFD, PHONE, MP))) {
+			pdata = &wm8994_mofd_pr_pdata;
+			ret = wm8994_fill_mofd_pr_data(pdata);
+			if (ret < 0)
+				return NULL;
+		}
+
+		irq = wm8994_get_irq_data(pdata, i2c_info, "audiocodec_int");
 		if (irq < 0)
 			return NULL;
 	} else if ((SPID_PRODUCT(INTEL, CLVTP, PHONE, RHB)) ||
@@ -233,5 +291,5 @@ void __init *wm8994_platform_data(void *info)
 		return NULL;
 	}
 
-	return &wm8994_pdata;
+	return pdata;
 }

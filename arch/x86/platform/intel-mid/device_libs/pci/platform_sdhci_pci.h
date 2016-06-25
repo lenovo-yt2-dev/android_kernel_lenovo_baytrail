@@ -21,6 +21,7 @@
 
 #define MRFLD_PMIC_VLDOCNT		0xaf
 #define MRFLD_PMIC_VLDOCNT_VSWITCH_BIT	0x02
+#define MRFLD_PMIC_VLDOCNT_PW_OFF	0xfd
 
 int sdhci_pdata_set_quirks(const unsigned int quirks);
 int sdhci_pdata_set_embedded_control(void (*fnp)

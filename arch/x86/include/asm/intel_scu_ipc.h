@@ -73,6 +73,9 @@
 #define IPC_CMD_SHIM_RD		0 /* SHIM read */
 #define IPC_CMD_SHIM_WR		1 /* SHIM write */
 
+int intel_scu_ipc_raw_cmd(u32 cmd, u32 sub, u8 *in, u32 inlen,
+		u32 *out, u32 outlen, u32 dptr, u32 sptr);
+
 /* check ipc status */
 int intel_scu_ipc_check_status(void);
 

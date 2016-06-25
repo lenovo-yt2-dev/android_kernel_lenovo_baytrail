@@ -15,7 +15,8 @@
 #include <linux/nmi.h>
 
 #include <asm/stacktrace.h>
-
+#include <asm/processor.h>
+#include "cpu/perf_event.h"
 
 #define N_EXCEPTION_STACKS_END \
 		(N_EXCEPTION_STACKS + DEBUG_STKSZ/EXCEPTION_STKSZ - 2)
@@ -245,6 +246,47 @@ show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
 	show_trace_log_lvl(task, regs, sp, bp, log_lvl);
 }
 
+#define LBR_FORMAT_EIP_FLAGS 0x3
+void show_lbrs(void)
+{
+#ifdef CONFIG_LBR_DUMP_ON_EXCEPTION
+	u64 tos, from, to, lbr_idx, debugctl;
+	int lbr_format = x86_pmu.intel_cap.lbr_format;
+	unsigned long mask = x86_pmu.lbr_nr - 1;
+	int i, lbr_on;
+
+	rdmsrl(MSR_IA32_DEBUGCTLMSR, debugctl);
+	lbr_on = ((debugctl & DEBUGCTLMSR_LBR) != 0);
+
+	printk(KERN_DEFAULT "Last Branch Records:");
+	if (!lbr_dump_on_exception) {
+		pr_cont(" (Disabled by perf_event)\n");
+	} else if (x86_pmu.lbr_nr == 0) {
+		pr_cont(" (x86_model unknown, check intel_pmu_init())\n");
+	} else if (lbr_on == 1) {
+		pr_cont(" (not halted)\n");
+	} else {
+		pr_cont("\n");
+		/* The algorithm is derived from intel_pmu_lbr_read_64() */
+		rdmsrl(x86_pmu.lbr_tos, tos);
+		for (i = 0; i < x86_pmu.lbr_nr; i++) {
+			lbr_idx = (tos - i) & mask;
+
+			rdmsrl(x86_pmu.lbr_from + lbr_idx, from);
+			rdmsrl(x86_pmu.lbr_to   + lbr_idx, to);
+
+			if (lbr_format == LBR_FORMAT_EIP_FLAGS)
+				from = (u64)((((s64)from) << 1) >> 1);
+
+			printk(KERN_EMERG "   to: [<%016llx>] ", to);
+			print_symbol("%s\n", to);
+			printk(KERN_EMERG " from: [<%016llx>] ", from);
+			print_symbol("%s\n", from);
+		}
+	}
+#endif
+}
+
 void show_regs(struct pt_regs *regs)
 {
 	int i;
@@ -264,10 +306,11 @@ void show_regs(struct pt_regs *regs)
 		unsigned char c;
 		u8 *ip;
 
+		show_lbrs();	/* called before show_stack_log_lvl() as it could trig page_fault
+						   again and reenable LBR */
 		printk(KERN_DEFAULT "Stack:\n");
 		show_stack_log_lvl(NULL, regs, (unsigned long *)sp,
 				   0, KERN_DEFAULT);
-
 		printk(KERN_DEFAULT "Code: ");
 
 		ip = (u8 *)regs->ip - code_prologue;

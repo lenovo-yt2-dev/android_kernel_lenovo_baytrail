@@ -18,26 +18,27 @@
 #include <media/v4l2-subdev.h>
 #include <linux/mfd/intel_mid_pmic.h>
 
-#ifdef CONFIG_VLV2_PLAT_CLK
-#include <linux/vlv2_plat_clock.h>
+#ifdef CONFIG_INTEL_SOC_PMC
+#include <asm/intel_soc_pmc.h>
 #endif
 
 #include "platform_camera.h"
 #include "platform_ov5693.h"
 
-/* workround - pin defined for byt */
-#define CAMERA_0_RESET	126
-#define CAMERA_1P8_EN	128
-#ifdef CONFIG_VLV2_PLAT_CLK
+/* workround - pin defined for cht */
+#define CAMERA_0_RESET	150
+#define CAMERA_1P8_EN	153
+#ifdef CONFIG_INTEL_SOC_PMC
 #define OSC_CAM0_CLK 0x0
 #define CLK_19P2MHz 0x1
-#endif
-#ifdef CONFIG_CRYSTAL_COVE
-#define VPROG_2P8V 0x66
-#define VPROG_1P8V 0x5D
+/* workaround - use xtal for cht */
+#define CLK_19P2MHz_XTAL 0x0
+#define CLK_ON	0x1
+#define CLK_OFF	0x2
 #endif
 static int camera_vprog1_on;
 static int camera_reset;
+static int camera_1p8_en;
 
 /*
  * OV5693 platform data
@@ -88,14 +89,15 @@ static int ov5693_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 static int ov5693_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 {
 	static const unsigned int clock_khz = 19200;
-#ifdef CONFIG_VLV2_PLAT_CLK
+#ifdef CONFIG_INTEL_SOC_PMC
 	int ret = 0;
 	if (flag) {
-		ret = vlv2_plat_set_clock_freq(OSC_CAM0_CLK, CLK_19P2MHz);
+		ret = pmc_pc_set_freq(OSC_CAM0_CLK, (IS_CHT) ?
+				CLK_19P2MHz_XTAL : CLK_19P2MHz);
 		if (ret)
 			pr_err("ov5693 clock set failed.\n");
 	}
-	vlv2_plat_configure_clock(OSC_CAM0_CLK, flag);
+	pmc_pc_configure(OSC_CAM0_CLK, flag ? CLK_ON : CLK_OFF);
 	return 0;
 #elif defined(CONFIG_INTEL_SCU_IPC_UTIL)
 	return intel_scu_ipc_osc_clk(OSC_CLK_CAM0,
@@ -114,17 +116,14 @@ static int ov5693_power_ctrl(struct v4l2_subdev *sd, int flag)
 	int ret = 0;
 	int pin = CAMERA_1P8_EN;
 
-	ret = gpio_request(pin, "camera_v1p8_en");
-	if (ret) {
-		pr_err("Request camera_v1p8_en failed.\n");
-		gpio_free(pin);
+	if (camera_1p8_en < 0) {
 		ret = gpio_request(pin, "camera_v1p8_en");
 		if (ret) {
-			pr_err("Request camera_v1p8_en still failed.\n");
+			pr_err("Request camera_v1p8_en failed.\n");
 			return ret;
 		}
+		camera_1p8_en = pin;
 	}
-	gpio_direction_output(pin, 0);
 
 	if (flag) {
 		if (!camera_vprog1_on) {
@@ -143,8 +142,13 @@ static int ov5693_power_ctrl(struct v4l2_subdev *sd, int flag)
 			pr_err("ov5693 power is not set.\n");
 #endif
 			/* enable 1.8v power */
-			gpio_set_value(pin, 1);
-
+			ret = gpio_direction_output(pin, 1);
+			if (ret) {
+				pr_err("%s: failed to set gpio(pin %d) direction\n",
+					__func__, pin);
+				gpio_free(pin);
+				return ret;
+			}
 			camera_vprog1_on = 1;
 			usleep_range(10000, 11000);
 		}
@@ -160,11 +164,12 @@ static int ov5693_power_ctrl(struct v4l2_subdev *sd, int flag)
 #endif
 			/* disable 1.8v power */
 			gpio_set_value(pin, 0);
+			gpio_free(pin);
+			camera_1p8_en = -1;
 			camera_vprog1_on = 0;
 		}
 	}
 
-	gpio_free(pin);
 	return 0;
 }
 
@@ -184,5 +189,6 @@ static struct camera_sensor_platform_data ov5693_sensor_platform_data = {
 void *ov5693_platform_data(void *info)
 {
 	camera_reset = -1;
+	camera_1p8_en = -1;
 	return &ov5693_sensor_platform_data;
 }

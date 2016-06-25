@@ -109,10 +109,15 @@ static int arizona_gpio_probe(struct platform_device *pdev)
 	arizona_gpio->arizona = arizona;
 	arizona_gpio->gpio_chip = template_chip;
 	arizona_gpio->gpio_chip.dev = &pdev->dev;
+#ifdef CONFIG_OF_GPIO
+	arizona_gpio->gpio_chip.of_node = arizona->dev->of_node;
+#endif
 
 	switch (arizona->type) {
 	case WM5102:
+	case WM8280:
 	case WM5110:
+	case WM8997:
 		arizona_gpio->gpio_chip.ngpio = 5;
 		break;
 	default:
@@ -132,6 +137,9 @@ static int arizona_gpio_probe(struct platform_device *pdev)
 			ret);
 		goto err;
 	}
+
+	if (arizona->pdata.dynamic_gpio)
+		arizona->pdata.gpio_base = arizona_gpio->gpio_chip.base;
 
 	platform_set_drvdata(pdev, arizona_gpio);
 

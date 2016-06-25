@@ -200,10 +200,19 @@ int arizona_irq_init(struct arizona *arizona)
 		ctrlif_error = false;
 		break;
 #endif
-#ifdef CONFIG_MFD_WM5110
+#ifdef CONFIG_MFD_FLORIDA
+	case WM8280:
 	case WM5110:
-		aod = &wm5110_aod;
-		irq = &wm5110_irq;
+		aod = &florida_aod;
+		irq = &florida_irq;
+
+		ctrlif_error = false;
+		break;
+#endif
+#ifdef CONFIG_MFD_WM8997
+	case WM8997:
+		aod = &wm8997_aod;
+		irq = &wm8997_irq;
 
 		ctrlif_error = false;
 		break;
@@ -277,7 +286,7 @@ int arizona_irq_init(struct arizona *arizona)
 				  IRQF_ONESHOT, -1, irq,
 				  &arizona->irq_chip);
 	if (ret != 0) {
-		dev_err(arizona->dev, "Failed to add AOD IRQs: %d\n", ret);
+		dev_err(arizona->dev, "Failed to add main IRQs: %d\n", ret);
 		goto err_aod;
 	}
 

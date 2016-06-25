@@ -860,7 +860,7 @@ static int mmc_blk_cmd_recovery(struct mmc_card *card, struct request *req,
 {
 	bool prev_cmd_status_valid = true;
 	u32 status, stop_status = 0;
-	int err;
+	int err, retry;
 
 	if (mmc_card_removed(card))
 		return ERR_NOMEDIUM;
@@ -870,13 +870,18 @@ static int mmc_blk_cmd_recovery(struct mmc_card *card, struct request *req,
 	 * and why there was no response.  If the first attempt fails,
 	 * we can't be sure the returned status is for the r/w command.
 	 */
-	err = get_card_status(card, &status, 0);
+	for (retry = 2; retry >= 0; retry--) {
+		err = get_card_status(card, &status, 0);
+		if (!err)
+			break;
+
+		prev_cmd_status_valid = false;
+		pr_err("%s: error %d sending status command, %sing\n",
+		       req->rq_disk->disk_name, err, retry ? "retry" : "abort");
+	}
 
 	/* We couldn't get a response from the card.  Give up. */
 	if (err) {
-		prev_cmd_status_valid = false;
-		pr_err("%s: error %d sending status command\n",
-			req->rq_disk->disk_name, err);
 		/* Check if the card is removed */
 		if (mmc_detect_card_removed(card->host))
 			return ERR_NOMEDIUM;
@@ -1201,8 +1206,7 @@ retry:
 		if (err)
 			goto out_retry;
 	}
-	if(!strcmp(mmc_card_name(card), "AWMB3R"))
-		arg = MMC_DISCARD_ARG;
+
 	err = mmc_erase(card, from, nr, arg);
 	if (err == -EIO)
 		goto out_retry;
@@ -1225,7 +1229,7 @@ retry:
 		if (err)
 			goto out;
 	}
-#if 0
+
 	if (mmc_can_sanitize(card)) {
 		trace_mmc_blk_erase_start(EXT_CSD_SANITIZE_START, 0, 0);
 		err = __mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
@@ -1235,7 +1239,6 @@ retry:
 			err = mmc_busy_wait(card->host);
 		trace_mmc_blk_erase_end(EXT_CSD_SANITIZE_START, 0, 0);
 	}
-#endif
 out_retry:
 	if (err && !mmc_blk_reset(md, card->host, type))
 		goto retry;
@@ -1933,7 +1936,7 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 	struct mmc_blk_data *md = mq->data;
 	struct mmc_card *card = md->queue.card;
 	struct mmc_blk_request *brq = &mq->mqrq_cur->brq;
-	int ret = 1, disable_multi = 0, type;
+	int ret = 1, disable_multi = 0, retry = 0, type;
 	enum mmc_blk_status status;
 	struct mmc_queue_req *mq_rq;
 	struct request *req = rqc;
@@ -2014,9 +2017,11 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 		case MMC_BLK_CMD_ERR:
 			ret = mmc_blk_cmd_err(md, card, brq, req, ret);
 			if (!mmc_blk_reset(md, card->host, type))
-				break;
+				goto start_new_req;
 			goto cmd_abort;
 		case MMC_BLK_RETRY:
+			if (retry++ < 5)
+				break;
 			/* Fall through */
 		case MMC_BLK_ABORT:
 			if (!mmc_blk_reset(md, card->host, type))
@@ -2491,6 +2496,7 @@ force_ro_fail:
 #define CID_MANFID_TOSHIBA	0x11
 #define CID_MANFID_MICRON	0x13
 #define CID_MANFID_SAMSUNG	0x15
+#define CID_MANFID_HYNIX	0x90
 
 static const struct mmc_fixup blk_fixups[] =
 {
@@ -2548,6 +2554,9 @@ static const struct mmc_fixup blk_fixups[] =
 		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
 	MMC_FIXUP("VZL00M", CID_MANFID_SAMSUNG, CID_OEMID_ANY, add_quirk_mmc,
 		  MMC_QUIRK_SEC_ERASE_TRIM_BROKEN),
+
+	MMC_FIXUP("HBG4e", CID_MANFID_HYNIX, CID_OEMID_ANY, dis_cache_mmc,
+		  0),
 
 	END_FIXUP
 };

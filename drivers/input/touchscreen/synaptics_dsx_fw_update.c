@@ -29,10 +29,15 @@
 
 //#define FW_IMAGE_NAME "synaptics/startup_fw_update.img"
 #define FW_IMAGE_NAME "startup_fw_update.img"
-#define FW_IMAGE_GIS_NAME "Lenovo_Spark_PVT_064A000D_20140707.img"  //wqf add for GIS tp  
-#define FW_IMAGE_LAIBAO_NAME "Lenovo_Spark_064A0004_20140731.img" //wqf add for laibao tp
+#define FW_IMAGE_GIS_NAME "Lenovo_Spark_PVT_064A000D_20140707.img"  //wqf add for GIS tp   // change firmware path to /system/etc/firmware/startup_fw_update.img
+#define FW_IMAGE_LAIBAO_NAME "Lenovo_Laibao_Mental_054A0008_0918.img" //wqf add for laibao tp
 #define FW_GIS_ID		0x06
 #define FW_LAIBAO_ID	0x05
+#define FW_IMAGE_GIS_ITO "lenovo_spark_gis_ito.img"
+#define FW_IMAGE_LAIBAO_ITO "Lenovo_Laibao_ITO_054A0009_0918.img"
+#define MTL_BRIDGE	0
+#define ITO_BRIDGE	1
+
 #define DO_STARTUP_FW_UPDATE
 #define STARTUP_FW_UPDATE_DELAY_MS 1000 /* ms */
 #define FORCE_UPDATE false
@@ -1305,7 +1310,7 @@ static int fwu_start_reflash(void)
 {
 	int retval = 0;
 	int ret=0;
-	unsigned char moduleid;
+	unsigned char moduleid[2];
 	enum flash_area flash_area;
 	unsigned short f01_cmd_base_addr;
 	struct image_header_data header;
@@ -1330,22 +1335,27 @@ static int fwu_start_reflash(void)
 		ret = fwu->fn_ptr->read(fwu->rmi4_data,
 		0x00A4,
 		&moduleid,
-		1);
+		2);
 		if (ret<0){
 			printk("wqf read module id error\n");
 			return ret;
 		}
-		printk("wqf moduleid=%02x\n",moduleid);
-		if (moduleid==FW_GIS_ID){
-			strncpy(fwu->image_name, FW_IMAGE_GIS_NAME, MAX_IMAGE_NAME_LEN);
+		printk("wqf moduleid=0x%02x;bridge_type=0x%x\n",moduleid[0],moduleid[1]);
+		if (moduleid[0]==FW_GIS_ID){
+			if (moduleid[1]==MTL_BRIDGE)
+			  strncpy(fwu->image_name, FW_IMAGE_GIS_NAME, MAX_IMAGE_NAME_LEN);
+			else if(moduleid[1]==ITO_BRIDGE)
+			 strncpy(fwu->image_name, FW_IMAGE_GIS_ITO, MAX_IMAGE_NAME_LEN);
 		}
-		else if (moduleid==FW_LAIBAO_ID){
-			strncpy(fwu->image_name, FW_IMAGE_LAIBAO_NAME, MAX_IMAGE_NAME_LEN);
+		else if (moduleid[0]==FW_LAIBAO_ID){
+			if(moduleid[1]==MTL_BRIDGE)
+				strncpy(fwu->image_name, FW_IMAGE_LAIBAO_NAME, MAX_IMAGE_NAME_LEN);
+			else if(moduleid[1]==ITO_BRIDGE)
+				strncpy(fwu->image_name, FW_IMAGE_LAIBAO_ITO, MAX_IMAGE_NAME_LEN);
 		}
 		else{
 			strncpy(fwu->image_name, FW_IMAGE_NAME, MAX_IMAGE_NAME_LEN);
 		}
-			
 
 			
 		dev_dbg(&fwu->rmi4_data->i2c_client->dev,

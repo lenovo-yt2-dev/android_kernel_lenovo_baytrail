@@ -29,6 +29,7 @@
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -46,6 +47,17 @@ struct sst_device *sst_dsp;
 extern struct snd_compr_ops sst_platform_compr_ops;
 extern struct snd_effect_ops effects_ops;
 
+/* module parameters */
+static int dpcm_enable;
+static int dfw_enable;
+
+/* dpcm_enable should be =0 for mofd_v0 and =1 for mofd_v1 */
+module_param(dpcm_enable, int, 0644);
+MODULE_PARM_DESC(dpcm_enable, "DPCM module parameter");
+/* dfw_enable should be =0 for mofd_v0 and =1 for mofd_v1 */
+module_param(dfw_enable, int, 0644);
+MODULE_PARM_DESC(dfw_enable, "DFW module parameter");
+
 static DEFINE_MUTEX(sst_dsp_lock);
 
 static struct snd_pcm_hardware sst_platform_pcm_hw = {
@@ -56,6 +68,7 @@ static struct snd_pcm_hardware sst_platform_pcm_hw = {
 			SNDRV_PCM_INFO_MMAP|
 			SNDRV_PCM_INFO_MMAP_VALID |
 			SNDRV_PCM_INFO_BLOCK_TRANSFER |
+			SNDRV_PCM_INFO_NO_PERIOD_WAKEUP |
 			SNDRV_PCM_INFO_SYNC_START),
 	.formats = (SNDRV_PCM_FMTBIT_S16 | SNDRV_PCM_FMTBIT_U16 |
 			SNDRV_PCM_FMTBIT_S24 | SNDRV_PCM_FMTBIT_U24 |
@@ -74,6 +87,35 @@ static struct snd_pcm_hardware sst_platform_pcm_hw = {
 	.periods_min = SST_MIN_PERIODS,
 	.periods_max = SST_MAX_PERIODS,
 	.fifo_size = SST_FIFO_SIZE,
+};
+
+static struct sst_dev_stream_map dpcm_strm_map[] = {
+	{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, /* Reserved, not in use */
+	{MERR_DPCM_AUDIO, 0, SNDRV_PCM_STREAM_PLAYBACK, PIPE_MEDIA1_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_DB,    0, SNDRV_PCM_STREAM_PLAYBACK, PIPE_MEDIA2_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_LL,    0, SNDRV_PCM_STREAM_PLAYBACK, PIPE_LOW_PCM0_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_COMPR, 0, SNDRV_PCM_STREAM_PLAYBACK, PIPE_MEDIA0_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_VOIP,  0, SNDRV_PCM_STREAM_PLAYBACK, PIPE_VOIP_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 0, SNDRV_PCM_STREAM_PLAYBACK, PIPE_PROBE1_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 1, SNDRV_PCM_STREAM_PLAYBACK, PIPE_PROBE2_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 2, SNDRV_PCM_STREAM_PLAYBACK, PIPE_PROBE3_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 3, SNDRV_PCM_STREAM_PLAYBACK, PIPE_PROBE4_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 4, SNDRV_PCM_STREAM_PLAYBACK, PIPE_PROBE5_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 5, SNDRV_PCM_STREAM_PLAYBACK, PIPE_PROBE6_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 6, SNDRV_PCM_STREAM_PLAYBACK, PIPE_PROBE7_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 7, SNDRV_PCM_STREAM_PLAYBACK, PIPE_PROBE8_IN, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_AUDIO, 0, SNDRV_PCM_STREAM_CAPTURE, PIPE_MEDIA2_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_VOIP,  0, SNDRV_PCM_STREAM_CAPTURE, PIPE_VOIP_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_CAPTURE, 0, SNDRV_PCM_STREAM_CAPTURE, PIPE_MEDIA3_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 0, SNDRV_PCM_STREAM_CAPTURE, PIPE_PROBE1_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 1, SNDRV_PCM_STREAM_CAPTURE, PIPE_PROBE2_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 2, SNDRV_PCM_STREAM_CAPTURE, PIPE_PROBE3_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 3, SNDRV_PCM_STREAM_CAPTURE, PIPE_PROBE4_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 4, SNDRV_PCM_STREAM_CAPTURE, PIPE_PROBE5_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 5, SNDRV_PCM_STREAM_CAPTURE, PIPE_PROBE6_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 6, SNDRV_PCM_STREAM_CAPTURE, PIPE_PROBE7_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	{MERR_DPCM_PROBE, 7, SNDRV_PCM_STREAM_CAPTURE, PIPE_PROBE8_OUT, SST_TASK_ID_MEDIA, SST_DEV_MAP_IN_USE},
+	/* stream ID 25 used by Aware, but no device exposed to userspace */
 };
 
 static int sst_platform_ihf_set_tdm_slot(struct snd_soc_dai *dai,
@@ -100,9 +142,8 @@ static int sst_media_digital_mute(struct snd_soc_dai *dai, int mute, int stream)
 
 	pr_debug("%s: enter, mute=%d dai-name=%s dir=%d\n", __func__, mute, dai->name, stream);
 
-#if IS_BUILTIN(CONFIG_SST_MRFLD_DPCM)
+	if (dpcm_enable == 1)
 		sst_send_pipe_gains(dai, stream, mute);
-#endif
 
 	return 0;
 }
@@ -230,11 +271,13 @@ int sst_fill_stream_params(void *substream,
 	map = ctx->pdata->pdev_strm_map;
 	map_size = ctx->pdata->strm_map_size;
 
-	if (is_compress == true)
+	if (is_compress == true) {
 		cstream = (struct snd_compr_stream *)substream;
-	else
+		str_params->no_irq = 0;
+	} else {
 		pstream = (struct snd_pcm_substream *)substream;
-
+		str_params->no_irq = pstream->runtime->no_period_wakeup;
+	}
 	str_params->stream_type = SST_STREAM_TYPE_MUSIC;
 
 	/* For pcm streams */
@@ -424,25 +467,23 @@ out_ops:
 
 static void sst_free_stream_in_use(struct sst_dev_stream_map *map, int str_id)
 {
-#if IS_BUILTIN(CONFIG_SST_MRFLD_DPCM)
-	return;
-#else
-	if ((map[str_id].dev_num == MERR_SALTBAY_AUDIO) ||
-	    (map[str_id].dev_num == MERR_SALTBAY_PROBE)) {
+	if (dpcm_enable == 1)
+		return;
 
+	if ((map[str_id].dev_num == MERR_SALTBAY_AUDIO) ||
+			(map[str_id].dev_num == MERR_SALTBAY_PROBE)) {
 		/* Do nothing in capture for audio device */
 		if ((map[str_id].dev_num == MERR_SALTBAY_AUDIO) &&
-		    (map[str_id].direction == SNDRV_PCM_STREAM_CAPTURE))
+				(map[str_id].direction == SNDRV_PCM_STREAM_CAPTURE))
 			return;
 		if ((map[str_id].task_id == SST_TASK_ID_MEDIA) &&
-		    (map[str_id].status == SST_DEV_MAP_IN_USE)) {
+				(map[str_id].status == SST_DEV_MAP_IN_USE)) {
 			pr_debug("str_id %d device_id 0x%x\n", str_id, map[str_id].device_id);
 			map[str_id].status = SST_DEV_MAP_FREE;
 			map[str_id].device_id = PIPE_RSVD;
 		}
 	}
 	return;
-#endif
 }
 
 static void sst_media_close(struct snd_pcm_substream *substream,
@@ -469,11 +510,9 @@ static int sst_dpcm_probe_cmd(struct snd_soc_platform *platform,
 		struct snd_pcm_substream *substream, u16 pipe_id, bool on)
 {
 	int ret = 0;
-#if IS_BUILTIN(CONFIG_SST_MRFLD_DPCM)
-	if (substream->pcm->device == MERR_DPCM_PROBE)
-		ret = sst_dpcm_probe_send(platform, pipe_id, substream->number,
-					      substream->stream, on);
-#endif
+	if ((dpcm_enable == 1) && (substream->pcm->device == MERR_DPCM_PROBE))
+			ret = sst_dpcm_probe_send(platform, pipe_id, substream->number,
+					substream->stream, on);
 	return ret;
 }
 
@@ -518,8 +557,6 @@ static int sst_media_prepare(struct snd_pcm_substream *substream,
 	ret_val = sst_platform_alloc_stream(substream, dai->platform);
 	if (ret_val <= 0)
 		return ret_val;
-	snprintf(substream->pcm->id, sizeof(substream->pcm->id),
-			"%d", stream->stream_info.str_id);
 
 	ret_val = sst_platform_init_stream(substream);
 	if (ret_val)
@@ -551,10 +588,105 @@ static int sst_media_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+static int sst_get_ssp_num(const char *id)
+{
+	if (!strncmp(id, "ssp0-port", 9))
+		return SST_SSP_PORT0;
+	else if (!strncmp(id, "ssp1-port", 9))
+		return SST_SSP_PORT1;
+	else if (!strncmp(id, "ssp2-port", 9))
+		return SST_SSP_PORT2;
+	else
+		return -EINVAL;
+}
+
+static int sst_be_hw_params(struct snd_pcm_substream *substream,
+				struct snd_pcm_hw_params *params,
+				struct snd_soc_dai *dai)
+{
+	int ssp_num;
+	struct snd_interval *rate =  hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
+
+	ssp_num = sst_get_ssp_num(dai->name);
+	if (ssp_num < 0)
+		return ssp_num;
+	if (dai->active == 1)
+		send_ssp_cmd(dai->platform, rate->max, ssp_num, true);
+	return 0;
+
+}
+
 static int sst_media_hw_free(struct snd_pcm_substream *substream,
 		struct snd_soc_dai *dai)
 {
 	return snd_pcm_lib_free_pages(substream);
+}
+
+static int sst_send_timer_cmd(struct snd_pcm_substream *substream,
+			struct snd_soc_dai *dai)
+{
+	pr_debug("In %s :dai=%s pb=%d cp= %d dai_active=%d id=%d\n", __func__,
+		dai->name, dai->playback_active, dai->capture_active, dai->active,  dai->id);
+	if (!dai->active) {
+		sst_handle_vb_timer(dai->platform, true);
+	}
+	return 0;
+}
+
+static void sst_disable_ssp(struct snd_pcm_substream *substream,
+			struct snd_soc_dai *dai)
+{
+	int ssp_num;
+
+	pr_debug("In %s :dai=%s pb=%d cp= %d dai_active=%d id=%d\n", __func__,
+		dai->name, dai->playback_active, dai->capture_active, dai->active, dai->id);
+	if (!dai->active) {
+		ssp_num = sst_get_ssp_num(dai->name);
+		if (ssp_num < 0)
+			return;
+		else
+			send_ssp_cmd(dai->platform, 0, ssp_num, false);
+		sst_handle_vb_timer(dai->platform, false);
+	}
+}
+
+static int sst_platform_set_ssp_slot(struct snd_soc_dai *dai,
+			unsigned int tx_mask, unsigned int rx_mask,
+			int slots, int slot_width) {
+	int ssp_num, ret;
+	struct sst_data *ctx = snd_soc_platform_get_drvdata(dai->platform);
+
+	if (!dai->active)
+		return 0;
+
+	ssp_num = sst_get_ssp_num(dai->name);
+	if (ssp_num < 0)
+		return ssp_num;
+	ret = sst_fill_ssp_slot(ctx, tx_mask, rx_mask, ssp_num, slots, slot_width);
+	if (ret < 0) {
+		pr_err("sst_fill_ssp_slot failed..\n");
+		return ret;
+	}
+	return 0;
+}
+
+static int sst_set_format(struct snd_soc_dai *dai, unsigned int fmt)
+{
+	int ssp_num, ret;
+	struct sst_data *ctx = snd_soc_platform_get_drvdata(dai->platform);
+
+	if (!dai->active)
+		return 0;
+	ssp_num = sst_get_ssp_num(dai->name);
+	if (ssp_num < 0)
+		return ssp_num;
+
+	ret = sst_fill_ssp_config(ctx, ssp_num, fmt, true);
+	if (ret < 0) {
+		pr_err("sst_set_format failed..\n");
+		return ret;
+	}
+	return 0;
 }
 
 static struct snd_soc_dai_ops sst_media_dai_ops = {
@@ -585,6 +717,14 @@ static struct snd_soc_dai_ops sst_compr_dai_ops = {
 	.mute_stream = sst_media_digital_mute,
 };
 
+static struct snd_soc_dai_ops sst_be_dai_ops = {
+	.startup = sst_send_timer_cmd,
+	.hw_params = sst_be_hw_params,
+	.set_fmt = sst_set_format,
+	.set_tdm_slot = sst_platform_set_ssp_slot,
+	.shutdown = sst_disable_ssp,
+};
+
 static struct snd_soc_dai_driver sst_platform_dai[] = {
 {
 	.name = SST_HEADSET_DAI,
@@ -599,7 +739,7 @@ static struct snd_soc_dai_driver sst_platform_dai[] = {
 	.capture = {
 		.stream_name = "Headset Capture",
 		.channels_min = 1,
-		.channels_max = 2,
+		.channels_max = 4,
 		.rates = SNDRV_PCM_RATE_44100|SNDRV_PCM_RATE_48000,
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
@@ -696,7 +836,8 @@ static struct snd_soc_dai_driver sst_platform_dai[] = {
 		.channels_max = SST_STEREO,
 		.rates = SNDRV_PCM_RATE_8000 |
 				SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_48000,
-		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE |
+			   SNDRV_PCM_FMTBIT_S32_LE,
 	},
 	.capture = {
 		.stream_name = "Probe Capture",
@@ -704,7 +845,8 @@ static struct snd_soc_dai_driver sst_platform_dai[] = {
 		.channels_max = SST_STEREO,
 		.rates = SNDRV_PCM_RATE_8000 |
 				SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_48000,
-		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE |
+			   SNDRV_PCM_FMTBIT_S32_LE,
 	},
 },
 {
@@ -736,18 +878,67 @@ static struct snd_soc_dai_driver sst_platform_dai[] = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 },
+{
+	.name = SST_CAPTURE_DAI,
+	.ops = &sst_media_dai_ops,
+	.capture = {
+		.stream_name = "Audio Capture",
+		.channels_min = 1,
+		.channels_max = 4,
+		.rates = SNDRV_PCM_RATE_44100|SNDRV_PCM_RATE_48000,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE,
+	},
+},
+
 /*BE CPU  Dais */
 {
-	.name = "ssp2-codec",
+	.name = "ssp0-port",
+	.ops = &sst_be_dai_ops,
 	.playback = {
-		.stream_name = "ssp2 playback",
+		.stream_name = "ssp0 Tx",
 		.channels_min = SST_STEREO,
 		.channels_max = SST_STEREO,
 		.rates = SNDRV_PCM_RATE_48000,
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.capture = {
-		.stream_name = "ssp2 Capture",
+		.stream_name = "ssp0 Rx",
+		.channels_min = SST_STEREO,
+		.channels_max = SST_STEREO,
+		.rates = SNDRV_PCM_RATE_48000,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE,
+	},
+},
+{
+	.name = "ssp1-port",
+	.ops = &sst_be_dai_ops,
+	.playback = {
+		.stream_name = "ssp1 Tx",
+		.channels_min = SST_STEREO,
+		.channels_max = SST_STEREO,
+		.rates = SNDRV_PCM_RATE_8000|SNDRV_PCM_RATE_16000|SNDRV_PCM_RATE_48000,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE,
+	},
+	.capture = {
+		.stream_name = "ssp1 Rx",
+		.channels_min = SST_STEREO,
+		.channels_max = SST_STEREO,
+		.rates = SNDRV_PCM_RATE_8000|SNDRV_PCM_RATE_16000|SNDRV_PCM_RATE_48000,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE,
+	},
+},
+{
+	.name = "ssp2-port",
+	.ops = &sst_be_dai_ops,
+	.playback = {
+		.stream_name = "ssp2 Tx",
+		.channels_min = SST_STEREO,
+		.channels_max = SST_STEREO,
+		.rates = SNDRV_PCM_RATE_48000,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE,
+	},
+	.capture = {
+		.stream_name = "ssp2 Rx",
 		.channels_min = SST_STEREO,
 		.channels_max = SST_STEREO,
 		.rates = SNDRV_PCM_RATE_48000,
@@ -898,17 +1089,23 @@ static int sst_soc_probe(struct snd_soc_platform *platform)
 			INTEL_MID_BOARD(1, TABLET, MRFL) ||
 			INTEL_MID_BOARD(1, PHONE, MOFD) ||
 			INTEL_MID_BOARD(1, TABLET, MOFD)) {
-#if IS_BUILTIN(CONFIG_SST_MRFLD_DPCM)
-		ret = sst_dsp_init_v2_dpcm(platform);
-#else
-		ret = sst_dsp_init(platform);
-#endif
+		if (dpcm_enable == 1 && dfw_enable == 1)
+			ret = sst_dsp_init_v2_dpcm_dfw(platform);
+		else if (dpcm_enable == 1)
+			ret = sst_dsp_init_v2_dpcm(platform);
+		else
+			ret = sst_dsp_init(platform);
 		if (ret)
 			return ret;
 		ret = snd_soc_register_effect(platform->card, &effects_ops);
 	}
 	if (INTEL_MID_BOARD(1, TABLET, CHT)) {
-		ret = sst_dsp_init(platform);
+		if (dpcm_enable == 1 && dfw_enable == 1)
+			ret = sst_dsp_init_v2_dpcm_dfw(platform);
+		if (dpcm_enable == 1)
+			ret = sst_dsp_init_v2_dpcm(platform);
+		else
+			ret = sst_dsp_init(platform);
 		if (ret)
 			pr_err("Dsp init failed: %d\n", ret);
 	}
@@ -932,6 +1129,59 @@ static struct snd_soc_platform_driver sst_soc_platform_drv  = {
 	.write		= sst_soc_write,
 };
 
+static int sst_platform_async_cb(struct sst_platform_cb_params *params)
+{
+	int retval = 0;
+	struct snd_soc_platform *soc_platform;
+	struct snd_soc_card *card;
+	struct snd_kcontrol *kcontrol;
+	struct sst_data *sst;
+
+	soc_platform = snd_soc_lookup_platform(sst_pdev);
+	if (!soc_platform) {
+		pr_err("Platform not found\n");
+		return -EINVAL;
+	}
+
+	switch (params->event) {
+	case SST_PLATFORM_VTSV_READ_EVENT: {
+		u8 *vtsv_result = params->params;
+
+		sst = snd_soc_platform_get_drvdata(soc_platform);
+		card = soc_platform->card;
+		kcontrol = snd_soc_card_get_kcontrol(card, "vtsv event");
+		if (!kcontrol) {
+			pr_err("SST VTSV POLL control not found\n");
+			return -EINVAL;
+		}
+		mutex_lock(&sst->lock);
+		/* 0th index of array contains size of array */
+		memcpy(sst->vtsv_result.data, vtsv_result, vtsv_result[0]);
+		mutex_unlock(&sst->lock);
+		snd_ctl_notify(card->snd_card, SNDRV_CTL_EVENT_MASK_VALUE,
+					&kcontrol->id);
+		break;
+	}
+
+	case SST_PLATFORM_TRIGGER_RECOVERY: {
+		bool *dapm_param = params->params;
+
+		card = soc_platform->card;
+		snd_soc_dapm_state_set(card, *dapm_param);
+		break;
+	}
+
+	default:
+		pr_info("No event handler for event Id %d\n", params->event);
+	}
+
+	return retval;
+}
+
+static struct sst_platform_cb_ops cb_ops = {
+	.async_cb = sst_platform_async_cb,
+};
+
 int sst_register_dsp(struct sst_device *sst_dev)
 {
 	if (!sst_dev)
@@ -943,7 +1193,7 @@ int sst_register_dsp(struct sst_device *sst_dev)
 		return -EEXIST;
 	}
 	pr_debug("registering device %s\n", sst_dev->name);
-
+	sst_dev->cb_ops = &cb_ops;
 	sst_dsp = sst_dev;
 	mutex_unlock(&sst_dsp_lock);
 	return 0;
@@ -985,6 +1235,11 @@ static int sst_platform_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+	if (dpcm_enable == 1) {
+		pr_info("dpcm enabled; overriding stream map\n");
+		pdata->pdev_strm_map = dpcm_strm_map;
+		pdata->strm_map_size = ARRAY_SIZE(dpcm_strm_map);
+	}
 	sst_pdev = &pdev->dev;
 	sst->pdata = pdata;
 	mutex_init(&sst->lock);

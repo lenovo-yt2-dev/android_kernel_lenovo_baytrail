@@ -1379,7 +1379,7 @@ intel_tv_get_modes(struct drm_connector *connector)
 	struct drm_display_mode *mode_ptr;
 	struct intel_tv *intel_tv = intel_attached_tv(connector);
 	const struct tv_mode *tv_mode = intel_tv_mode_find(intel_tv);
-	int j, count = 0;
+	int j, count = 0, size = 0;
 	u64 tmp;
 
 	if (!tv_mode)
@@ -1401,8 +1401,11 @@ intel_tv_get_modes(struct drm_connector *connector)
 		mode_ptr = drm_mode_create(connector->dev);
 		if (!mode_ptr)
 			continue;
-		strncpy(mode_ptr->name, input->name, DRM_DISPLAY_MODE_LEN);
-
+		size = strlen(input->name);
+		if (size > DRM_DISPLAY_MODE_LEN)
+			DRM_ERROR("Input resolution name exceeds the character limit\n");
+		else
+			strncpy(mode_ptr->name, input->name, DRM_DISPLAY_MODE_LEN);
 		mode_ptr->hdisplay = hactive_s;
 		mode_ptr->hsync_start = hactive_s + 1;
 		mode_ptr->hsync_end = hactive_s + 64;

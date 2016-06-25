@@ -14,6 +14,7 @@ obj-$(CONFIG_INTEL_MFLD_THERMAL) += intel_mid_thermal.o
 obj-$(CONFIG_INTEL_BYT_THERMAL)  += intel_byt_thermal.o
 obj-$(CONFIG_SENSORS_THERMAL_MRFLD)     += intel_mrfl_thermal.o
 obj-$(CONFIG_INTEL_BYT_EC_THERMAL)      += intel_byt_ec_thermal.o
+obj-$(CONFIG_INTEL_BYT_CR_THERMAL)      += intel_byt_cr_thermal.o
 obj-$(CONFIG_SOC_THERMAL)               += intel_soc_thermal.o
 obj-$(CONFIG_INTEL_MOOR_THERMAL) += intel_moor_thermal.o
 

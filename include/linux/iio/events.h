@@ -40,6 +40,12 @@ enum iio_event_direction {
 	IIO_EV_DIR_FALLING,
 };
 
+enum iio_event_info {
+	IIO_EV_INFO_ENABLE,
+	IIO_EV_INFO_VALUE,
+	IIO_EV_INFO_HYSTERESIS,
+};
+
 /**
  * IIO_EVENT_CODE() - create event identifier
  * @chan_type:	Type of the channel. Should be one of enum iio_chan_type.

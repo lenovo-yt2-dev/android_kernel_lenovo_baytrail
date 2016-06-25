@@ -940,4 +940,27 @@ int rtc_timer_cancel(struct rtc_device *rtc, struct rtc_timer* timer)
 	return ret;
 }
 
+/* rtc_cancel_all_timers - Cancel all timers
+ * @ rtc: rtc device to be used
+ *
+ * Kernel interface to cancell all timers in RTC timerqueue.
+ */
+void rtc_cancel_all_timers(struct rtc_device *rtc)
+{
+	struct timerqueue_node *next;
+	struct rtc_timer *timer;
 
+	mutex_lock(&rtc->ops_lock);
+
+	/* remove timers from the queue */
+	while ((next = timerqueue_getnext(&rtc->timerqueue)) != NULL) {
+		timer = container_of(next, struct rtc_timer, node);
+		timerqueue_del(&rtc->timerqueue, &timer->node);
+		timer->enabled = 0;
+	}
+
+	/* disable alarm interrupt into RTC H/W */
+	rtc_alarm_disable(rtc);
+
+	mutex_unlock(&rtc->ops_lock);
+}

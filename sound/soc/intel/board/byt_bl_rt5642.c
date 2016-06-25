@@ -30,7 +30,7 @@
 #include <linux/device.h>
 #include <linux/gpio.h>
 #include <linux/slab.h>
-#include <linux/vlv2_plat_clock.h>
+#include <asm/intel_soc_pmc.h>
 #include <linux/acpi_gpio.h>
 #include <asm/intel-mid.h>
 #include <linux/mutex.h>
@@ -39,6 +39,7 @@
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 #include <sound/jack.h>
+#include <linux/input.h>
 #include "../../codecs/rt5640.h"
 
 #ifdef CONFIG_SND_SOC_COMMS_SSP
@@ -160,7 +161,6 @@ static inline void byt_force_enable_pin(struct snd_soc_codec *codec,
 		snd_soc_dapm_force_enable_pin(&codec->dapm, bias_widget);
 	else
 		snd_soc_dapm_disable_pin(&codec->dapm, bias_widget);
-	snd_soc_dapm_sync(&codec->dapm);
 }
 
 static inline void byt_set_mic_bias_ldo(struct snd_soc_codec *codec, bool enable)
@@ -172,6 +172,7 @@ static inline void byt_set_mic_bias_ldo(struct snd_soc_codec *codec, bool enable
 		byt_force_enable_pin(codec, "micbias1", false);
 		byt_force_enable_pin(codec, "LDO2", false);
 	}
+	snd_soc_dapm_sync(&codec->dapm);
 }
 
 /*if Soc Jack det is enabled, use it, otherwise use JD via codec */
@@ -531,7 +532,7 @@ static int platform_clock_control(struct snd_soc_dapm_widget *w,
 		return -EIO;
 	}
 	if (SND_SOC_DAPM_EVENT_ON(event)) {
-		vlv2_plat_configure_clock(VLV2_PLAT_CLK_AUDIO,
+		pmc_pc_configure(VLV2_PLAT_CLK_AUDIO,
 				PLAT_CLK_FORCE_ON);
 		pr_debug("Platform clk turned ON\n");
 		snd_soc_codec_set_sysclk(codec, RT5640_SCLK_S_PLL1,
@@ -545,7 +546,7 @@ static int platform_clock_control(struct snd_soc_dapm_widget *w,
 		snd_soc_write(codec, RT5640_ADDA_CLK1, 0x7774);
 		snd_soc_codec_set_sysclk(codec, RT5640_SCLK_S_RCCLK,
 				0, 0, SND_SOC_CLOCK_IN);
-		vlv2_plat_configure_clock(VLV2_PLAT_CLK_AUDIO,
+		pmc_pc_configure(VLV2_PLAT_CLK_AUDIO,
 				PLAT_CLK_FORCE_OFF);
 		pr_debug("Platform clk turned OFF\n");
 	}
@@ -943,6 +944,7 @@ static int byt_init(struct snd_soc_pcm_runtime *runtime)
 		pr_err("jack creation failed\n");
 		return ret;
 	}
+	snd_jack_set_key(ctx->jack.jack, SND_JACK_BTN_0, KEY_MEDIA);
 	ret = snd_soc_jack_add_gpios(&ctx->jack, ctx->num_jack_gpios, hs_gpio);
 	if (ret) {
 		pr_err("adding jack GPIO failed\n");
@@ -986,12 +988,12 @@ static int byt_init(struct snd_soc_pcm_runtime *runtime)
 	snd_soc_dapm_ignore_suspend(&card->dapm, "Ext Spk");
 	snd_soc_dapm_ignore_suspend(&card->dapm, "Int Mic");
 	//add for HS Voice Call 20140811
-	//snd_soc_dapm_ignore_suspend(&card->dapm, "bias_level"); 
+	//snd_soc_dapm_ignore_suspend(&card->dapm, "bias_level");
         //add for Pulling Up HS micbias1 during HS Voice Call 20140819
 	snd_soc_dapm_ignore_suspend(&card->dapm, "micbias1");
 	//add for ignoring HS_MIC_IN_P/N suspend during Hs Voice Call 20140819
-	snd_soc_dapm_ignore_suspend(&card->dapm, "IN3P");  
-	snd_soc_dapm_ignore_suspend(&card->dapm, "IN3N"); 
+	snd_soc_dapm_ignore_suspend(&card->dapm, "IN3P");
+	snd_soc_dapm_ignore_suspend(&card->dapm, "IN3N");
 
 	snd_soc_dapm_enable_pin(dapm, "Headset Mic");
 	snd_soc_dapm_enable_pin(dapm, "Headphone");

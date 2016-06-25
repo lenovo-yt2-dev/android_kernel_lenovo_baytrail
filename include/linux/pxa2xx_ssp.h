@@ -80,7 +80,9 @@
 #define SSSR_RFS	(1 << 6)	/* Receive FIFO Service Request */
 #define SSSR_ROR	(1 << 7)	/* Receive FIFO Overrun */
 
-#ifdef CONFIG_ARCH_PXA
+#define SSCR2_CLK_DEL_EN (1 << 3)	/* Delay logic for capturing data from device */
+
+#if defined(CONFIG_ARCH_PXA) || defined(CONFIG_X86_INTEL_MID)
 #define RX_THRESH_DFLT	8
 #define TX_THRESH_DFLT	8
 
@@ -159,9 +161,11 @@
 #define SSITF			0x44		/* TX FIFO trigger level */
 #define SSITF_TxLoThresh(x)	(((x) - 1) << 8)
 #define SSITF_TxHiThresh(x)	((x) - 1)
+#define SSITF_TFL_MASK		(0xff << 16)	/* Transmit FIFO Level mask */
 
 #define SSIRF			0x48		/* RX FIFO trigger level */
 #define SSIRF_RxThresh(x)	((x) - 1)
+#define SSIRF_RFL_MASK		(0xff << 8)	/* Receive FIFO Level mask */
 
 enum pxa_ssp_type {
 	SSP_UNDEFINED = 0,
@@ -172,6 +176,7 @@ enum pxa_ssp_type {
 	PXA168_SSP,
 	PXA910_SSP,
 	CE4100_SSP,
+	INTEL_SSP,
 	LPSS_SSP,
 };
 

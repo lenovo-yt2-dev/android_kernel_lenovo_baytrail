@@ -27,6 +27,7 @@
  *
  * FIXME: reference code, need change
  */
+ #if 0
 static int bq27541_translate_temp(int temperature)
 {
 	if (temperature <= 980)
@@ -69,7 +70,7 @@ static int bq27541_translate_temp(int temperature)
 
 	return temperature;
 }
-
+#endif
 static struct bq27x00_platform_data bq27541_platform_data = {
 	.soc_int_irq = -1,
 	.bat_low_irq = -1,
@@ -89,7 +90,7 @@ static int __init bq27541_platform_init(void)
 
 	soc_int_gpio = get_gpio_by_name("max_fg_alert");
 
-	printk("<AXS> %s: fuegauge interrupt gpio = %d\n", __func__, soc_int_gpio);
+	printk("yxf <AXS> %s: fuegauge interrupt gpio = %d\n", __func__, soc_int_gpio);
 
 	/*add by yxf 0525  */
 	if(soc_int_gpio !=  -ENODEV)
@@ -109,6 +110,7 @@ static int __init bq27541_platform_init(void)
 	//bq27541_platform_data.translate_temp = bq27541_translate_temp;
 	res = i2c_register_board_info(BQ27541_I2C_MASTER, 
 							&bq27541_i2c_boardinfo, ARRAY_SIZE(bq27541_i2c_boardinfo));
+	printk("yxf  res  =%d  \n",res);
 	if(res < 0){
 		pr_err("%s: fail register bq27541 i2c device\n");
 	}

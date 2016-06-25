@@ -334,6 +334,7 @@ struct class {
 	struct module		*owner;
 
 	struct class_attribute		*class_attrs;
+	const struct attribute_group	**dev_groups;
 	struct device_attribute		*dev_attrs;
 	struct bin_attribute		*dev_bin_attrs;
 	struct kobject			*dev_kobj;
@@ -504,6 +505,10 @@ ssize_t device_store_bool(struct device *dev, struct device_attribute *attr,
 
 #define DEVICE_ATTR(_name, _mode, _show, _store) \
 	struct device_attribute dev_attr_##_name = __ATTR(_name, _mode, _show, _store)
+#define DEVICE_ATTR_RW(_name) \
+	struct device_attribute dev_attr_##_name = __ATTR_RW(_name)
+#define DEVICE_ATTR_RO(_name) \
+	struct device_attribute dev_attr_##_name = __ATTR_RO(_name)
 #define DEVICE_ULONG_ATTR(_name, _mode, _var) \
 	struct dev_ext_attribute dev_attr_##_name = \
 		{ __ATTR(_name, _mode, device_show_ulong, device_store_ulong), &(_var) }

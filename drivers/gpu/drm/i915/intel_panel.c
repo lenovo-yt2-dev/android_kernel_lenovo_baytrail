@@ -191,9 +191,43 @@ void intel_gmch_panel_fitting(struct intel_crtc *intel_crtc,
 	struct drm_device *dev = intel_crtc->base.dev;
 	u32 pfit_control = 0, pfit_pgm_ratios = 0, border = 0;
 	struct drm_display_mode *mode, *adjusted_mode;
+	uint32_t scaling_src_w, scaling_src_h = 0;
+
+	intel_crtc->base.panning_en = false;
 
 	mode = &pipe_config->requested_mode;
 	adjusted_mode = &pipe_config->adjusted_mode;
+
+	if (IS_VALLEYVIEW(dev)) {
+		scaling_src_w = ((intel_crtc->scaling_src_size >>
+				SCALING_SRCSIZE_SHIFT) &
+				SCALING_SRCSIZE_MASK) + 1;
+		scaling_src_h = (intel_crtc->scaling_src_size &
+				SCALING_SRCSIZE_MASK) + 1;
+
+		/* The input src size should be < 2kx2k */
+		if ((scaling_src_w > PFIT_SIZE_LIMIT) ||
+			(scaling_src_h > PFIT_SIZE_LIMIT)) {
+			DRM_ERROR("Wrong panel fitter input src conf");
+			goto out;
+		}
+
+		if (fitting_mode == AUTOSCALE)
+			pfit_control = PFIT_SCALING_AUTO;
+		else if (fitting_mode == PILLARBOX)
+			pfit_control = PFIT_SCALING_PILLAR;
+		else if (fitting_mode == LETTERBOX)
+			pfit_control = PFIT_SCALING_LETTER;
+		else {
+			pipe_config->gmch_pfit.control &= ~PFIT_ENABLE;
+			intel_crtc->base.panning_en = false;
+			goto out1;
+		}
+		pfit_control |= (PFIT_ENABLE | (intel_crtc->pipe
+					<< PFIT_PIPE_SHIFT));
+		intel_crtc->base.panning_en = true;
+		goto out;
+	}
 
 	/* Native modes don't need fitting */
 	if (adjusted_mode->hdisplay == mode->hdisplay &&
@@ -306,6 +340,7 @@ out:
 	if ((pfit_control & PFIT_ENABLE) == 0) {
 		pfit_control = 0;
 		pfit_pgm_ratios = 0;
+		intel_crtc->scaling_src_size = 0;
 	}
 
 	/* Make sure pre-965 set dither correctly for 18bpp panels. */
@@ -313,6 +348,7 @@ out:
 		pfit_control |= PANEL_8TO6_DITHER_ENABLE;
 
 	pipe_config->gmch_pfit.control = pfit_control;
+out1:
 	pipe_config->gmch_pfit.pgm_ratios = pfit_pgm_ratios;
 	pipe_config->gmch_pfit.lvds_border_bits = border;
 }
@@ -369,7 +405,7 @@ static u32 i915_read_blc_pwm_ctl(struct drm_device *dev)
 	return val;
 }
 
-static u32 intel_panel_get_max_backlight(struct drm_device *dev)
+u32 intel_panel_get_max_backlight(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 max;
@@ -437,7 +473,11 @@ static u32 intel_panel_get_backlight(struct drm_device *dev)
 	 */
 	if (IS_VALLEYVIEW(dev) && dev_priv->is_mipi) {
 #ifdef CONFIG_CRYSTAL_COVE
-		val = intel_mid_pmic_readb(0x4E);
+		if (BYT_CR_CONFIG) {
+			val = lpio_bl_read(0, LPIO_PWM_CTRL);
+			val &= 0xff;
+		} else
+			val = intel_mid_pmic_readb(0x4E);
 #else
 		DRM_ERROR("Backlight not supported yet\n");
 #endif
@@ -517,18 +557,24 @@ void intel_panel_actually_set_backlight(struct drm_device *dev, u32 level)
 void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level)
 {
 	unsigned char bl_value;
-	drm_i915_private_t *dev_priv = dev->dev_private;
+	struct drm_i915_private *dev_priv = dev->dev_private;
 	printk("wqf-%s level=%d\n",__func__,level);
 #ifdef CONFIG_CRYSTAL_COVE
-	//u32 max = intel_panel_get_max_backlight(dev);
-
-	if (BYT_CR_CONFIG) {
+	/* For BYT-CR */
+	if (dev_priv->vbt.dsi.config->pmic_soc_blc) {
 		/* FixMe: if level is zero still a pulse is observed consuming
 		power. To fix this issue if requested level is zero then
 		disable pwm and enabled it again if brightness changes */
-		lpio_bl_write_bits(0, LPIO_PWM_CTRL, (0xff - level ), 0xFF);
+		lpio_bl_write_bits(0, LPIO_PWM_CTRL, (0xff - level), 0xFF);
 		lpio_bl_update(0, LPIO_PWM_CTRL);
 	} else{
+		if(bl_pwm_enable && level){
+				//intel_mid_pmic_writeb(0x4B, 0x80);
+				if(!dev_priv->spark_init_code_write){
+				intel_mid_pmic_writeb(0x51, 0x01);
+				bl_pwm_enable=false;
+				}
+		}
 	/*wqf add for cabc backlight control start*/
 		if(dev_priv->spark_cabc_dpst_on){
 			/*hardware rework backlight control code*/
@@ -539,21 +585,7 @@ void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level)
 				else
 					bl_value=(unsigned char)level;
 				//printk("wqf-%s the bl_val=%d\n",__func__,bl_value);
-				if(dev_priv->spark_init_code_write){
-					//printk("wqf %s spark_init_code_write=%d\n",__func__,dev_priv->spark_init_code_write);
-					dev_priv->intel_dsi_cabc_dpst->hs = true;
-					mutex_lock(&(dev_priv->i915_bklt_control_mutex));
-					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x83,0xBB);
-					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x84,0x22);
-					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x90,0x00);
-					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x91,0xA2);
-					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x94,0x2A);
-					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x95,0x20);
-					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x96,0x01);
-					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x9B,0x8C);
-					mutex_unlock(&(dev_priv->i915_bklt_control_mutex));
-					dev_priv->spark_init_code_write=false;
-				}
+				
 				if(bl_value!=(dev_priv->bl_value_old)){
 					dev_priv->intel_dsi_cabc_dpst->hs = true;
 					//printk("wqf-%s change backlight\n",__func__);
@@ -562,6 +594,7 @@ void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level)
 					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x84,0x00);
 					dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x9F,bl_value);
 					mutex_unlock(&(dev_priv->i915_bklt_control_mutex));
+					msleep(5);
 					dev_priv->bl_value_old=bl_value;
 					//printk("wqf-%s the bl_value_old=%d\n",__func__,dev_priv->bl_value_old);
 				}
@@ -573,21 +606,14 @@ void intel_panel_actually_set_mipi_backlight(struct drm_device *dev, u32 level)
 			//printk("wqf-%s spark use dpst\n",__func__);
 			if (level==10)
 				level=level-7;
-			if(bl_pwm_enable&&(level!=0)){
-				intel_mid_pmic_writeb(0x4B, 0x80);
-				intel_mid_pmic_writeb(0x51, 0x01);
-				bl_pwm_enable=false;
-			}
-	        intel_mid_pmic_writeb(0x4E, level);
-
-			/*reference code disable backlight when level is 0*/
-			if(level==0)
-			{
-				bl_pwm_enable=true;
-		   		intel_mid_pmic_writeb(0x4B, 0);
-	           	intel_mid_pmic_writeb(0x51, 0x0);
-
-			}
+	       	 intel_mid_pmic_writeb(0x4E, level);
+		}
+		/*reference code disable backlight when level is 0*/
+		if(!bl_pwm_enable && !level)
+		{
+			bl_pwm_enable=true;
+	   		//intel_mid_pmic_writeb(0x4B, 0);
+           		intel_mid_pmic_writeb(0x51, 0x0);
 		}
 	}
 #else
@@ -629,10 +655,10 @@ void intel_panel_set_backlight(struct drm_device *dev, u32 level, u32 max)
 
 	spin_unlock_irqrestore(&dev_priv->backlight.lock, flags);
 
-	if (dev_priv->backlight.enabled && dev_priv->is_mipi)
+	if (dev_priv->backlight.enabled && dev_priv->is_mipi)//lm
 		intel_panel_actually_set_mipi_backlight(dev, level);
 
-	if (!dev_priv->backlight.enabled)
+	if (!dev_priv->backlight.enabled)//lm
 		DRM_INFO("%s: delay backlight enable, save level = %u\n", __func__, level);
 }
 
@@ -645,7 +671,7 @@ void intel_panel_disable_backlight(struct drm_device *dev)
 		intel_panel_actually_set_mipi_backlight(dev, 0);
 
 #ifdef CONFIG_CRYSTAL_COVE
-		if (BYT_CR_CONFIG) {
+		if (dev_priv->vbt.dsi.config->pmic_soc_blc) {
 			/* cancel any delayed work scheduled */
 			cancel_delayed_work_sync(&dev_priv->bkl_delay_enable_work);
 
@@ -657,16 +683,18 @@ void intel_panel_disable_backlight(struct drm_device *dev)
 		} else {
 			/* cancel any delayed work scheduled */
 			cancel_delayed_work_sync(&dev_priv->bkl_delay_enable_work);
-
+			bl_pwm_enable=false;//lm
 			intel_mid_pmic_writeb(0x51, 0x00);
-			intel_mid_pmic_writeb(0x4B, 0x0);
+			intel_mid_pmic_writeb(0x4B, 0x7F);
 		}
 #else
 		DRM_ERROR("Backlight not supported yet\n");
 #endif
+//lm add
 	if(dev_priv->spark_cabc_dpst_on){
 		cancel_delayed_work_sync(&dev_priv->spark_bkl_delay_enable_work);
 	}
+	//lm end
 	}
 
 	spin_lock_irqsave(&dev_priv->backlight.lock, flags);
@@ -700,7 +728,7 @@ void intel_panel_disable_backlight(struct drm_device *dev)
 #ifdef CONFIG_CRYSTAL_COVE
 static void scheduled_led_chip_programming(struct work_struct *work)
 {
-	lp855x_ext_write_byte(LP8556_CFG9,
+	/*lp855x_ext_write_byte(LP8556_CFG9,
 			LP8556_VBOOST_MAX_NA_21V |
 			LP8556_JUMP_DIS |
 			LP8556_JMP_TSHOLD_10P |
@@ -716,8 +744,7 @@ static void scheduled_led_chip_programming(struct work_struct *work)
 			LP8556_RSRVD_32 |
 			LP8556_IBOOST_LIM_1_8A_NA);
 	lp855x_ext_write_byte(LP8556_LEDSTREN,
-			LP8556_5LEDSTR);
-
+			LP8556_5LEDSTR);*/
 }
 
 static void scheduled_set_backlight(struct work_struct *work)
@@ -726,7 +753,7 @@ static void scheduled_set_backlight(struct work_struct *work)
 	struct drm_i915_private *dev_priv = container_of(delayed_work, struct drm_i915_private, bkl_delay_enable_work);
 	struct drm_device *dev = dev_priv->dev;
 
-	DRM_INFO("%s: In. backlight.level = %d\n", __func__, dev_priv->backlight.level);
+	printk("%s: In. backlight.level = %d\n", __func__, dev_priv->backlight.level);
 
 	if ((dev_priv->backlight.enabled == false) && dev_priv->is_mipi && dev_priv->backlight.level) {
 		dev_priv->backlight.enabled = true;
@@ -738,7 +765,10 @@ static void scheduled_set_backlight(struct work_struct *work)
 #endif
 static void scheduled_bklt_enable_programming(struct work_struct *work)
 {
+	struct delayed_work *delayed_work = to_delayed_work(work);
+	struct drm_i915_private *dev_priv = container_of(delayed_work, struct drm_i915_private, spark_bkl_delay_enable_work);
 	intel_mid_pmic_writeb(0x51, 0x01);
+	dev_priv->spark_init_code_write=false;
 	
 }
 static uint32_t compute_pwm_base(uint16_t freq)
@@ -776,13 +806,14 @@ void intel_panel_enable_backlight(struct drm_device *dev,
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	enum transcoder cpu_transcoder =
 		intel_pipe_to_cpu_transcoder(dev_priv, pipe);
-	unsigned long flags;
+	unsigned long flags = 0;
 	uint32_t pwm_base;
-printk("wqf %s\n",__func__);
+	printk("lm %s\n",__func__);
 	if (IS_VALLEYVIEW(dev) && dev_priv->is_mipi) {
 #ifdef CONFIG_CRYSTAL_COVE
 		uint32_t val;
-		if (BYT_CR_CONFIG) {
+		/* For BYT-CR */
+		if (dev_priv->vbt.dsi.config->pmic_soc_blc) {
 			/* GPIOC_94 config to PWM0 function */
 			val = vlv_gps_core_read(dev_priv, 0x40A0);
 			vlv_gps_core_write(dev_priv, 0x40A0, 0x2000CC01);
@@ -804,9 +835,10 @@ printk("wqf %s\n",__func__);
 			vlv_gpio_nc_write(dev_priv, 0x40E8, 0x00000005);
 			udelay(500);
 
-			if (lpdata)
+			/*if (lpdata)
 				schedule_delayed_work(&dev_priv->bkl_delay_enable_work,
-								msecs_to_jiffies(30));
+						msecs_to_jiffies(30));*/
+
 		} else {
 			intel_mid_pmic_writeb(0x4B, 0x80);
 			printk("wqf %s spark_cabc_dpst_on=%d\n",__func__,dev_priv->spark_cabc_dpst_on);
@@ -816,18 +848,24 @@ printk("wqf %s\n",__func__);
 				schedule_delayed_work(&dev_priv->spark_bkl_delay_enable_work,
 								msecs_to_jiffies(450));
 			}
+			else if((dev_priv->spark_cabc_dpst_on)&&(dev_priv->spark_boot_flag)){
+				intel_mid_pmic_writeb(0x51, 0x00);
+				schedule_delayed_work(&dev_priv->spark_bkl_delay_enable_work,
+								msecs_to_jiffies(100));
+				dev_priv->spark_boot_flag=false;
+			}
 			else
 				intel_mid_pmic_writeb(0x51, 0x01);
 
 			/* Control Backlight Slope programming for LP8556 IC*/
-			if (lpdata && (spid.hardware_id == BYT_TABLET_BLK_8PR1)) {
+			/*if (lpdata && (spid.hardware_id == BYT_TABLET_BLK_8PR1)) {
 				mdelay(2);
 				if (lp855x_ext_write_byte(LP8556_CFG3, LP8556_MODE_SL_50MS_FL_HV_PWM_12BIT))
 					DRM_ERROR("Backlight slope programming failed\n");
 				else
 					DRM_INFO("Backlight slope programming success\n");
 				mdelay(2);
-			}
+			}*/
 		}
 #else
 		DRM_ERROR("Backlight not supported yet\n");
@@ -887,7 +925,7 @@ set_level:
 	 * BLC_PWM_CPU_CTL may be cleared to zero automatically when these
 	 * registers are set.
 	 */
-#if 1
+#if 1       //lm
 	if (IS_VALLEYVIEW(dev) && dev_priv->is_mipi) {
 		schedule_delayed_work(&dev_priv->bkl_delay_enable_work,
 								msecs_to_jiffies(100));
@@ -904,7 +942,7 @@ set_level:
 
 	spin_unlock_irqrestore(&dev_priv->backlight.lock, flags);
 
-#if 0
+#if 0        //lm
 	if (IS_VALLEYVIEW(dev) && dev_priv->is_mipi) {
 		intel_panel_actually_set_mipi_backlight(dev,
 					dev_priv->backlight.level);
@@ -919,6 +957,7 @@ static void intel_panel_init_backlight(struct drm_device *dev)
 
 	dev_priv->backlight.level = intel_panel_get_backlight(dev);
 	dev_priv->backlight.enabled = dev_priv->backlight.level != 0;
+
 #ifdef CONFIG_CRYSTAL_COVE
 	if (BYT_CR_CONFIG)
 		INIT_DELAYED_WORK(&dev_priv->bkl_delay_enable_work,
@@ -927,7 +966,7 @@ static void intel_panel_init_backlight(struct drm_device *dev)
 		INIT_DELAYED_WORK(&dev_priv->bkl_delay_enable_work,
 				scheduled_set_backlight);
 #endif
-//wqf add for distinguish cabc hardware rework start
+//lm add for distinguish cabc hardware rework start
 	borad_id0_value=intel_mid_pmic_readb(0x35);
 	printk("wqf-%s the board id 0 value is %d\n",__func__,borad_id0_value);
 	borad_id1_value=intel_mid_pmic_readb(0x38);
@@ -938,11 +977,12 @@ static void intel_panel_init_backlight(struct drm_device *dev)
 		dev_priv->spark_cabc_dpst_on=true;
 	else
 		dev_priv->spark_cabc_dpst_on=true;
+	
 	printk("wqf-%s spark_cabc_dpst_on is %d\n",__func__,dev_priv->spark_cabc_dpst_on);
 	if(dev_priv->spark_cabc_dpst_on){
 	INIT_DELAYED_WORK(&dev_priv->spark_bkl_delay_enable_work,
 				scheduled_bklt_enable_programming);}
-//wqf add for distinguish cabc hardware rework end
+//lm add for distinguish cabc hardware rework end
 }
 
 enum drm_connector_status
@@ -994,6 +1034,7 @@ int intel_panel_setup_backlight(struct drm_connector *connector)
 	struct backlight_properties props;
 	unsigned long flags;
 
+    printk("liumiao >>>> %s\n", __func__);
 	intel_panel_init_backlight(dev);
 
 	if (WARN_ON(dev_priv->backlight.device))
@@ -1057,6 +1098,42 @@ int intel_panel_init(struct intel_panel *panel,
 }
 
 /*
+ * intel_dsi_calc_panel_downclock - calculate the reduced downclock for DSI
+ * @dev: drm device
+ * @fixed_mode : panel native mode
+ * @connector: DSI connector
+ *
+ * Return downclock_avail
+ * Calculate the reduced downclock for DSI.
+ */
+
+struct drm_display_mode *
+intel_dsi_calc_panel_downclock(struct drm_device *dev,
+			struct drm_display_mode *fixed_mode,
+			struct drm_connector *connector)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_display_mode *downclock_mode = NULL;
+
+	if (dev_priv->vbt.drrs_min_vrefresh == 0)
+		return downclock_mode;
+
+	/* Allocate */
+	downclock_mode = drm_mode_duplicate(dev, fixed_mode);
+	if (!downclock_mode) {
+		DRM_DEBUG_KMS("%s: No memory\n", __func__);
+		return NULL;
+	}
+
+	downclock_mode->vrefresh = dev_priv->vbt.drrs_min_vrefresh;
+	DRM_DEBUG("drrs_min_vrefresh = %u\n", downclock_mode->vrefresh);
+	downclock_mode->clock =  downclock_mode->vrefresh *
+		downclock_mode->vtotal * downclock_mode->htotal / 1000;
+
+	return downclock_mode;
+}
+
+/*
  * intel_find_panel_downclock - find the reduced downclock for LVDS in EDID
  * @dev: drm device
  * @fixed_mode : panel native mode
@@ -1073,7 +1150,10 @@ intel_find_panel_downclock(struct drm_device *dev,
 {
 	struct drm_display_mode *scan, *tmp_mode;
 	int temp_downclock;
-
+	if (!fixed_mode) {
+		DRM_ERROR("Mode can't be NULL\n");
+		return NULL;
+	}
 	temp_downclock = fixed_mode->clock;
 	tmp_mode = NULL;
 

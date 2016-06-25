@@ -324,6 +324,7 @@ static void ehci_work(struct ehci_hcd *ehci);
 static void start_unlink_intr(struct ehci_hcd *ehci, struct ehci_qh *qh);
 static void end_unlink_intr(struct ehci_hcd *ehci, struct ehci_qh *qh);
 
+#include "ehci-sram.c"
 #include "ehci-timer.c"
 #include "ehci-hub.c"
 #include "ehci-mem.c"

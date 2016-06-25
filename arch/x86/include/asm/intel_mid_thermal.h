@@ -47,12 +47,14 @@ struct soc_throttle_data {
  * struct intel_mid_thermal_platform_data - Platform data for
  *		intel mid thermal driver
  *
- * @num_sensors:	Maximum number of sensors supported
+ * @num_sensors:	Maximum number of real sensors supported
+ * @num_virtual_sensors: Number of virtual sensors
  * @sensors:		sensor info
  * @gpu_cooling:	Whether to register a cdev for GPU throttling
  */
 struct intel_mid_thermal_platform_data {
 	int num_sensors;
+	int num_virtual_sensors;
 	struct intel_mid_thermal_sensor *sensors;
 	bool gpu_cooling;
 };

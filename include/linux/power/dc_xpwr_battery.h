@@ -30,22 +30,22 @@
 #define BAT_CURVE_SIZE		32
 #define BATTID_LEN		8
 
+struct dc_xpwr_fg_cfg {
+	u8 cap1;
+	u8 cap0;
+	u8 rdc1;
+	u8 rdc0;
+	u8 bat_curve[BAT_CURVE_SIZE];
+};
+
 struct dollarcove_fg_pdata {
 	char battid[BATTID_LEN + 1];
-
+	int technology;
 	int design_cap;
 	int design_min_volt;
 	int design_max_volt;
 	int max_temp;
 	int min_temp;
-
-	int cap1;
-	int cap0;
-	int rdc1;
-	int rdc0;
-	int bat_curve[BAT_CURVE_SIZE];
-
-	int (*batt_adc_to_temp)(int adc_val, int *temp);
 };
 
 #endif	/* __DOLLAR_COVE_BATTERY_H__ */

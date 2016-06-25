@@ -11,20 +11,20 @@
 
 for arch in x86_64 i386
 do
-	ALLDEFCONFIGS="`ls arch/x86/configs/${arch}_*_defconfig`"
+	ALLDEFCONFIGS="`ls arch/x86/configs/spark_*_defconfig`"
 	for conf in $ALLDEFCONFIGS; do
 		echo "Updating $conf (O=oldconfig, m=menuconfig, x=xconfig): [O/m/x default=O]?"
 		read -s -n1 ANSWER < /dev/tty
 		cp $conf .config
 		case "$ANSWER" in
 			[mM] )
-				make ARCH=${arch} menuconfig
+				make ARCH=x86_64 menuconfig
 			;;
 			[xX] )
-				make ARCH=${arch} xconfig
+				make ARCH=x86_64 xconfig
 			;;
 			 *)
-				make ARCH=${arch} oldconfig
+				make ARCH=x86_64 oldconfig
 			;;
 		esac
 		cp .config $conf

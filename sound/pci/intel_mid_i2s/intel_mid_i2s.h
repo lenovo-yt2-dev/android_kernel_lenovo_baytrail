@@ -530,10 +530,12 @@ struct intel_mid_i2s_hdl {
 	enum intel_mid_i2s_ssp_usage usage;
 
 	struct intel_mid_i2s_settings current_settings;
+#ifdef CONFIG_ACPI
 	/* timing configuration from acpi */
 	struct intel_mid_i2s_ssp_config config_c08k;
 	struct intel_mid_i2s_ssp_config config_c16k;
 	struct intel_mid_i2s_ssp_config config_c48k;
+#endif
 };
 
 struct intel_mid_ssp_gpio {

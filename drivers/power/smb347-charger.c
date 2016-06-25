@@ -158,6 +158,7 @@
 #define STAT_A					0x3b
 #define STAT_A_FLOAT_VOLTAGE_MASK		0x3f
 #define STAT_B					0x3c
+#define STAT_B_RID_GROUND			0x10
 #define STAT_C					0x3d
 #define STAT_C_CHG_ENABLED			BIT(0)
 #define STAT_C_HOLDOFF_STAT			BIT(3)
@@ -255,7 +256,7 @@
 #define SMB34X_EXTCON_DCP		"CHARGER_USB_DCP"
 #define SMB34X_EXTCON_CDP		"CHARGER_USB_CDP"
 
-#define REGULATOR_V3P3S		"v3p3s"
+#define REGULATOR_V3P3SX		"v3p3sx"
 
 static const char *smb34x_extcon_cable[] = {
 	SMB34X_EXTCON_SDP,
@@ -336,10 +337,11 @@ struct smb347_charger {
 	int			online;
 	int			present;
 	/*
-	 * regulator v3p3s used by display driver to save 7mW in
+	 * regulator v3p3sx used by display driver to save 7mW in
 	 * S3 for USB Host
 	 */
-	struct regulator	*regulator_v3p3s;
+	struct regulator	*regulator_v3p3sx;
+	bool			regulator_enabled;
 #ifdef CONFIG_POWER_SUPPLY_CHARGER
 	struct delayed_work	full_worker;
 #endif
@@ -471,9 +473,12 @@ static int smb34x_get_health(struct smb347_charger *smb)
 			chrg_health = POWER_SUPPLY_HEALTH_OVERVOLTAGE;
 		else
 			chrg_health = POWER_SUPPLY_HEALTH_GOOD;
+
 	} else {
 			chrg_health = POWER_SUPPLY_HEALTH_UNKNOWN;
 	}
+	if (chrg_health != POWER_SUPPLY_HEALTH_GOOD)
+		smb->online = 0;
 end:
 	return chrg_health;
 }
@@ -947,6 +952,36 @@ static void smb347_full_worker(struct work_struct *work)
 }
 #endif
 
+
+static void smb347_otg_detect(struct smb347_charger *smb)
+{
+	int ret;
+
+	ret = smb347_read(smb, STAT_B);
+	dev_info(&smb->client->dev, "stat_b = %x", ret);
+	if (ret < 0)
+		dev_err(&smb->client->dev, "i2c error %d", ret);
+	else if (ret & STAT_B_RID_GROUND) {
+		smb->drive_vbus = true;
+		if (smb->pdata->gpio_mux >= 0)
+			gpio_direction_output(smb->pdata->gpio_mux, 0);
+		if (smb->a_bus_enable) {
+			smb347_otg_enable(smb);
+			if (smb->regulator_v3p3sx) {
+				regulator_enable(smb->regulator_v3p3sx);
+				smb->regulator_enabled = true;
+			}
+		}
+	} else {
+		smb->drive_vbus = false;
+		smb347_otg_disable(smb);
+		if (smb->regulator_v3p3sx && smb->regulator_enabled) {
+			regulator_disable(smb->regulator_v3p3sx);
+			smb->regulator_enabled = false;
+		}
+	}
+}
+
 static void smb34x_update_charger_type(struct smb347_charger *smb)
 {
 	static struct power_supply_cable_props cable_props;
@@ -967,9 +1002,7 @@ static void smb34x_update_charger_type(struct smb347_charger *smb)
 	 */
 	power_ok = smb347_read(smb, IRQSTAT_E);
 	if ((power_ok & (SMB349_IRQSTAT_E_DCIN_UV_STAT |
-			SMB349_IRQSTAT_E_DCIN_OV_STAT |
-			SMB349_IRQSTAT_E_DCIN_UV_IRQ |
-			SMB349_IRQSTAT_E_DCIN_OV_IRQ)) && ret != 0) {
+			SMB349_IRQSTAT_E_DCIN_OV_STAT)) && ret != 0) {
 		/*
 		 * during UV condition,chgr removal is
 		 * not identified and using worker thread
@@ -1031,7 +1064,8 @@ static void smb34x_update_charger_type(struct smb347_charger *smb)
 					notify_usb, notify_chrg);
 
 	if (notify_usb) {
-		gpio_direction_output(smb->pdata->gpio_mux, 1);
+		if (smb->pdata->gpio_mux >= 0)
+			gpio_direction_output(smb->pdata->gpio_mux, 1);
 		atomic_notifier_call_chain(&smb->otg->notifier,
 				USB_EVENT_VBUS, &vbus_present);
 	}
@@ -1052,7 +1086,8 @@ static void smb34x_update_charger_type(struct smb347_charger *smb)
 	if (cable_props.chrg_evt == POWER_SUPPLY_CHARGER_EVENT_DISCONNECT) {
 		notify_chrg = 0;
 		notify_usb = 0;
-		gpio_direction_output(smb->pdata->gpio_mux, 0);
+		if (smb->pdata->gpio_mux >= 0)
+			gpio_direction_output(smb->pdata->gpio_mux, 0);
 	}
 
 	return;
@@ -1201,16 +1236,21 @@ static void smb347_usb_otg_enable(struct usb_phy *phy)
 		smb->a_bus_enable = false;
 		if (smb->drive_vbus) {
 			smb347_otg_disable(smb);
-			if (smb->regulator_v3p3s)
-				regulator_disable(smb->regulator_v3p3s);
+			if (smb->regulator_v3p3sx &&
+					smb->regulator_enabled) {
+				regulator_disable(smb->regulator_v3p3sx);
+				smb->regulator_enabled = false;
+			}
 		}
 	} else {
 		dev_info(&smb->client->dev, "OTG Enable");
 		smb->a_bus_enable = true;
 		if (smb->drive_vbus) {
 			smb347_otg_enable(smb);
-			if (smb->regulator_v3p3s)
-				regulator_enable(smb->regulator_v3p3s);
+			if (smb->regulator_v3p3sx) {
+				regulator_enable(smb->regulator_v3p3sx);
+				smb->regulator_enabled = true;
+			}
 		}
 	}
 }
@@ -1487,14 +1527,6 @@ static irqreturn_t smb347_interrupt(int irq, void *data)
 #endif
 		}
 
-		if (smb->mains_online || smb->usb_online) {
-			dev_info(&smb->client->dev, "Charger connected\n");
-			smb->online = 1;
-		} else {
-			dev_info(&smb->client->dev, "Charger disconnected\n");
-			smb->online = 0;
-		}
-
 		ret = IRQ_HANDLED;
 	}
 
@@ -1513,24 +1545,7 @@ static irqreturn_t smb347_interrupt(int irq, void *data)
 	}
 
 	if (irqstat_f & IRQSTAT_F_OTG_DET_IRQ) {
-		ret = smb347_read(smb, STAT_B);
-		dev_info(&smb->client->dev, "stat_b = %x", ret);
-		if (ret < 0)
-			dev_err(&smb->client->dev, "i2c error %d", ret);
-		else if (ret & 0x10) {
-			smb->drive_vbus = true;
-			gpio_direction_output(smb->pdata->gpio_mux, 0);
-			if (smb->a_bus_enable) {
-				smb347_otg_enable(smb);
-				if (smb->regulator_v3p3s)
-					regulator_enable(smb->regulator_v3p3s);
-			}
-		} else {
-			smb->drive_vbus = false;
-			smb347_otg_disable(smb);
-			if (smb->regulator_v3p3s)
-				regulator_disable(smb->regulator_v3p3s);
-		}
+		smb347_otg_detect(smb);
 		ret = IRQ_HANDLED;
 	}
 
@@ -1542,10 +1557,25 @@ static irqreturn_t smb347_interrupt(int irq, void *data)
 		if (smb->pdata->detect_chg)
 			smb34x_update_charger_type(smb);
 
-		if (smb->pdata->use_mains)
-			power_supply_changed(&smb->mains);
-		if (smb->pdata->use_usb)
-			power_supply_changed(&smb->usb);
+		/*
+		 * In case of charger OV/UV update_charger_type
+		 * will not send power_supply_changed. Also during
+		 * charger unplug UV interrupt will be triggered
+		 * Hence check if the charger is present and health
+		 * is over voltage or under voltage send power
+		 * supply changed notification.
+		 */
+		if (smb347_is_charger_present(smb)) {
+			int health = smb34x_get_health(smb);
+			if (health == POWER_SUPPLY_HEALTH_OVERVOLTAGE ||
+				health == POWER_SUPPLY_HEALTH_DEAD) {
+				if (smb->pdata->use_usb)
+					power_supply_changed(&smb->usb);
+				if (smb->pdata->use_mains)
+					power_supply_changed(&smb->mains);
+			}
+		}
+
 		ret = IRQ_HANDLED;
 	}
 
@@ -2367,6 +2397,8 @@ static int smb347_probe(struct i2c_client *client,
 	pdata->irq_gpio = acpi_get_gpio_by_index(&client->dev, 0, &gpio_info);
 	if (pdata->irq_gpio < 0)
 		return -EINVAL;
+	else
+		dev_info(&client->dev, "gpio no:%d\n", pdata->irq_gpio);
 #endif
 
 	if (!pdata->use_mains && !pdata->use_usb)
@@ -2396,13 +2428,12 @@ static int smb347_probe(struct i2c_client *client,
 
 	wake_lock_init(&smb->wakelock, WAKE_LOCK_SUSPEND, "smb_wakelock");
 
-
 	smb347_dev = smb;
 	if (smb->pdata->use_regulator) {
-		smb->regulator_v3p3s = regulator_get(dev, REGULATOR_V3P3S);
-		if (IS_ERR(smb->regulator_v3p3s)) {
-			dev_warn(&smb->client->dev, "V3P3S  failed");
-			smb->regulator_v3p3s = NULL;
+		smb->regulator_v3p3sx = regulator_get(dev, REGULATOR_V3P3SX);
+		if (IS_ERR(smb->regulator_v3p3sx)) {
+			dev_warn(&smb->client->dev, "V3P3SX failed");
+			smb->regulator_v3p3sx = NULL;
 		}
 	}
 
@@ -2486,6 +2517,7 @@ static int smb347_probe(struct i2c_client *client,
 
 	if (smb->pdata->detect_chg)
 		smb34x_update_charger_type(smb);
+	smb347_otg_detect(smb);
 
 	smb->running = true;
 	smb->dentry = debugfs_create_file("smb347-regs", S_IRUSR, NULL, smb,
@@ -2535,8 +2567,8 @@ static int smb347_remove(struct i2c_client *client)
 		power_supply_unregister(&smb->mains);
 	wake_lock_destroy(&smb->wakelock);
 
-	if (smb->regulator_v3p3s)
-		regulator_put(smb->regulator_v3p3s);
+	if (smb->regulator_v3p3sx)
+		regulator_put(smb->regulator_v3p3sx);
 
 	return 0;
 }

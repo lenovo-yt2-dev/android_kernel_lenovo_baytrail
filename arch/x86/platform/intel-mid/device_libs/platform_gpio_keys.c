@@ -30,6 +30,7 @@
 #include <asm/intel-mid.h>
 #include "platform_gpio_keys.h"
 
+#ifdef CONFIG_SFI
 /*
  * we will search these buttons in SFI GPIO table (by name)
  * and register them dynamically. Please add all possible
@@ -102,6 +103,7 @@ static int __init pb_keys_init(void)
 	return 0;
 }
 late_initcall(pb_keys_init);
+#endif
 
 #ifdef	CONFIG_ACPI
 enum {

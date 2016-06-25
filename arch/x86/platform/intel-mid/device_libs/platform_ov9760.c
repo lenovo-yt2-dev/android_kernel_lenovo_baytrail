@@ -12,10 +12,16 @@
 #include <linux/gpio.h>
 #include <linux/delay.h>
 #include <linux/atomisp_platform.h>
+#include <linux/regulator/consumer.h>
 #include <asm/intel_scu_ipcutil.h>
+#include <asm/intel_scu_ipc.h>
 #include <asm/intel-mid.h>
 #include <media/v4l2-subdev.h>
 #include <linux/mfd/intel_mid_pmic.h>
+
+#ifdef CONFIG_INTEL_SOC_PMC
+#include <asm/intel_soc_pmc.h>
+#endif
 
 #ifdef CONFIG_VLV2_PLAT_CLK
 #include <linux/vlv2_plat_clock.h>
@@ -30,11 +36,18 @@
  */
 #define CAMERA_1_RESET 127	/* GP_CAMERASB10, Low to reset */
 #define CAMERA_1_PWDN 124	/* GP_CAMERASB07, Low to power down*/
-#define CAMERA_DOVDD_EN 0	/* GP_CAMERASB05, High to enable */
-#define CAMERA_AVDD_EN 51	/* GPIO_S0_51, High to enable */
-#define CAMERA_DVDD_EN 125	/* GP_CAMERASB08, High to enable */
+//#define CAMERA_DOVDD_EN 0	/* GP_CAMERASB05, High to enable */
+//#define CAMERA_AVDD_EN 51	/* GPIO_S0_51, High to enable */
+//#define CAMERA_DVDD_EN 125	/* GP_CAMERASB08, High to enable */
 
 #define CAMERA_1_RESET_CRV2 CAMERA_1_RESET
+
+#ifdef CONFIG_INTEL_SOC_PMC
+#define OSC_CAM1_CLK 0x1
+#define CLK_19P2MHz 0x1
+#define CLK_ON	0x01
+#define CLK_OFF	0x02
+#endif
 
 #ifdef CONFIG_VLV2_PLAT_CLK
 #define OSC_CAM1_CLK 0x1
@@ -49,9 +62,9 @@
 #endif
 static int camera_reset = -1;
 static int camera_power_down = -1;
-static int camera_dovdd_en = -1;
-static int camera_avdd_en = -1;
-static int camera_dvdd_en = -1;
+//static int camera_dovdd_en = -1;
+//static int camera_avdd_en = -1;
+//static int camera_dvdd_en = -1;
 
 static int camera_vprog1_on = 0;
 /*
@@ -68,9 +81,9 @@ static void ov9760_verify_gpio_power(void)
 	OV9760_PLAT_LOG("CAMERA: start check ov9760 gpio\n");
 	OV9760_PLAT_LOG("CAMERA_1_RESET: %d\n", gpio_get_value(CAMERA_1_RESET));
 	OV9760_PLAT_LOG("CAMERA_1_PWDN: %d\n", gpio_get_value(CAMERA_1_PWDN));
-	OV9760_PLAT_LOG("CAMERA_DOVDD_EN: %d\n", gpio_get_value(CAMERA_DOVDD_EN));
-	OV9760_PLAT_LOG("CAMERA_AVDD_EN: %d\n", gpio_get_value(CAMERA_AVDD_EN));
-	OV9760_PLAT_LOG("CAMERA_DVDD_EN: %d\n", gpio_get_value(CAMERA_DVDD_EN));
+	//OV9760_PLAT_LOG("CAMERA_DOVDD_EN: %d\n", gpio_get_value(CAMERA_DOVDD_EN));
+	//OV9760_PLAT_LOG("CAMERA_AVDD_EN: %d\n", gpio_get_value(CAMERA_AVDD_EN));
+	//OV9760_PLAT_LOG("CAMERA_DVDD_EN: %d\n", gpio_get_value(CAMERA_DVDD_EN));
 	OV9760_PLAT_LOG("VPROG_3P3V  addr:0x%x value:%x\n", VPROG_3P3V, intel_mid_pmic_readb(VPROG_3P3V));
 	OV9760_PLAT_LOG("VPROG_2P8V  addr:0x%x value:%x\n", VPROG_2P8V, intel_mid_pmic_readb(VPROG_2P8V));
 	OV9760_PLAT_LOG("VPROG_1P8V  addr:0x%x value:%x\n", VPROG_1P8V, intel_mid_pmic_readb(VPROG_1P8V));
@@ -134,6 +147,16 @@ static int ov9760_gpio_ctrl(struct v4l2_subdev *sd, int flag)
 
 static int ov9760_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 {
+#if CONFIG_INTEL_SOC_PMC
+	if (flag) {
+		int ret;
+		ret = pmc_pc_set_freq(OSC_CAM1_CLK, CLK_19P2MHz);
+		if (ret)
+			return ret;
+		return pmc_pc_configure(OSC_CAM1_CLK, CLK_ON);
+	}
+	return pmc_pc_configure(OSC_CAM1_CLK, CLK_OFF);
+#else
 	static const unsigned int clock_khz = 19200;
 	ov9760_verify_gpio_power();
 	OV9760_PLAT_LOG("%s %d flag:%d\n", __func__, __LINE__, flag);
@@ -152,13 +175,15 @@ static int ov9760_flisclk_ctrl(struct v4l2_subdev *sd, int flag)
 	pr_err("ov9760 clock is not set.\n");
 	return 0;
 #endif
+#endif
 }
-
+/*
 int blade_power_pins(void)
 {
 	int ret;
 
 	if (IS_BYT) {
+		
 		if (camera_dovdd_en < 0) {
 			camera_dovdd_en = CAMERA_DOVDD_EN;
 			ret = gpio_request(camera_dovdd_en, "camera_dovdd_en");
@@ -177,6 +202,7 @@ int blade_power_pins(void)
 			}
 			ret = gpio_direction_output(camera_avdd_en, 0);
 		}
+		
 		if (camera_dvdd_en < 0) {
 			camera_dvdd_en = CAMERA_DVDD_EN;
 			ret = gpio_request(camera_dvdd_en, "camera_dvdd_en");
@@ -190,6 +216,7 @@ int blade_power_pins(void)
 
 	return ret;
 }
+*/
 int ov9760_power_pins(void)
 {
 	int ret;
@@ -197,6 +224,7 @@ int ov9760_power_pins(void)
 	if (IS_BYT) {
 		//blade_power_pins();
 
+		/*
 		if (camera_avdd_en < 0) {
 			camera_avdd_en = CAMERA_AVDD_EN;
 			ret = gpio_request(camera_avdd_en, "camera_avdd_en");
@@ -219,6 +247,7 @@ int ov9760_power_pins(void)
 			}
 			ret = gpio_direction_output(camera_dvdd_en, 0);
 		}
+		*/
 		
 		if (camera_power_down < 0) {
 			camera_power_down = CAMERA_1_PWDN;
@@ -230,8 +259,7 @@ int ov9760_power_pins(void)
 			ret = gpio_direction_output(camera_power_down, 1);
 		}
 	}
-	OV9760_PLAT_LOG("%s %d camera_power_down:%d camera_dovdd_en:%d camera_avdd_en:%d camera_dvdd_en:%d\n", __func__, __LINE__,
-		camera_power_down, camera_dovdd_en, camera_avdd_en, camera_dvdd_en);
+	
 
 	return 0;
 }
@@ -241,6 +269,7 @@ static int ov9760_power_pins_free(void)
 {
 	int ret = -1;
 	if(IS_BYT){
+		/*
 	if (camera_avdd_en >= 0) {
 			gpio_free(camera_avdd_en);
 			camera_avdd_en = -1;
@@ -251,7 +280,7 @@ static int ov9760_power_pins_free(void)
 			gpio_free(camera_dvdd_en);
 			camera_dvdd_en = -1;
 			printk("free camera  gpio %s  %d ",__FUNCTION__,__LINE__);
-		}
+		}*/
 
 	
 	if (camera_power_down >= 0) {
@@ -286,13 +315,13 @@ static int ov9760_power_ctrl(struct v4l2_subdev *sd, int flag)
 		if (!camera_vprog1_on) {
 #ifdef CONFIG_CRYSTAL_COVE
 			/* AVDD on First */
-			value = intel_mid_pmic_readb(VPROG_3P3V);
+			/*value = intel_mid_pmic_readb(VPROG_3P3V);
 			value = value | VPROG_ENABLE;
 			OV9760_PLAT_LOG("try to enable VPROG_3P3V: value=0x%x\n", value);
-			ret = intel_mid_pmic_writeb(VPROG_3P3V, value);
-			gpio_set_value(camera_avdd_en, 1);
+			ret = intel_mid_pmic_writeb(VPROG_3P3V, value);*/
+			//gpio_set_value(camera_avdd_en, 1);
 
-			usleep_range(2000, 2100);
+			//usleep_range(2000, 2100);
 			/* DOVDD and DVDD On*/
 			OV9760_PLAT_LOG("try to enable VPROG_1P8V\n");
 			ret = intel_mid_pmic_writeb(VPROG_1P8V, VPROG_ENABLE);
@@ -301,15 +330,15 @@ static int ov9760_power_ctrl(struct v4l2_subdev *sd, int flag)
 				goto fail_1p8v;
 			}
 			usleep_range(2000, 2100);
-			gpio_set_value(camera_dvdd_en, 1);
+			//gpio_set_value(camera_dvdd_en, 1);
 			
-			if (ret)
-				return ret;
+			//if (ret)
+				//return ret;
 			/* VCM 2P8 power on*/
-			OV9760_PLAT_LOG("try to enable VPROG_2P8V\n");
-			ret = intel_mid_pmic_writeb(VPROG_2P8V, VPROG_ENABLE);
-			if (ret)
-				goto fail_1p8v;
+			//OV9760_PLAT_LOG("try to enable VPROG_2P8V\n");
+			//ret = intel_mid_pmic_writeb(VPROG_2P8V, VPROG_ENABLE);
+			//if (ret)
+				//goto fail_1p8v;
 			/* power up sequence control via GPIO*/
 
 			gpio_set_value(camera_power_down, 0);
@@ -331,8 +360,8 @@ static int ov9760_power_ctrl(struct v4l2_subdev *sd, int flag)
 		if (camera_vprog1_on) {
 #ifdef CONFIG_CRYSTAL_COVE
 			/* power down sequence control via GPIO*/
-			gpio_set_value(camera_dvdd_en, 0);
-			gpio_set_value(camera_avdd_en, 0);
+			//gpio_set_value(camera_dvdd_en, 0);
+			//gpio_set_value(camera_avdd_en, 0);
 			gpio_set_value(camera_power_down, 1);
 			ret = intel_mid_pmic_writeb(VPROG_1P8V, VPROG_DISABLE);//active here to fix the current leak
 			/* power down power rail*/

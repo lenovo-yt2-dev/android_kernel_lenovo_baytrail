@@ -1011,7 +1011,7 @@ void intel_lvds_init(struct drm_device *dev)
 						intel_connector->panel.
 						downclock_mode->clock;
 					DRM_DEBUG_KMS("LVDS downclk found (%d)KHz, normal %dKhz\n",
-					fixed_mode->clock, dev_priv->lvds_downclock);
+						fixed_mode->clock, dev_priv->lvds_downclock);
 				}
 				goto out;
 			}

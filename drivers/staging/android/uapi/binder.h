@@ -20,51 +20,11 @@
 #ifndef _UAPI_LINUX_BINDER_H
 #define _UAPI_LINUX_BINDER_H
 
-#ifdef CONFIG_COMPAT
-#include <linux/compat.h>
-#endif
-
 #include <linux/ioctl.h>
 
 #define B_PACK_CHARS(c1, c2, c3, c4) \
 	((((c1)<<24)) | (((c2)<<16)) | (((c3)<<8)) | (c4))
 #define B_TYPE_LARGE 0x85
-
-#ifndef CONFIG_ANDROID_BINDER_IPC_COMPAT_32
-/*
- * Define strong types (and sizes) for the user-space structure elements.
- */
-typedef signed long    binder_long;
-typedef unsigned long  binder_ulong;
-typedef size_t         binder_size_t;
-typedef void           *binder_ptr;
-typedef const void     *binder_const_ptr;
-#else /* CONFIG_ANDROID_BINDER_IPC_COMPAT_32 */
-/*
- * compatibility definitions for running a 32-bit user-space
- * process with a 64-bit kernel. Does not work with 64-bit processes.
- */
-typedef signed int     binder_long;
-typedef unsigned int   binder_ulong;
-typedef unsigned int   binder_size_t;
-typedef unsigned int   binder_ptr;
-typedef unsigned int   binder_const_ptr;
-#endif /* CONFIG_ANDROID_BINDER_IPC_COMPAT_32 */
-
-/*
- * These defines are used to provide casting when converting from the
- * associated types (mostly) for printing. This allows us to eliminate
- * ifdefs as well as type conversion warnings.
- * If you use these for anything other than printk's... be certain that
- * you are doing the right thing.
- */
-#define BINDER_LONG    (signed long)
-#define BINDER_ULONG   (unsigned long)
-#define BINDER_SIZE_T  (size_t)
-#define BINDER_PTR     (void *)(unsigned long)
-#define BINDER_CONST_PTR (const void *)(unsigned long)
-#define UADDR_TO_BINDER_PTR(UADDR)  \
-       ((binder_ptr)(binder_ulong)(unsigned long)(UADDR))
 
 enum {
 	BINDER_TYPE_BINDER	= B_PACK_CHARS('s', 'b', '*', B_TYPE_LARGE),
@@ -79,6 +39,14 @@ enum {
 	FLAT_BINDER_FLAG_ACCEPTS_FDS = 0x100,
 };
 
+#ifdef BINDER_IPC_32BIT
+typedef __u32 binder_size_t;
+typedef __u32 binder_uintptr_t;
+#else
+typedef __u64 binder_size_t;
+typedef __u64 binder_uintptr_t;
+#endif
+
 /*
  * This is the flattened representation of a Binder object for transfer
  * between processes.  The 'offsets' supplied as part of a binder transaction
@@ -88,17 +56,17 @@ enum {
  */
 struct flat_binder_object {
 	/* 8 bytes for large_flat_header. */
-	binder_ulong		type;
-	binder_ulong		flags;
+	__u32	type;
+	__u32	flags;
 
 	/* 8 bytes of data. */
 	union {
-		binder_ptr	binder;	/* local object */
-		binder_long	handle;		/* remote object */
+		binder_uintptr_t	binder;	/* local object */
+		__u32			handle;	/* remote object */
 	};
 
 	/* extra data associated with local object */
-	binder_ptr		cookie;
+	binder_uintptr_t	cookie;
 };
 
 /*
@@ -107,29 +75,33 @@ struct flat_binder_object {
  */
 
 struct binder_write_read {
-	binder_long	write_size;	/* bytes to write */
-	binder_long	write_consumed;	/* bytes consumed by driver */
-	binder_ulong	write_buffer;
-	binder_long	read_size;	/* bytes to read */
-	binder_long	read_consumed;	/* bytes consumed by driver */
-	binder_ulong	read_buffer;
+	binder_size_t		write_size;	/* bytes to write */
+	binder_size_t		write_consumed;	/* bytes consumed by driver */
+	binder_uintptr_t	write_buffer;
+	binder_size_t		read_size;	/* bytes to read */
+	binder_size_t		read_consumed;	/* bytes consumed by driver */
+	binder_uintptr_t	read_buffer;
 };
 
 /* Use with BINDER_VERSION, driver fills in fields. */
 struct binder_version {
 	/* driver protocol version -- increment with incompatible change */
-	binder_long	protocol_version;
+	__s32	protocol_version;
 };
 
 /* This is the current protocol version. */
+#ifdef BINDER_IPC_32BIT
 #define BINDER_CURRENT_PROTOCOL_VERSION 7
+#else
+#define BINDER_CURRENT_PROTOCOL_VERSION 8
+#endif
 
 #define BINDER_WRITE_READ		_IOWR('b', 1, struct binder_write_read)
 #define	BINDER_SET_IDLE_TIMEOUT		_IOW('b', 3, __s64)
-#define        BINDER_SET_MAX_THREADS          _IOW('b', 5, binder_size_t)
-#define        BINDER_SET_IDLE_PRIORITY        _IOW('b', 6, binder_long)
-#define        BINDER_SET_CONTEXT_MGR          _IOW('b', 7, binder_long)
-#define        BINDER_THREAD_EXIT              _IOW('b', 8, binder_long)
+#define	BINDER_SET_MAX_THREADS		_IOW('b', 5, __u32)
+#define	BINDER_SET_IDLE_PRIORITY	_IOW('b', 6, __s32)
+#define	BINDER_SET_CONTEXT_MGR		_IOW('b', 7, __s32)
+#define	BINDER_THREAD_EXIT		_IOW('b', 8, __s32)
 #define BINDER_VERSION			_IOWR('b', 9, struct binder_version)
 
 /*
@@ -159,18 +131,18 @@ struct binder_transaction_data {
 	 * identifying the target and contents of the transaction.
 	 */
 	union {
-		binder_size_t	handle;	/* target descriptor of command transaction */
-		binder_ptr ptr;	/* target descriptor of return transaction */
+		__u32	handle;	/* target descriptor of command transaction */
+		binder_uintptr_t ptr;	/* target descriptor of return transaction */
 	} target;
-	binder_ptr		cookie;	/* target object cookie */
-	unsigned int	code;		/* transaction command */
+	binder_uintptr_t	cookie;	/* target object cookie */
+	__u32		code;		/* transaction command */
 
 	/* General information about the transaction. */
-	unsigned int	flags;
+	__u32		flags;
 	pid_t		sender_pid;
 	uid_t		sender_euid;
-	binder_size_t		data_size;	/* number of bytes of data */
-	binder_size_t		offsets_size;	/* number of bytes of offsets */
+	binder_size_t	data_size;	/* number of bytes of data */
+	binder_size_t	offsets_size;	/* number of bytes of offsets */
 
 	/* If this transaction is inline, the data immediately
 	 * follows here; otherwise, it ends with a pointer to
@@ -179,32 +151,37 @@ struct binder_transaction_data {
 	union {
 		struct {
 			/* transaction data */
-			binder_const_ptr	buffer;
+			binder_uintptr_t	buffer;
 			/* offsets from buffer to flat_binder_object structs */
-			binder_const_ptr	offsets;
+			binder_uintptr_t	offsets;
 		} ptr;
-		uint8_t	buf[8];
+		__u8	buf[8];
 	} data;
 };
 
 struct binder_ptr_cookie {
-	binder_ptr ptr;
-	binder_ptr cookie;
+	binder_uintptr_t ptr;
+	binder_uintptr_t cookie;
 };
 
+struct binder_handle_cookie {
+	__u32 handle;
+	binder_uintptr_t cookie;
+} __attribute__((packed));
+
 struct binder_pri_desc {
-	int priority;
-	int desc;
+	__s32 priority;
+	__u32 desc;
 };
 
 struct binder_pri_ptr_cookie {
-	int priority;
-	binder_ptr ptr;
-	binder_ptr cookie;
+	__s32 priority;
+	binder_uintptr_t ptr;
+	binder_uintptr_t cookie;
 };
 
 enum binder_driver_return_protocol {
-	BR_ERROR = _IOR('r', 0, int),
+	BR_ERROR = _IOR('r', 0, __s32),
 	/*
 	 * int: error code
 	 */
@@ -218,7 +195,7 @@ enum binder_driver_return_protocol {
 	 * binder_transaction_data: the received command.
 	 */
 
-	BR_ACQUIRE_RESULT = _IOR('r', 4, int),
+	BR_ACQUIRE_RESULT = _IOR('r', 4, __s32),
 	/*
 	 * not currently supported
 	 * int: 0 if the last bcATTEMPT_ACQUIRE was not successful.
@@ -243,16 +220,16 @@ enum binder_driver_return_protocol {
 	BR_RELEASE = _IOR('r', 9, struct binder_ptr_cookie),
 	BR_DECREFS = _IOR('r', 10, struct binder_ptr_cookie),
 	/*
-	 * binder_ptr:	ptr to binder
-	 * binder_ptr: cookie for binder
+	 * void *:	ptr to binder
+	 * void *: cookie for binder
 	 */
 
 	BR_ATTEMPT_ACQUIRE = _IOR('r', 11, struct binder_pri_ptr_cookie),
 	/*
 	 * not currently supported
 	 * int:	priority
-	 * binder_ptr ptr to binder
-	 * binder_ptr: cookie for binder
+	 * void *: ptr to binder
+	 * void *: cookie for binder
 	 */
 
 	BR_NOOP = _IO('r', 12),
@@ -275,11 +252,11 @@ enum binder_driver_return_protocol {
 	 * stop threadpool thread
 	 */
 
-	BR_DEAD_BINDER = _IOR('r', 15, binder_ptr),
+	BR_DEAD_BINDER = _IOR('r', 15, binder_uintptr_t),
 	/*
 	 * void *: cookie
 	 */
-	BR_CLEAR_DEATH_NOTIFICATION_DONE = _IOR('r', 16, binder_ptr),
+	BR_CLEAR_DEATH_NOTIFICATION_DONE = _IOR('r', 16, binder_uintptr_t),
 	/*
 	 * void *: cookie
 	 */
@@ -298,22 +275,22 @@ enum binder_driver_command_protocol {
 	 * binder_transaction_data: the sent command.
 	 */
 
-	BC_ACQUIRE_RESULT = _IOW('c', 2, int),
+	BC_ACQUIRE_RESULT = _IOW('c', 2, __s32),
 	/*
 	 * not currently supported
 	 * int:  0 if the last BR_ATTEMPT_ACQUIRE was not successful.
 	 * Else you have acquired a primary reference on the object.
 	 */
 
-	BC_FREE_BUFFER = _IOW('c', 3, int),
+	BC_FREE_BUFFER = _IOW('c', 3, binder_uintptr_t),
 	/*
 	 * void *: ptr to transaction data received on a read
 	 */
 
-	BC_INCREFS = _IOW('c', 4, int),
-	BC_ACQUIRE = _IOW('c', 5, int),
-	BC_RELEASE = _IOW('c', 6, int),
-	BC_DECREFS = _IOW('c', 7, int),
+	BC_INCREFS = _IOW('c', 4, __u32),
+	BC_ACQUIRE = _IOW('c', 5, __u32),
+	BC_RELEASE = _IOW('c', 6, __u32),
+	BC_DECREFS = _IOW('c', 7, __u32),
 	/*
 	 * int:	descriptor
 	 */
@@ -348,19 +325,19 @@ enum binder_driver_command_protocol {
 	 * of looping threads it has available.
 	 */
 
-	BC_REQUEST_DEATH_NOTIFICATION = _IOW('c', 14, struct binder_ptr_cookie),
+	BC_REQUEST_DEATH_NOTIFICATION = _IOW('c', 14, struct binder_handle_cookie),
 	/*
-	 * void *: ptr to binder
+	 * int: handle
 	 * void *: cookie
 	 */
 
-	BC_CLEAR_DEATH_NOTIFICATION = _IOW('c', 15, struct binder_ptr_cookie),
+	BC_CLEAR_DEATH_NOTIFICATION = _IOW('c', 15, struct binder_handle_cookie),
 	/*
-	 * void *: ptr to binder
+	 * int: handle
 	 * void *: cookie
 	 */
 
-	BC_DEAD_BINDER_DONE = _IOW('c', 16, binder_ptr),
+	BC_DEAD_BINDER_DONE = _IOW('c', 16, binder_uintptr_t),
 	/*
 	 * void *: cookie
 	 */

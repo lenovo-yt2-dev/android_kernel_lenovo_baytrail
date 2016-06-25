@@ -206,3 +206,4 @@ static int synaptics_gpio_setup(int gpio, bool configure, int dir, int state)
 	return retval;
 }
 
+

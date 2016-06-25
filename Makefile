@@ -367,11 +367,9 @@ LINUXINCLUDE    := \
 		-Iinclude \
 		$(USERINCLUDE)
 
-KBUILD_CPPFLAGS := -D__KERNEL__ \
-                   $(ANDROID_WIFIONLY_FLAGS)
+KBUILD_CPPFLAGS := -D__KERNEL__
 
 KBUILD_CFLAGS   := $(ANDROID_TOOLCHAIN_FLAGS) \
-                   $(ANDROID_WIFIONLY_FLAGS) \
 		   -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common \
 		   -Werror-implicit-function-declaration \

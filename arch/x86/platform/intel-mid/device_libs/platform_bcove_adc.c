@@ -24,31 +24,35 @@
 /* SRAM address where the GPADC interrupt register is cached */
 #define GPADC_SRAM_INTR_ADDR	0xfffff615
 
+/* Order: Name, Control-bit, result-MSB, result-LSB,
+ *        alert-min-MSB, alert-min-LSB, alert-max-MSB, alert-max-LSB.
+ * 0xFF used for when any of these is NA.
+ */
 static struct gpadc_regmap_t basincove_gpadc_regmaps[BCOVE_GPADC_CH_NUM] = {
-	{"VBAT",        5, 0xE9, 0xEA, },
-	{"BATID",       4, 0xEB, 0xEC, },
-	{"IBAT",        5, 0xED, 0xEE, },
-	{"PMICTEMP",    3, 0xCC, 0xCD, },
-	{"BATTEMP0",    2, 0xC8, 0xC9, },
-	{"BATTEMP1",    2, 0xCA, 0xCB, },
-	{"SYSTEMP0",    3, 0xC2, 0xC3, },
-	{"SYSTEMP1",    3, 0xC4, 0xC5, },
-	{"SYSTEMP2",    3, 0xC6, 0xC7, },
+	{"VBAT",        5, 0xE9, 0xEA, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"BATID",       4, 0xEB, 0xEC, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"IBAT",        5, 0xED, 0xEE, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"PMICTEMP",    3, 0xCC, 0xCD, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"BATTEMP0",    2, 0xC8, 0xC9, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"BATTEMP1",    2, 0xCA, 0xCB, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"SYSTEMP0",    3, 0xC2, 0xC3, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"SYSTEMP1",    3, 0xC4, 0xC5, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"SYSTEMP2",    3, 0xC6, 0xC7, 0xFF, 0xFF, 0xFF, 0xFF},
 };
 
 static struct gpadc_regmap_t shadycove_gpadc_regmaps[SCOVE_GPADC_CH_NUM] = {
-	{"VBAT",        5, 0xE9, 0xEA, },
-	{"BATID",       4, 0xEC, 0xED, },
-	{"PMICTEMP",    3, 0xD5, 0xD6, },
-	{"BATTEMP0",    2, 0xD1, 0xD2, },
-	{"BATTEMP1",    2, 0xD3, 0xD4, },
-	{"SYSTEMP0",    3, 0xCB, 0xCC, },
-	{"SYSTEMP1",    3, 0xCD, 0xCE, },
-	{"SYSTEMP2",    3, 0xCF, 0xD0, },
-	{"USBID",       1, 0xEE, 0xEF, },
-	{"PEAK",        7, 0xF7, 0xF8, },
-	{"AGND",	6, 0xF0, 0xF1, },
-	{"VREF",	6, 0xF0, 0xF1, },
+	{"VBAT",        5, 0xE9, 0xEA, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"BATID",       4, 0xEC, 0xED, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"PMICTEMP",    3, 0xD5, 0xD6, 0xC7, 0xC8, 0xC7, 0xC8},
+	{"BATTEMP0",    2, 0xD1, 0xD2, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"BATTEMP1",    2, 0xD3, 0xD4, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"SYSTEMP0",    3, 0xCB, 0xCC, 0xB7, 0xB8, 0xB9, 0xBA},
+	{"SYSTEMP1",    3, 0xCD, 0xCE, 0xBB, 0xBC, 0xBD, 0xBE},
+	{"SYSTEMP2",    3, 0xCF, 0xD0, 0xBF, 0xC0, 0xC1, 0xC2},
+	{"USBID",       1, 0xEE, 0xEF, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"PEAK",        7, 0xF7, 0xF8, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"AGND",	6, 0xF0, 0xF1, 0xFF, 0xFF, 0xFF, 0xFF},
+	{"VREF",	6, 0xF0, 0xF1, 0xFF, 0xFF, 0xFF, 0xFF},
 };
 
 static struct gpadc_regs_t basincove_gpadc_regs = {
@@ -96,6 +100,10 @@ struct iio_map basincove_iio_maps[] = {
 	MSIC_ADC_MAP("CH7", "bcove_thrm", "SYSTEMP1"),
 	MSIC_ADC_MAP("CH8", "bcove_thrm", "SYSTEMP2"),
 	MSIC_ADC_MAP("CH3", "bcove_thrm", "PMICTEMP"),
+	MSIC_ADC_MAP("CH6", "THERMAL", "SYSTEMP0"),
+	MSIC_ADC_MAP("CH7", "THERMAL", "SYSTEMP1"),
+	MSIC_ADC_MAP("CH8", "THERMAL", "SYSTEMP2"),
+	MSIC_ADC_MAP("CH3", "THERMAL", "PMICTEMP"),
 	{ },
 };
 
@@ -116,6 +124,10 @@ struct iio_map shadycove_iio_maps[] = {
 	MSIC_ADC_MAP("CH6", "scove_thrm", "SYSTEMP1"),
 	MSIC_ADC_MAP("CH7", "scove_thrm", "SYSTEMP2"),
 	MSIC_ADC_MAP("CH2", "scove_thrm", "PMICTEMP"),
+	MSIC_ADC_MAP("CH5", "THERMAL", "SYSTEMP0"),
+	MSIC_ADC_MAP("CH6", "THERMAL", "SYSTEMP1"),
+	MSIC_ADC_MAP("CH7", "THERMAL", "SYSTEMP2"),
+	MSIC_ADC_MAP("CH2", "THERMAL", "PMICTEMP"),
 	{ },
 };
 
@@ -203,8 +215,10 @@ void __init *bcove_adc_platform_data(void *info)
 
 	install_irq_resource(pdev, entry->irq);
 
+#ifndef CONFIG_ACPI
 	register_rpmsg_service("rpmsg_bcove_adc", RPROC_SCU,
 				RP_BCOVE_ADC);
+#endif
 out:
 	return &bcove_adc_pdata;
 }

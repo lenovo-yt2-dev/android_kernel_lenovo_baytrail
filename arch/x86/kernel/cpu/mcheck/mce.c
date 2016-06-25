@@ -42,6 +42,8 @@
 #include <linux/irq_work.h>
 #include <linux/export.h>
 
+#include <linux/kct.h>
+
 #include <asm/processor.h>
 #include <asm/mce.h>
 #include <asm/msr.h>
@@ -83,6 +85,7 @@ struct mca_config mca_cfg __read_mostly = {
 static unsigned long		mce_need_notify;
 static char			mce_helper[128];
 static char			*mce_helper_argv[2] = { mce_helper, NULL };
+static int			mcelog_kct_last_entry = -1;
 
 static DECLARE_WAIT_QUEUE_HEAD(mce_chrdev_wait);
 
@@ -215,6 +218,7 @@ static void drain_mcelog_buffer(void)
 		}
 
 		memset(mcelog.entry + prev, 0, (next - prev) * sizeof(*m));
+		mcelog_kct_last_entry = -1;
 		prev = next;
 		next = cmpxchg(&mcelog.next, prev, 0);
 	} while (next != prev);
@@ -1351,8 +1355,83 @@ int mce_notify_irq(void)
 		if (mce_helper[0])
 			schedule_work(&mce_trigger_work);
 
-		if (__ratelimit(&ratelimit))
-			pr_info(HW_ERR "Machine check events logged\n");
+		if (!__ratelimit(&ratelimit))
+			return 1;
+
+		int previous_entry = mcelog_kct_last_entry;
+		mcelog_kct_last_entry = 0;
+		unsigned int entry =
+		    rcu_dereference_check_mce(mcelog.next);
+
+		/* check for overflow condition. */
+		if (entry >= MCE_LOG_LEN) {
+			/* we should never be under this case */
+			kct_log(CT_EV_INFO, "MCE", "Overflow", 0,
+				"Overflow Event");
+
+			/* check if there were still events in the buffer that  */
+			/* were not previously sent                             */
+			if (previous_entry >= MCE_LOG_LEN - 1) {
+				pr_info(HW_ERR
+					"Machine check events logged\n");
+				return 1;
+			}
+			entry = MCE_LOG_LEN - 1;
+		}
+
+		while (previous_entry < entry) {
+
+			if (!mcelog.entry[++previous_entry].finished)
+				continue;
+
+			const int DATA_MAX_LEN = 128;
+			char data0[DATA_MAX_LEN];
+			char data1[DATA_MAX_LEN];
+			char data2[DATA_MAX_LEN];
+			char data3[DATA_MAX_LEN];
+			char data4[DATA_MAX_LEN];
+
+			snprintf(data0, DATA_MAX_LEN,
+				 "status: 0x%llx, misc: 0x%llx, addr: 0x%llx, mcgstatus: 0x%llx",
+				 mcelog.entry[previous_entry].status,
+				 mcelog.entry[previous_entry].misc,
+				 mcelog.entry[previous_entry].addr,
+				 mcelog.entry[previous_entry].mcgstatus);
+
+			snprintf(data1, DATA_MAX_LEN,
+				 "ip: 0x%llx, tsc: %llu, time: %llu, cpuvendor: 0x%hx",
+				 mcelog.entry[previous_entry].ip,
+				 mcelog.entry[previous_entry].tsc,
+				 mcelog.entry[previous_entry].time,
+				 mcelog.entry[previous_entry].cpuvendor);
+
+			snprintf(data2, DATA_MAX_LEN,
+				 "inject_flags: 0x%hx, pad: %d, cpuid: %4u, cs: %hu",
+				 mcelog.entry[previous_entry].inject_flags,
+				 mcelog.entry[previous_entry].pad,
+				 mcelog.entry[previous_entry].cpuid,
+				 mcelog.entry[previous_entry].cs);
+
+			snprintf(data3, DATA_MAX_LEN,
+				 "bank: %hu, cpu: %hu, finished: %hu, extcpu: %4u",
+				 mcelog.entry[previous_entry].bank,
+				 mcelog.entry[previous_entry].cpu,
+				 mcelog.entry[previous_entry].finished,
+				 mcelog.entry[previous_entry].extcpu);
+
+			snprintf(data4, DATA_MAX_LEN,
+				 "socketid: 0x%4x, apicid: 0x%4x, mcgcap: Ox%llx",
+				 mcelog.entry[previous_entry].socketid,
+				 mcelog.entry[previous_entry].apicid,
+				 mcelog.entry[previous_entry].mcgcap);
+
+			kct_log(CT_EV_INFO, "MCE", "Interrupt",
+				0, data0, data1, data2, data3, data4);
+		}
+
+		mcelog_kct_last_entry = (!mcelog_kct_last_entry) ?
+			previous_entry : -1;
+		pr_info(HW_ERR "Machine check events logged\n");
 
 		return 1;
 	}
@@ -1826,6 +1905,7 @@ timeout:
 
 		memset(mcelog.entry + prev, 0,
 		       (next - prev) * sizeof(struct mce));
+		mcelog_kct_last_entry = -1;
 		prev = next;
 		next = cmpxchg(&mcelog.next, prev, 0);
 	} while (next != prev);

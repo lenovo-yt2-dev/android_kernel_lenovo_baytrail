@@ -43,8 +43,12 @@
 #include "linux/mfd/intel_mid_pmic.h"
 #include "intel_dsi.h"
 #include "intel_dsi_cmd.h"
-extern struct drm_device *gdev;
+#include <linux/pwm.h>
+#include <linux/gpio.h>
 
+extern struct drm_device *gdev;//lm for reference the gdev
+
+static u32 spark_cabc_dpst_switch_enable=0;
 #define DRM_I915_RING_DEBUG 1
 
 #if defined(CONFIG_DEBUG_FS)
@@ -113,9 +117,15 @@ ssize_t i915_gamma_adjust_write(struct file *filp,
 		  loff_t *ppos)
 {
 	int ret = 0;
+	int	pipe;
+	int crtc_id = -1;
 	int bytes_count;
+	int bytes_read;
 	char *buf = NULL;
 	char *temp_buf = NULL;
+	struct drm_device *dev = filp->private_data;
+	struct drm_crtc *crtc = NULL;
+	struct drm_mode_object *obj;
 
 	/* Validate input */
 	if (!count) {
@@ -133,37 +143,58 @@ ssize_t i915_gamma_adjust_write(struct file *filp,
 	if (copy_from_user(buf, ubuf, count)) {
 		DRM_ERROR("Gamma adjust: copy failed\n");
 		ret = -EINVAL;
-		goto EXIT;
+		goto exit;
 	}
-
+	bytes_read = 0;
 	bytes_count = count;
-	/* Parse data and load the gamma  table */
-	ret = parse_clrmgr_input(gamma_softlut, buf,
-		GAMMA_CORRECT_MAX_COUNT, &bytes_count);
-	if (ret < GAMMA_CORRECT_MAX_COUNT) {
-		DRM_ERROR("Gamma table loading failed\n");
-		goto EXIT;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
+		/* Parse data and read the crtc_id */
+		ret = parse_clrmgr_input(&crtc_id, temp_buf,
+			CRTC_ID_TOKEN_COUNT, &bytes_count);
+		if (ret < CRTC_ID_TOKEN_COUNT) {
+			DRM_ERROR("CRTC_ID loading failed\n");
+			goto exit;
+		} else
+			DRM_DEBUG("CRTC_ID loading done\n");
 	}
-	else
-		DRM_DEBUG("Gamma table loading done\n");
 
-	if (bytes_count < count) {
-		temp_buf = buf + bytes_count;
+	obj = drm_mode_object_find(dev, crtc_id, DRM_MODE_OBJECT_CRTC);
+	if (!obj) {
+		DRM_DEBUG_KMS("Unknown CRTC ID %d\n", crtc_id);
+		return -EINVAL;
+	}
+	crtc = obj_to_crtc(obj);
+	DRM_DEBUG_KMS("[CRTC:%d]\n", crtc->base.id);
 
-		/*Number of bytes remaining */
-		bytes_count = count - bytes_count;
+	pipe = to_intel_crtc(crtc)->pipe;
+	bytes_read += bytes_count;
+	bytes_count = count - bytes_read;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
+		/* Parse data and load the gamma  table */
+		ret = parse_clrmgr_input(gamma_softlut[pipe], temp_buf,
+			GAMMA_CORRECT_MAX_COUNT, &bytes_count);
+		if (ret < GAMMA_CORRECT_MAX_COUNT) {
+			DRM_ERROR("Gamma table loading failed\n");
+			goto exit;
+		} else
+			DRM_DEBUG("Gamma table loading done\n");
+	}
+	bytes_read += bytes_count;
+	bytes_count = count - bytes_read;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
 
 		/* Parse data and load the gcmax table */
-		ret = parse_clrmgr_input(gcmax_softlut, temp_buf,
+		ret = parse_clrmgr_input(gcmax_softlut[pipe], temp_buf,
 				GC_MAX_COUNT, &bytes_count);
-
 		if (ret < GC_MAX_COUNT)
 			DRM_ERROR("GCMAX table loading failed\n");
 		else
 			DRM_DEBUG("GCMAX table loading done\n");
 	}
-
-EXIT:
+exit:
 	kfree(buf);
 	if (ret < 0)
 		return ret;
@@ -177,27 +208,31 @@ ssize_t i915_gamma_enable_read(struct file *filp,
 		 loff_t *ppos)
 {
 	int len = 0;
-	char buf[10] = {0,};
+	char buf[40] = {0,};
 	struct drm_device *dev = filp->private_data;
 	drm_i915_private_t *dev_priv = dev->dev_private;
 
-	len = scnprintf(buf, sizeof(buf), "%s\n",
-		dev_priv->gamma_enabled ? "Enabled" : "Disabled");
+	len = scnprintf(buf, sizeof(buf), "%s\n%s\n",
+		dev_priv->gamma_enabled[0] ? "Pipe 0: Enabled" : "Pipe 0: Disabled",
+		dev_priv->gamma_enabled[1] ? "Pipe 1: Enabled" : "Pipe 1: Disabled");
+
 	return simple_read_from_buffer(ubuf, max, ppos,
 		(const void *) buf, len);
 }
-
 ssize_t i915_gamma_enable_write(struct file *filp,
 		  const char __user *ubuf,
 		  size_t count,
 		  loff_t *ppos)
 {
 	int ret = 0;
-	unsigned long status = 0;
+	int	bytes_read;
+	int bytes_count;
+	int crtc_id = -1;
+	int req_state = 0;
 	struct drm_crtc *crtc = NULL;
 	struct drm_device *dev = filp->private_data;
-	drm_i915_private_t *dev_priv = dev->dev_private;
-	char *buf = NULL;
+	char *buf = NULL, *temp_buf = NULL;
+	struct drm_mode_object *obj;
 
 	/* Validate input */
 	if (!count) {
@@ -215,47 +250,59 @@ ssize_t i915_gamma_enable_write(struct file *filp,
 	if (copy_from_user(buf, ubuf, count)) {
 		DRM_ERROR("Gamma adjust: copy failed\n");
 		ret = -EINVAL;
-		goto EXIT;
+		goto exit;
+	}
+	bytes_read = 0;
+	bytes_count = count;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
+		/* Parse data and load the crtc_id */
+		ret = parse_clrmgr_input(&crtc_id, temp_buf,
+			CRTC_ID_TOKEN_COUNT, &bytes_count);
+		if (ret < CRTC_ID_TOKEN_COUNT) {
+			DRM_ERROR("CRTC_ID loading failed\n");
+			goto exit;
+		} else
+			DRM_DEBUG("CRTC_ID loading done\n");
 	}
 
-	/* Finally, get the status */
-	if (kstrtoul((const char *)buf, 10,
-		&status)) {
-		DRM_ERROR("Gamma enable: Invalid limit\n");
-		ret = -EINVAL;
-		goto EXIT;
+	obj = drm_mode_object_find(dev, crtc_id, DRM_MODE_OBJECT_CRTC);
+	if (!obj) {
+		DRM_DEBUG_KMS("Unknown CRTC ID %d\n", crtc_id);
+		return -EINVAL;
 	}
-	dev_priv->gamma_enabled = status;
+	crtc = obj_to_crtc(obj);
+	DRM_DEBUG_KMS("[CRTC:%d]\n", crtc->base.id);
 
-	/* Search for a CRTC,
-	Assumption: Either MIPI or EDP is fix panel */
-	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
-		if (intel_pipe_has_type(crtc, dev_priv->is_mipi ?
-			INTEL_OUTPUT_DSI : INTEL_OUTPUT_EDP))
-			break;
-	}
-
-	/* No CRTC */
-	if (!crtc) {
-		DRM_ERROR("Gamma adjust: No local panel found\n");
-		ret = -EINVAL;
-		goto EXIT;
+	bytes_read += bytes_count;
+	bytes_count = count - bytes_read;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
+		/* Parse data and load the gamma  table */
+		ret = parse_clrmgr_input(&req_state, temp_buf,
+			ENABLE_TOKEN_MAX_COUNT, &bytes_count);
+		if (ret < ENABLE_TOKEN_MAX_COUNT) {
+			DRM_ERROR("Enable-token loading failed\n");
+			goto exit;
+		} else
+			DRM_DEBUG("Enable-token loading done\n");
 	}
 
 	/* if gamma enabled, apply gamma correction on PIPE */
-	if (dev_priv->gamma_enabled) {
-		if (intel_crtc_enable_gamma(crtc, PIPEA)) {
+	if (req_state) {
+		if (intel_crtc_enable_gamma(crtc,
+				to_intel_crtc(crtc)->pipe ? PIPEB : PIPEA)) {
 			DRM_ERROR("Apply gamma correction failed\n");
 			ret = -EINVAL;
 		} else
 			ret = count;
 	} else {
 		/* Disable gamma on this plane */
-		intel_crtc_disable_gamma(crtc, PIPEA);
+		intel_crtc_disable_gamma(crtc,
+			to_intel_crtc(crtc)->pipe ? PIPEB : PIPEA);
 		ret = count;
 	}
-
-EXIT:
+exit:
 	kfree(buf);
 	return ret;
 }
@@ -273,145 +320,6 @@ const struct file_operations i915_gamma_enable_fops = {
 	.open = simple_open,
 	.read = i915_gamma_enable_read,
 	.write = i915_gamma_enable_write,
-	.llseek = default_llseek,
-};
-
-ssize_t i915_display_register_read(struct file *filp,
-		 char __user *ubuf,
-		 size_t max,
-		 loff_t *ppos)
-{
-	int len = 0;
-	char buf[] = "====>Version 0.4.<====\n"
-					"CMD format: [r/a] [reg_addr] [num/end_addr]\n"
-					"Display register list:\n"
-					"\t0x30000 to 0x3FFFF\tOverlay Registers (not in VLV2)\n"
-					"\t0x05000 to 0x05FFF\tGMBUS and I/O Control\n"
-					"\t0x06000 to 0x06FFF\tDisplay Clocks and Clock Gating\n"
-					"\t0x0A000 to 0x0AFFF\tDisplay Palette A/B Registers\n"
-					"\t0x60000 to 0x600FF\tDisplay Pipeline A\n"
-					"\t0x61000 to 0x610FF\tDisplay Pipeline B\n"
-					"\t0x61100 to 0x611FF\tDisplay Port Control Registers\n"
-					"\t0x61200 to 0x612FF\tPanel Fitting/Power Sequencing/LVDS Control\n"
-					"\t0x62000 to 0x62FFF\tHD Audio Control\n"
-					"\t0x64000 to 0x64FFF\tDisplayPort Registers\n"
-					"\t0x65000 to 0x65FFF\tLPE Audio Registers\n"
-					"\t0x70000 to 0x7FFFF\tDisplay Pipeline, Display Planes, Cursor Planes, and VGA Control Registers\n";
-
-	len = sizeof(buf);
-	return simple_read_from_buffer(ubuf, max, ppos,
-		(const void *) buf, len);
-}
-
-/*
-* use to read display register.
-*/
-ssize_t i915_display_register_write(struct file *filp,
-		  const char __user *ubuf,
-		  size_t count,
-		  loff_t *ppos)
-{
-	int ret = 0;
-	struct drm_device *dev = filp->private_data;
-	drm_i915_private_t *dev_priv = dev->dev_private;
-	char *buf = NULL;
-	char op = '0';
-	int  reg = 0, num = 0, start = 0, end = 0;
-	unsigned int  val = 0, reg_val = 0;
-
-	/* Validate input */
-	if (!count) {
-		DRM_ERROR("Display register: insufficient data\n");
-		return -EINVAL;
-	}
-
-	buf = kzalloc((count + 1), GFP_KERNEL);
-	if (!buf) {
-		DRM_ERROR("Display register: Out of mem\n");
-		ret = -ENOMEM;
-		goto EXIT;
-	}
-
-	/* Get the data */
-	if (copy_from_user(buf, ubuf, count)) {
-		DRM_ERROR("Display register: copy failed\n");
-		ret = -EINVAL;
-		goto EXIT;
-	}
-	buf[count] = '\0';
-
-	sscanf(buf, "%c%x%x", &op, &reg, &val);
-
-	if (op != 'r' && op != 'a') {
-		DRM_ERROR("The input format is not right!\n");
-		DRM_ERROR("[r/a] [reg_addr] [num/end_addr]\n");
-		DRM_ERROR("for exampe: r 70184		(read register 70184.)\n");
-		DRM_ERROR("for exmape: a 60000 60010(read all registers start at 60000 and end at 60010.\n)");
-		ret = -EINVAL;
-		goto EXIT;
-	}
-
-	if ((reg % 0x4) != 0) {
-		DRM_ERROR("the register address should aligned to 4 byte.please refrence display controller specification.\n");
-		ret = -EINVAL;
-		goto EXIT;
-	}
-
-	if (op == 'r') {
-		do {
-			reg_val = I915_READ(dev_priv->info->display_mmio_offset + reg);
-			DRM_INFO("Read: reg=0x%08x , \tval=0x%08x .\n", reg, reg_val);
-			num++;
-			reg += 4;
-		} while (num < val);
-	}
-	if (op == 'a') {
-		start = reg;
-		end = val;
-		if (start >= end) {
-			DRM_ERROR("The end address is smaller than the start address.\n");
-			ret = -EINVAL;
-			goto EXIT;
-		}
-		reg += dev_priv->info->display_mmio_offset;
-		DRM_INFO("START ADDR: 0x%08x, END ADDR: 0x%08x.\n", start, end);
-		num = (end - start)/16;
-		while (num > 0) {
-			DRM_INFO("0x%08x: 0x%08x 0x%08x 0x%08x 0x%08x\n",
-				(reg - dev_priv->info->display_mmio_offset), I915_READ(reg), I915_READ(reg + 0x4), I915_READ(reg + 0x8), I915_READ(reg + 0xc));
-			reg += 0x10;
-			num--;
-		}
-		num = (end - start)%16;
-		if (num >= 0xc) {
-			DRM_INFO("0x%08x: 0x%08x 0x%08x 0x%08x 0x%08x\n",
-				(reg - dev_priv->info->display_mmio_offset), I915_READ(reg), I915_READ(reg + 0x4), I915_READ(reg + 0x8), I915_READ(reg + 0xc));
-		} else if (num >= 0x8) {
-			DRM_INFO("0x%08x: 0x%08x 0x%08x 0x%08x\n",
-				(reg - dev_priv->info->display_mmio_offset), I915_READ(reg), I915_READ(reg + 0x4), I915_READ(reg + 0x8));
-		} else if (num >= 0x4) {
-			DRM_INFO("0x%08x: 0x%08x 0x%08x\n",
-				(reg - dev_priv->info->display_mmio_offset), I915_READ(reg), I915_READ(reg + 0x4));
-		} else if (num > 0) {
-			DRM_INFO("0x%08x: 0x%08x\n",
-				(reg - dev_priv->info->display_mmio_offset), I915_READ(reg));
-		}
-	}
-
-	ret = count;
-
-EXIT:
-	if (buf)
-		kfree(buf);
-
-	return ret;
-}
-
-const struct file_operations i915_display_register_fops = {
-	.owner = THIS_MODULE,
-	.open = simple_open,
-	.read = i915_display_register_read,
-	.write = i915_display_register_write,
 	.llseek = default_llseek,
 };
 
@@ -460,14 +368,14 @@ ssize_t i915_cb_adjust_write(struct file *filp,
 	if (copy_from_user(buf, ubuf, count)) {
 		DRM_ERROR("Contrast Brightness: copy failed\n");
 		ret = -EINVAL;
-		goto EXIT;
+		goto exit;
 	}
 
 	/* Parse input data */
 	ret = parse_clrmgr_input((uint *)cb_ptr, buf, CB_MAX_COEFF_COUNT, &bytes_count);
 	if (ret < CB_MAX_COEFF_COUNT) {
 		DRM_ERROR("Contrast Brightness loading failed\n");
-		goto EXIT;
+		goto exit;
 	}
 	else
 		DRM_DEBUG("Contrast Brightness loading done\n");
@@ -475,7 +383,7 @@ ssize_t i915_cb_adjust_write(struct file *filp,
 	if (cb_ptr->sprite_no < SPRITEA || cb_ptr->sprite_no > SPRITED ||
 			cb_ptr->sprite_no == PLANEB) {
 		DRM_ERROR("Sprite value out of range. Enter 2,3, 5 or 6\n");
-		goto EXIT;
+		goto exit;
 	}
 
 	DRM_DEBUG("sprite = %d Val=0x%x,\n", cb_ptr->sprite_no, cb_ptr->val);
@@ -483,7 +391,7 @@ ssize_t i915_cb_adjust_write(struct file *filp,
 	if (intel_sprite_cb_adjust(dev_priv, cb_ptr))
 		DRM_ERROR("Contrast Brightness update failed\n");
 
-EXIT:
+exit:
 	kfree(cb_ptr);
 	kfree(buf);
 	if (ret < 0)
@@ -536,14 +444,14 @@ ssize_t i915_hs_adjust_write(struct file *filp,
 	if (copy_from_user(buf, ubuf, count)) {
 		DRM_ERROR("Hue Saturation: copy failed\n");
 		ret = -EINVAL;
-		goto EXIT;
+		goto exit;
 	}
 
 	/* Parse input data */
 	ret = parse_clrmgr_input((uint *)hs_ptr, buf, HS_MAX_COEFF_COUNT, &bytes_count);
 	if (ret < HS_MAX_COEFF_COUNT) {
 		DRM_ERROR("Hue Saturation loading failed\n");
-		goto EXIT;
+		goto exit;
 	}
 	else
 		DRM_DEBUG("Hue Saturation loading done\n");
@@ -552,7 +460,7 @@ ssize_t i915_hs_adjust_write(struct file *filp,
 			hs_ptr->sprite_no == PLANEB) {
 		DRM_ERROR("sprite = %d Val=0x%x,\n", hs_ptr->sprite_no,
 					hs_ptr->val);
-		goto EXIT;
+		goto exit;
 	}
 
 	DRM_DEBUG("sprite = %d Val=0x%x,\n", hs_ptr->sprite_no, hs_ptr->val);
@@ -560,7 +468,7 @@ ssize_t i915_hs_adjust_write(struct file *filp,
 	if (intel_sprite_hs_adjust(dev_priv, hs_ptr))
 		DRM_ERROR("Hue Saturation update failed\n");
 
-EXIT:
+exit:
 	kfree(hs_ptr);
 	kfree(buf);
 
@@ -585,9 +493,16 @@ ssize_t i915_csc_adjust_write(struct file *filp,
 		  size_t count,
 		  loff_t *ppos)
 {
+	int bytes_count;
+	int	bytes_read;
 	int ret = 0;
-	int bytes_count = count;
-	char *buf  = NULL;
+	int pipe;
+	int crtc_id = -1;
+	char *buf = NULL;
+	char *temp_buf = NULL;
+	struct drm_device *dev = filp->private_data;
+	struct drm_crtc *crtc = NULL;
+	struct drm_mode_object *obj;
 
 	/* Validate input */
 	if (!count) {
@@ -605,17 +520,44 @@ ssize_t i915_csc_adjust_write(struct file *filp,
 	if (copy_from_user(buf, ubuf, count)) {
 		DRM_ERROR("CSC adjust: copy failed\n");
 		ret = -EINVAL;
-		goto EXIT;
+		goto exit;
+	}
+	bytes_read = 0;
+	bytes_count = count;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
+		/* Parse data and load the crtc_id */
+		ret = parse_clrmgr_input(&crtc_id, temp_buf,
+			CRTC_ID_TOKEN_COUNT, &bytes_count);
+		if (ret < CRTC_ID_TOKEN_COUNT) {
+			DRM_ERROR("CONNECTOR_TYPE_TOKEN loading failed\n");
+			goto exit;
+		} else
+			DRM_DEBUG("CONNECTOR_TYPE_TOKEN loading done\n");
 	}
 
-	/* Parse data and load the csc  table */
-	ret = parse_clrmgr_input(csc_softlut, buf,
-		CSC_MAX_COEFF_COUNT, &bytes_count);
-	if (ret < CSC_MAX_COEFF_COUNT)
-		DRM_ERROR("CSC table loading failed\n");
-	else
-		DRM_DEBUG("CSC table loading done\n");
-EXIT:
+	obj = drm_mode_object_find(dev, crtc_id, DRM_MODE_OBJECT_CRTC);
+	if (!obj) {
+		DRM_DEBUG_KMS("Unknown CRTC ID %d\n", crtc_id);
+		return -EINVAL;
+	}
+	crtc = obj_to_crtc(obj);
+	DRM_DEBUG_KMS("[CRTC:%d]\n", crtc->base.id);
+
+	pipe = to_intel_crtc(crtc)->pipe;
+	bytes_read += bytes_count;
+	bytes_count = count - bytes_read;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
+		/* Parse data and load the csc  table */
+		ret = parse_clrmgr_input(csc_softlut[pipe], temp_buf,
+			CSC_MAX_COEFF_COUNT, &bytes_count);
+		if (ret < CSC_MAX_COEFF_COUNT)
+			DRM_ERROR("CSC table loading failed\n");
+		else
+			DRM_DEBUG("CSC table loading done\n");
+	}
+exit:
 	kfree(buf);
 	if (ret < 0)
 		return ret;
@@ -623,19 +565,19 @@ EXIT:
 	return count;
 }
 
-
 ssize_t i915_csc_enable_read(struct file *filp,
 		 char __user *ubuf,
 		 size_t max,
 		 loff_t *ppos)
 {
 	int len = 0;
-	char buf[10] = {0,};
+	char buf[40] = {0,};
 	struct drm_device *dev = filp->private_data;
 	drm_i915_private_t *dev_priv = dev->dev_private;
 
-	len = scnprintf(buf, sizeof(buf), "%s\n",
-		dev_priv->csc_enabled ? "Enabled" : "Disabled");
+	len = scnprintf(buf, sizeof(buf), "%s\n%s\n",
+		dev_priv->csc_enabled[0] ? "Pipe 0: Enabled" : "Pipe 0: Disabled",
+		dev_priv->csc_enabled[1] ? "Pipe 1: Enabled" : "Pipe 1: Disabled");
 	return simple_read_from_buffer(ubuf, max, ppos,
 		(const void *) buf, len);
 }
@@ -646,11 +588,16 @@ ssize_t i915_csc_enable_write(struct file *filp,
 		  loff_t *ppos)
 {
 	int ret = 0;
-	unsigned int status = 0;
+	int pipe;
+	int req_state = 0;
+	int bytes_read;
+	int bytes_count;
+	int crtc_id = -1;
 	char *buf = NULL;
+	char *temp_buf = NULL;
 	struct drm_crtc *crtc = NULL;
 	struct drm_device *dev = filp->private_data;
-	drm_i915_private_t *dev_priv = dev->dev_private;
+	struct drm_mode_object *obj;
 
 	/* Validate input */
 	if (!count) {
@@ -668,38 +615,50 @@ ssize_t i915_csc_enable_write(struct file *filp,
 	if (copy_from_user(buf, ubuf, count)) {
 		DRM_ERROR("CSC enable: copy failed\n");
 		ret = -EINVAL;
-		goto EXIT;
+		goto exit;
+	}
+	bytes_read = 0;
+	bytes_count = count;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
+		/* Parse data and load the crtc_id */
+		ret = parse_clrmgr_input(&crtc_id, temp_buf,
+			CRTC_ID_TOKEN_COUNT, &bytes_count);
+		if (ret < CRTC_ID_TOKEN_COUNT) {
+			DRM_ERROR("CRTC_ID_TOKEN loading failed\n");
+			goto exit;
+		} else
+			DRM_DEBUG("CRTC_ID_TOKEN loading done\n");
 	}
 
-	/* Finally, get the status */
-	if (kstrtouint((const char *)buf, 10,
-		&status)) {
-		DRM_ERROR("CSC enable: Invalid limit\n");
-		ret = -EINVAL;
-		goto EXIT;
+	obj = drm_mode_object_find(dev, crtc_id, DRM_MODE_OBJECT_CRTC);
+	if (!obj) {
+		DRM_DEBUG_KMS("Unknown CRTC ID %d\n", crtc_id);
+		return -EINVAL;
 	}
+	crtc = obj_to_crtc(obj);
+	DRM_DEBUG_KMS("[CRTC:%d]\n", crtc->base.id);
 
-	dev_priv->csc_enabled = status;
-
-	/* Search for a CRTC,
-	Assumption: Either MIPI or EDP is fix panel */
-	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
-		if (intel_pipe_has_type(crtc, dev_priv->is_mipi ?
-			INTEL_OUTPUT_DSI : INTEL_OUTPUT_EDP))
-			break;
+	pipe = to_intel_crtc(crtc)->pipe;
+	bytes_read += bytes_count;
+	bytes_count = count - bytes_read;
+	if (bytes_count > 0) {
+		temp_buf = buf + bytes_read;
+		/* Parse data and load the gamma  table */
+		ret = parse_clrmgr_input(&req_state, temp_buf,
+			ENABLE_TOKEN_MAX_COUNT, &bytes_count);
+		if (ret < ENABLE_TOKEN_MAX_COUNT) {
+			DRM_ERROR("Enable-token loading failed\n");
+			goto exit;
+		} else
+			DRM_DEBUG("Enable-token loading done\n");
 	}
-
-	/* No CRTC */
-	if (!crtc) {
-		DRM_ERROR("CSC enable: No local panel found\n");
-		ret = -EINVAL;
-		goto EXIT;
-	}
+	DRM_DEBUG_KMS("req_state:%d\n", req_state);
 
 	/* if CSC enabled, apply CSC correction */
-	if (dev_priv->csc_enabled) {
+	if (req_state) {
 		if (do_intel_enable_csc(dev,
-			(void *) csc_softlut, crtc)) {
+					(void *) csc_softlut[pipe], crtc)) {
 			DRM_ERROR("CSC correction failed\n");
 			ret = -EINVAL;
 		} else
@@ -710,7 +669,7 @@ ssize_t i915_csc_enable_write(struct file *filp,
 		ret = count;
 	}
 
-EXIT:
+exit:
 	kfree(buf);
 	return ret;
 }
@@ -2534,7 +2493,13 @@ i915_wedged_set(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(i915_wedged_fops,
 			i915_wedged_get, i915_wedged_set,
 			"%llu\n");
-/*wqf add for cabc and dpst switch start*/
+/*lm add for cabc and dpst switch start*/
+void cabc_dpst_switch_start(void)
+{
+	spark_cabc_dpst_switch_enable=1;
+	printk("lm %s\n",__func__);
+	
+}
 static int
 i915_cabc_enable_get(void *data, u64 *val)
 {
@@ -2554,36 +2519,42 @@ i915_cabc_enable_set(void *data, u64 val)
 	struct drm_device *dev = gdev;
     drm_i915_private_t *dev_priv  = NULL;
 	dev_priv = (drm_i915_private_t *) dev->dev_private;
-	printk("wqf-%s the val=%llu\n",__func__,val);
+	printk("lm-%s the val=%llu\n",__func__,val);
+	printk("lm-%s the spark_cabc_dpst_switch_enable=%d\n",__func__,spark_cabc_dpst_switch_enable);
+	if(spark_cabc_dpst_switch_enable){
 	if(val){
 		i915_dpst_switch(false);
-		printk("wqf %s dpst off\n",__func__);
+		msleep(5);
+		printk("lm %s dpst off\n",__func__);
 		if(dev_priv->spark_cabc_dpst_on){
 		dev_priv->intel_dsi_cabc_dpst->hs = true;
-		printk("wqf %s cabc on\n",__func__);
+		printk("lm %s cabc on\n",__func__);
 		mutex_lock(&(dev_priv->i915_bklt_control_mutex));
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x83,0xBB);
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x84,0x22);
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x90,0x00);
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x91,0xA2);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x94,0x2A);
+		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x94,0x39);
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x95,0x20);
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x96,0x01);
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x9B,0x8C);
 		mutex_unlock(&(dev_priv->i915_bklt_control_mutex));
+		msleep(5);
 		}
 	}else{
 		if(dev_priv->spark_cabc_dpst_on){
 		dev_priv->intel_dsi_cabc_dpst->hs = true;
-		printk("wqf %s cabc off\n",__func__);
+		printk("lm %s cabc off\n",__func__);
 		mutex_lock(&(dev_priv->i915_bklt_control_mutex));
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x83,0xBB);
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x84,0x22);
 		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x90,0xC0);
 		mutex_unlock(&(dev_priv->i915_bklt_control_mutex));
+		msleep(5);
 		}
-		printk("wqf %s dpst on\n",__func__);
+		printk("lm %s dpst on\n",__func__);
 		i915_dpst_switch(true);
+	}
 	}
 	return 0;
 }
@@ -2602,45 +2573,40 @@ i915_cabc_pwm_get(void *data, u64 *val)
 static int
 i915_cabc_pwm_set(void *data, u64 val)
 {
-	unsigned char bl_value;
 	struct drm_device *dev = data;
 	drm_i915_private_t *dev_priv = dev->dev_private;
-	printk("wqf-%s the val=%llu\n",__func__,val);
+	printk("lm-%s the val=%llu\n",__func__,val);
 	dev_priv->spark_init_code_write=false;
-	if(val>255)
-		val=255;
-	else if (val<0)
-		val=0;
-	bl_value=(unsigned char)val;
-	msleep(30);
-	i915_dpst_switch(false);
 	if(dev_priv->spark_cabc_dpst_on){
 		dev_priv->spark_bklt_control=true;
-		printk("wqf-%s the bl_val=%d\n",__func__,bl_value);
-		dev_priv->intel_dsi_cabc_dpst->hs = true;
-		mutex_lock(&(dev_priv->i915_bklt_control_mutex));
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x83,0xBB);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x84,0x22);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x90,0x00);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x91,0xA2);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x94,0x2A);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x95,0x20);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x96,0x01);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x9B,0x8C);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x83,0x00);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x84,0x00);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x9F,bl_value);
-		dsi_vc_dcs_write_1(dev_priv->intel_dsi_cabc_dpst,0,0x97,0xFF);
-		mutex_unlock(&(dev_priv->i915_bklt_control_mutex));
 	}
+	cabc_dpst_switch_start();
 	return 0;
 }
 
 DEFINE_SIMPLE_ATTRIBUTE(i915_cabc_pwm_fops,
 			i915_cabc_pwm_get, i915_cabc_pwm_set,
 			"%llu\n");
-/*wqf add for cabc and dpst switch end*/
+/*lm add for cabc and dpst switch end*/
 
+/*lm add for lcd identify start*/
+static int
+spark_lcd_id_get(void *data, u64 *val)
+{
+	*val= gpio_get_value(51);
+	return 0;
+}
+
+static int
+spark_lcd_id_set(void *data, u64 val)
+{	
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(spark_lcd_id_fops,
+			spark_lcd_id_get, spark_lcd_id_set,
+			"%llu\n");
+/*lm add for lcd identify end*/
 static int
 i915_ring_stop_get(void *data, u64 *val)
 {
@@ -2871,12 +2837,12 @@ i915_dpst_enable_disable(struct drm_device *dev, unsigned int val)
 {
 	if (!(IS_VALLEYVIEW(dev)))
 		return -ENODEV;
-
+	printk("lm %s dpst enable and disable\n",__func__);
 	/* 1=> Enable DPST, else disable. */
 	if (val == 1)
-		i915_dpst_enable_hist_interrupt(dev);
+		i915_dpst_enable_hist_interrupt(dev, true);
 	else
-		i915_dpst_disable_hist_interrupt(dev);
+		i915_dpst_disable_hist_interrupt(dev, true);
 
 	/* Send a fake signal to start the process */
 	i915_dpst_irq_handler(dev);
@@ -2976,13 +2942,13 @@ i915_dpst_get_luma_data(struct drm_device *dev, char *buf, int *len)
 
 	return 0;
 }
-
+//lm add
 int i915_dpst_switch(bool on)
 {
     int ret = 0;
     struct drm_device *dev = gdev;
     drm_i915_private_t *dev_priv  = NULL;
-    
+    printk("lm %s dpst switch\n",__func__);
     if(!dev) 
         return -EINVAL;
    
@@ -3004,7 +2970,7 @@ int i915_dpst_switch(bool on)
 
     return 0;
 }
-
+//lm end
 
 static ssize_t
 i915_read_dpst_api(struct file *filp,
@@ -3090,10 +3056,17 @@ i915_read_dpst_api(struct file *filp,
 		if (dev_priv->is_mipi) {
 
 #ifdef CONFIG_CRYSTAL_COVE
-			//u32 max = intel_panel_get_max_backlight(dev);
-			len += scnprintf(&buf[len], (sizeof(buf) - len),
+			u32 max = intel_panel_get_max_backlight(dev);
+			u32 val = 0;
+			if (BYT_CR_CONFIG) {
+				val = lpio_bl_read(0, LPIO_PWM_CTRL);
+				val = (0xff - (val & 0xff)) * max/0xff;
+				len += scnprintf(&buf[len], (sizeof(buf) - len),
+					"DPST Applied Backlight Level: 0x%x\n", val);
+			} else
+				len += scnprintf(&buf[len], (sizeof(buf) - len),
 					"DPST Applied Backlight Level: 0x%x\n",
-					(intel_mid_pmic_readb(0x4E) ));
+					(intel_mid_pmic_readb(0x4E)));
 #else
 			len += scnprintf(&buf[len], (sizeof(buf) - len),
 					"DPST Applied Backlight not supported\n");
@@ -4028,6 +4001,11 @@ i915_iosf_read_api(struct file *filp,
 			len = scnprintf(buf, sizeof(buf),
 				"0x%x: 0x%x\n", (unsigned int) iosf_reg,
 						(unsigned int) iosf_val);
+		} else if (strcmp(port, IOSF_CCU_TOKEN) == 0) {
+			iosf_val = vlv_ccu_read(dev_priv, iosf_reg);
+			len = scnprintf(buf, sizeof(buf),
+				"0x%x: 0x%x\n", (unsigned int) iosf_reg,
+						(unsigned int) iosf_val);
 		}
 	} else {
 		len = scnprintf(buf, sizeof(buf),
@@ -4154,7 +4132,7 @@ drm_add_fake_info_node(struct drm_minor *minor,
 
 	return 0;
 }
-
+//lm
 #define TIMESTAMP_BUFFER_LEN  100U
 
 ssize_t i915_timestamp_read(struct file *filp,
@@ -4196,7 +4174,7 @@ static const struct file_operations i915_timestamp_fops = {
 	.write = NULL,
 	.llseek = default_llseek,
 };
-
+//lm
 static int i915_forcewake_open(struct inode *inode, struct file *file)
 {
 	struct drm_device *dev = inode->i_private;
@@ -4311,6 +4289,7 @@ static struct i915_debugfs_files {
 	{"i915_wedged", &i915_wedged_fops},
 	{"i915_cabc_enable", &i915_cabc_enable_fops},
 	{"i915_cabc_pwm", &i915_cabc_pwm_fops},
+	{"spark_lcd_id", &spark_lcd_id_fops},
 	{"i915_cache_sharing", &i915_cache_sharing_fops},
 	{"i915_ring_stop", &i915_ring_stop_fops},
 	{"i915_gem_drop_caches", &i915_drop_caches_fops},
@@ -4380,13 +4359,6 @@ int i915_debugfs_init(struct drm_minor *minor)
 					&i915_gamma_enable_fops);
 	if (ret)
 		return ret;
-
-	ret = i915_debugfs_create(minor->debugfs_root, minor,
-					"display_reg",
-					&i915_display_register_fops);
-	if (ret)
-		return ret;
-
 
 	return drm_debugfs_create_files(i915_debugfs_list,
 					I915_DEBUGFS_ENTRIES,

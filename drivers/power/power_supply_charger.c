@@ -45,30 +45,51 @@ static struct charger_cable cable_list[] = {
 	{
 	 .psy_cable_type = POWER_SUPPLY_CHARGER_TYPE_USB_SDP,
 	 .extcon_cable_type = EXTCON_SDP,
+	 .cable_props = {
+			.cable_stat = EXTCON_CHRGR_CABLE_DISCONNECTED,
+		},
 	 },
 	{
 	 .psy_cable_type = POWER_SUPPLY_CHARGER_TYPE_USB_CDP,
 	 .extcon_cable_type = EXTCON_CDP,
+	 .cable_props = {
+			.cable_stat = EXTCON_CHRGR_CABLE_DISCONNECTED,
+		},
 	 },
 	{
 	 .psy_cable_type = POWER_SUPPLY_CHARGER_TYPE_USB_DCP,
 	 .extcon_cable_type = EXTCON_DCP,
+	 .cable_props = {
+			.cable_stat = EXTCON_CHRGR_CABLE_DISCONNECTED,
+		},
 	 },
 	{
 	 .psy_cable_type = POWER_SUPPLY_CHARGER_TYPE_USB_ACA,
 	 .extcon_cable_type = EXTCON_ACA,
+	 .cable_props = {
+			.cable_stat = EXTCON_CHRGR_CABLE_DISCONNECTED,
+		},
 	 },
 	{
 	 .psy_cable_type = POWER_SUPPLY_CHARGER_TYPE_ACA_DOCK,
 	 .extcon_cable_type = EXTCON_ACA,
+	 .cable_props = {
+			.cable_stat = EXTCON_CHRGR_CABLE_DISCONNECTED,
+		},
 	 },
 	{
 	 .psy_cable_type = POWER_SUPPLY_CHARGER_TYPE_SE1,
 	 .extcon_cable_type = EXTCON_TA,
+	 .cable_props = {
+			.cable_stat = EXTCON_CHRGR_CABLE_DISCONNECTED,
+		},
 	 },
 	{
 	 .psy_cable_type = POWER_SUPPLY_CHARGER_TYPE_AC,
 	 .extcon_cable_type = EXTCON_AC,
+	 .cable_props = {
+			.cable_stat = EXTCON_CHRGR_CABLE_DISCONNECTED,
+		},
 	 },
 };
 
@@ -440,7 +461,7 @@ static inline void get_cur_bat_prop(struct power_supply *psy,
 	int ret;
 
 	bat_prop->name = psy->name;
-	bat_prop->voltage_now = VOLTAGE_OCV(psy);   //  diveide 1000  remove by yxf 0606
+	bat_prop->voltage_now = VOLTAGE_OCV(psy) ;
 	bat_prop->current_now = CURRENT_NOW(psy) / 1000;
 	bat_prop->temperature = TEMPERATURE(psy) / 10;
 	bat_prop->status = STATUS(psy);
@@ -588,6 +609,8 @@ static int get_battery_status(struct power_supply *psy)
 	while (cnt--) {
 		if (IS_PRESENT(chrgr_lst[cnt]))
 			status = POWER_SUPPLY_STATUS_NOT_CHARGING;
+		else
+			continue;
 
 		if (is_charging_can_be_enabled(chrgr_lst[cnt]) &&
 				(IS_HEALTH_GOOD(chrgr_lst[cnt]))) {
@@ -608,6 +631,17 @@ static int get_battery_status(struct power_supply *psy)
 	pr_devel("%s: Set status=%d for %s\n", __func__, status, psy->name);
 
 	return status;
+}
+
+static inline void cache_cur_chrgr_prop_force(struct power_supply *psy)
+{
+	struct charger_props chrgr_prop;
+
+	if (!IS_CHARGER(psy))
+		return;
+
+	get_cur_chrgr_prop(psy, &chrgr_prop);
+	cache_chrgr_prop(&chrgr_prop);
 }
 
 static void update_charger_online(struct power_supply *psy)
@@ -642,7 +676,7 @@ static void update_sysfs(struct power_supply *psy)
 			if (!IS_PRESENT(chrgr_lst[cnt]))
 				continue;
 
-			update_charger_online(psy);
+			update_charger_online(chrgr_lst[cnt]);
 		}
 		/* set battery status */
 		if (set_battery_status(psy, get_battery_status(psy)))
@@ -663,7 +697,8 @@ static void update_sysfs(struct power_supply *psy)
 					 * forcefully cache the battery
 					 * properties
 					 */
-					cache_cur_batt_prop_force(psy);
+					cache_cur_batt_prop_force(psb);
+					cache_cur_chrgr_prop_force(psy);
 		}
 	}
 }
@@ -723,7 +758,7 @@ static int trigger_algo(struct power_supply *psy)
 		set_cv(chrgr_lst[cnt], cv);
 	}
 
-	if ((bat_prop.algo_stat == PSY_ALGO_STAT_NOT_CHARGE))
+	if (bat_prop.algo_stat == PSY_ALGO_STAT_NOT_CHARGE)
 		return -EOPNOTSUPP;
 
 	return 0;
@@ -828,6 +863,12 @@ static bool is_cable_connected(void)
 	return false;
 }
 
+bool power_supply_is_cable_connected(void)
+{
+	return is_cable_connected();
+}
+EXPORT_SYMBOL(power_supply_is_cable_connected);
+
 void power_supply_trigger_charging_handler(struct power_supply *psy)
 {
 	if (!psy_chrgr.is_cable_evt_reg || !is_cable_connected())
@@ -912,6 +953,8 @@ static int select_chrgr_cable(struct device *dev, void *data)
 
 		switch_cable(psy, POWER_SUPPLY_CHARGER_TYPE_NONE);
 
+		/* update battery properties */
+		update_sysfs(psy);
 		mutex_unlock(&psy_chrgr.evt_lock);
 		power_supply_changed(psy);
 		return 0;
@@ -933,7 +976,12 @@ static int select_chrgr_cable(struct device *dev, void *data)
 
 		update_charger_online(psy);
 
-		set_inlmt(psy, max_ma_cable->cable_props.ma);
+		if (CURRENT_THROTTLE_ACTION(psy) == PSY_THROTTLE_INPUT_LIMIT)
+			set_inlmt(psy, min(max_ma_cable->cable_props.ma,
+					THROTTLE_VALUE(psy, CURRENT_THROTTLE_STATE(psy))));
+		else
+			set_inlmt(psy, max_ma_cable->cable_props.ma);
+
 		if (!get_battery_thresholds(psy, &bat_thresh)) {
 			if (!ITERM(psy))
 				SET_ITERM(psy, bat_thresh.iterm);
@@ -999,17 +1047,13 @@ int psy_charger_throttle_charger(struct power_supply *psy,
 {
 	int ret = 0;
 
-	if (!IS_PRESENT(psy))
-		return 0;
-
-	if (state < 0 || state > MAX_THROTTLE_STATE(psy))
+	if (state < 0 || state >= MAX_THROTTLE_STATE(psy))
 		return -EINVAL;
 
 	mutex_lock(&psy_chrgr.evt_lock);
 
 	switch THROTTLE_ACTION(psy, state)
 	{
-
 		case PSY_THROTTLE_DISABLE_CHARGER:
 			SET_MAX_CC(psy, 0);
 			disable_charger(psy);
@@ -1019,10 +1063,13 @@ int psy_charger_throttle_charger(struct power_supply *psy,
 			disable_charging(psy);
 			break;
 		case PSY_THROTTLE_CC_LIMIT:
-			SET_MAX_CC(psy, THROTTLE_CC_VALUE(psy, state));
+			SET_MAX_CC(psy, THROTTLE_VALUE(psy, state));
 			break;
 		case PSY_THROTTLE_INPUT_LIMIT:
-			set_inlmt(psy, THROTTLE_CC_VALUE(psy, state));
+			/*
+			 * input limit throtling is handling in
+			 * configure_chrgr_source().
+			 */
 			break;
 		default:
 			pr_err("%s:Invalid throttle action for %s\n",
@@ -1033,7 +1080,7 @@ int psy_charger_throttle_charger(struct power_supply *psy,
 	mutex_unlock(&psy_chrgr.evt_lock);
 
 	/* Configure the driver based on new state */
-	if (!ret)
+	if (!ret && IS_PRESENT(psy))
 		configure_chrgr_source(cable_list);
 	return ret;
 }
@@ -1052,6 +1099,9 @@ int power_supply_register_charger(struct power_supply *psy)
 		INIT_WORK(&psy_chrgr.algo_trigger_work, trigger_algo_psy_class);
 		psy_chrgr.is_cable_evt_reg = true;
 	}
+
+	SET_MAX_THROTTLE_STATE(psy);
+
 	return ret;
 }
 EXPORT_SYMBOL(power_supply_register_charger);

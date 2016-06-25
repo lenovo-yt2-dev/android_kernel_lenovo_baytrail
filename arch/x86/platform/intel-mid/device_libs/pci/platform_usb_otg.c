@@ -11,16 +11,52 @@
  */
 
 #include <linux/gpio.h>
+#include <linux/sfi.h>
 #include <linux/pci.h>
 #include <asm/intel-mid.h>
 #include <asm/intel_scu_ipc.h>
 #include <asm/intel_em_config.h>
 #include <asm/spid.h>
+#include <asm/intel-mid.h>
 #include <linux/dma-mapping.h>
 
 #ifdef CONFIG_USB_DWC3_OTG
 #include <linux/usb/dwc3-intel-mid.h>
 static struct intel_dwc_otg_pdata dwc_otg_pdata;
+
+struct {
+	u8 name[16];
+	u32 val;
+} usb2_el_cal[] = {
+	{"ULPICAL_7D", 0x7D},
+	{"ULPICAL_7F", 0x7F},
+	{"UTMICAL_PEDE3TX0", 0x51801},
+	{"UTMICAL_PEDE6TX7", 0x53f01},
+};
+#define USB_ULPI_SFI_PREFIX "ULPI"
+#define USB_UTMI_SFI_PREFIX "UTMI"
+
+void sfi_handle_usb(struct sfi_device_table_entry *pentry, struct devs_id *dev)
+{
+	int i;
+
+	if (!dev || !dev->name) {
+		pr_info("USB SFI entry is NULL!\n");
+		return;
+	}
+	for (i = 0; i < ARRAY_SIZE(usb2_el_cal); i++) {
+		if (!strncmp(dev->name, usb2_el_cal[i].name, strlen(dev->name))) {
+			if (!strncmp(dev->name, USB_ULPI_SFI_PREFIX, strlen(USB_ULPI_SFI_PREFIX)))
+				dwc_otg_pdata.ulpi_eye_calibration = usb2_el_cal[i].val;
+			else if (!strncmp(dev->name, USB_UTMI_SFI_PREFIX, strlen(USB_UTMI_SFI_PREFIX)))
+				dwc_otg_pdata.utmi_eye_calibration = usb2_el_cal[i].val;
+			else
+				pr_info("%s:is Invalid USB SFI Entry Name!\n", dev->name);
+
+			break;
+		}
+	}
+}
 
 static bool dwc_otg_get_usbspecoverride(u32 addr)
 {
@@ -45,7 +81,7 @@ static int dwc_otg_byt_get_usbspecoverride(void)
 {
 	struct em_config_oem1_data oem1_data;
 	int charge_bit = 1, ret = 0;
-/*//add by zouhao	
+//add by zouhao
 #if 0
 	ret = em_config_get_oem1_data(&oem1_data);
 	if (ret <= 0) {
@@ -53,8 +89,7 @@ static int dwc_otg_byt_get_usbspecoverride(void)
 		return charge_bit;
 	}
 	charge_bit = oem1_data.fpo_0 & BIT(0);
-#endif
-*/	
+#endif	
 	pr_info("OEM1 charging bit = %d\n", charge_bit);
 	return charge_bit;
 }
@@ -82,29 +117,36 @@ static struct intel_dwc_otg_pdata *get_otg_platform_data(struct pci_dev *pdev)
 {
 	switch (pdev->device) {
 	case PCI_DEVICE_ID_INTEL_MRFL_DWC3_OTG:
-		if (INTEL_MID_BOARD(1, PHONE, MOFD)) {
+		if (INTEL_MID_BOARD(1, PHONE, MOFD) ||
+			INTEL_MID_BOARD(1, TABLET, MOFD)) {
 			dwc_otg_pdata.pmic_type = SHADY_COVE;
 			dwc_otg_pdata.charger_detect_enable = 0;
+			dwc_otg_pdata.tx_fifo_resize = 1;
 			dwc_otg_pdata.usb2_phy_type = get_usb2_phy_type();
 			 dwc_otg_pdata.charging_compliance =
 				dwc_otg_get_usbspecoverride(MOFD_SMIP_VIOLATE_BC_ADDR);
 
-			if (dwc_otg_pdata.usb2_phy_type == USB2_PHY_ULPI)
+			if (dwc_otg_pdata.usb2_phy_type == USB2_PHY_ULPI) {
 				dwc_otg_pdata.charger_detect_enable = 1;
-			dwc_otg_pdata.ulpi_eye_calibrate = 0x7F;
-
+				dwc_otg_pdata.using_vusbphy = 0;
+			} else {
+				dwc_otg_pdata.using_vusbphy = 1;
+				dwc_otg_pdata.utmi_fs_det_wa = 1;
+			}
 		} else if (INTEL_MID_BOARD(1, PHONE, MRFL)) {
 			dwc_otg_pdata.pmic_type = BASIN_COVE;
+			dwc_otg_pdata.using_vusbphy = 1;
 			dwc_otg_pdata.charger_detect_enable = 1;
+			dwc_otg_pdata.device_hibernation = 1;
 
 			dwc_otg_pdata.charging_compliance =
 				dwc_otg_get_usbspecoverride(MERR_SMIP_VIOLATE_BC_ADDR);
 			dwc_otg_pdata.usb2_phy_type = USB2_PHY_ULPI;
-			dwc_otg_pdata.ulpi_eye_calibrate = 0x7D;
 
 		} else if (intel_mid_identify_sim() ==
 				INTEL_MID_CPU_SIMULATION_HVP) {
 			dwc_otg_pdata.pmic_type = NO_PMIC;
+			dwc_otg_pdata.using_vusbphy = 0;
 			dwc_otg_pdata.is_hvp = 1;
 			dwc_otg_pdata.charger_detect_enable = 0;
 			dwc_otg_pdata.usb2_phy_type = USB2_PHY_ULPI;
@@ -116,17 +158,17 @@ static struct intel_dwc_otg_pdata *get_otg_platform_data(struct pci_dev *pdev)
 			INTEL_MID_BOARD(3, TABLET, BYT, BLK, ENG, RVP3)) {
 			dwc_otg_pdata.gpio_cs = 156;
 			dwc_otg_pdata.gpio_reset = 144;
-			dwc_otg_pdata.ulpi_eye_calibrate = 0x4f;
+			dwc_otg_pdata.ulpi_eye_calibration = 0x4f;
 		} else if (INTEL_MID_BOARD(3, TABLET, BYT, BLK, PRO, 8PR0) ||
 			INTEL_MID_BOARD(3, TABLET, BYT, BLK, ENG, 8PR0)) {
 			dwc_otg_pdata.gpio_cs = 54;
 			dwc_otg_pdata.gpio_reset = 144;
-			dwc_otg_pdata.ulpi_eye_calibrate = 0x4f;
+			dwc_otg_pdata.ulpi_eye_calibration = 0x4f;
 		} else if (INTEL_MID_BOARD(3, TABLET, BYT, BLK, PRO, 8PR1) ||
 			INTEL_MID_BOARD(3, TABLET, BYT, BLK, ENG, 8PR1)) {
 			dwc_otg_pdata.gpio_cs = 54;
 			dwc_otg_pdata.gpio_reset = 144;
-			dwc_otg_pdata.ulpi_eye_calibrate = 0x7f;
+			dwc_otg_pdata.ulpi_eye_calibration = 0x7f;
 			dwc_otg_pdata.sdp_charging = 0;
 			dwc_otg_pdata.charger_detect_enable = 1;
 			dwc_otg_pdata.gpio_id = 69;
@@ -136,12 +178,19 @@ static struct intel_dwc_otg_pdata *get_otg_platform_data(struct pci_dev *pdev)
 			INTEL_MID_BOARD(3, TABLET, BYT, BLK, ENG, CRV2)) {
 			dwc_otg_pdata.gpio_cs = 54;
 			dwc_otg_pdata.gpio_reset = 144;
-			dwc_otg_pdata.ulpi_eye_calibrate = 0x7f;
+			dwc_otg_pdata.ulpi_eye_calibration = 0x7f;
+#if defined(CONFIG_MRD7) || defined(CONFIG_MRD8)
+			dwc_otg_pdata.gpio_id = 148;
+#else
 			dwc_otg_pdata.gpio_id = 156;
+#endif
 			dwc_otg_pdata.sdp_charging = 1;
 			dwc_otg_pdata.charging_compliance =
 				!dwc_otg_byt_get_usbspecoverride();
 		}
+		return &dwc_otg_pdata;
+	case PCI_DEVICE_ID_INTEL_CHT_OTG:
+		dwc_otg_pdata.tx_fifo_resize = 1;
 		return &dwc_otg_pdata;
 	default:
 		break;
@@ -210,6 +259,8 @@ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CLV_OTG,
 DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_MRFL_DWC3_OTG,
 			otg_pci_early_quirks);
 DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_BYT_OTG,
+			otg_pci_early_quirks);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CHT_OTG,
 			otg_pci_early_quirks);
 
 static void quirk_byt_otg_d3_delay(struct pci_dev *dev)

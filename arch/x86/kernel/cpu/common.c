@@ -1176,6 +1176,32 @@ DEFINE_PER_CPU_ALIGNED(struct stack_canary, stack_canary);
 
 #endif	/* CONFIG_X86_64 */
 
+#ifdef CONFIG_LBR_DUMP_ON_EXCEPTION
+unsigned int lbr_dump_on_exception = 1;
+#endif
+
+static int __read_mostly hw_debugger;
+
+static __init int set_hw_debugger(char *arg)
+{
+	ssize_t ret;
+	unsigned long val;
+
+	ret = kstrtoul(arg, 10, &val);
+	if (ret)
+		return ret;
+
+#ifdef CONFIG_KGDB
+	if (val != 0) {
+		pr_err("KGDB and hw_debugger are mutually exclusive!\n");
+		return 0;
+	}
+#endif    /* CONFIG_KGDB */
+	hw_debugger = val;
+	return 0;
+}
+early_param("hw_debugger", set_hw_debugger);
+
 /*
  * Clear all 6 debug registers:
  */
@@ -1183,13 +1209,15 @@ static void clear_all_debug_regs(void)
 {
 	int i;
 
-	for (i = 0; i < 8; i++) {
-		/* Ignore db4, db5 */
-		if ((i == 4) || (i == 5))
-			continue;
+	if (!hw_debugger)
+		for (i = 0; i < 8; i++) {
 
-		set_debugreg(0, i);
-	}
+			/* Ignore db4, db5 */
+			if ((i == 4) || (i == 5))
+				continue;
+
+			set_debugreg(0, i);
+		}
 }
 
 #ifdef CONFIG_KGDB

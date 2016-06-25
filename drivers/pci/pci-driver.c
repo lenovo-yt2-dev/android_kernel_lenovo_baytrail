@@ -729,14 +729,16 @@ static int pci_pm_resume(struct device *dev)
 	struct pci_dev *pci_dev = to_pci_dev(dev);
 	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
 	int error = 0;
-#if WIFI_ONLY
+
+#ifndef CONFIG_MDM_CTRL
 	/* skip resuming HSIC device */
-        pr_info("yangyi add for pci_pm_resume\n");
+        pr_info("%s,do not resume HSIC\n", __func__);
 	if (pci_dev->device == 0x119D) {
 		pci_set_power_state(pci_dev, PCI_D3cold);
 		return 0;
 	}
 #endif
+
 	/*
 	 * This is necessary for the suspend error path in which resume is
 	 * called without restoring the standard config registers of the device.

@@ -14,6 +14,7 @@
 #include <linux/cdev.h>
 #include <linux/iio/types.h>
 #include <linux/iio/consumer.h>
+#include <linux/iio/events.h>
 
 /* IIO TODO LIST */
 /*
@@ -133,6 +134,29 @@ ssize_t iio_enum_write(struct iio_dev *indio_dev,
 }
 
 /**
+ * struct iio_event_spec - specification for a channel event
+ * @type:		    Type of the event
+ * @dir:		    Direction of the event
+ * @mask_separate:	    Bit mask of enum iio_event_info values. Attributes
+ *			    set in this mask will be registered per channel.
+ * @mask_shared_by_type:    Bit mask of enum iio_event_info values. Attributes
+ *			    set in this mask will be shared by channel type.
+ * @mask_shared_by_dir:	    Bit mask of enum iio_event_info values. Attributes
+ *			    set in this mask will be shared by channel type and
+ *			    direction.
+ * @mask_shared_by_all:	    Bit mask of enum iio_event_info values. Attributes
+ *			    set in this mask will be shared by all channels.
+ */
+struct iio_event_spec {
+	enum iio_event_type type;
+	enum iio_event_direction dir;
+	unsigned long mask_separate;
+	unsigned long mask_shared_by_type;
+	unsigned long mask_shared_by_dir;
+	unsigned long mask_shared_by_all;
+};
+
+/**
  * struct iio_chan_spec - specification of a single channel
  * @type:		What type of measurement is the channel making.
  * @channel:		What number do we wish to assign the channel.
@@ -192,6 +216,8 @@ struct iio_chan_spec {
 	long			info_mask_separate;
 	long			info_mask_shared_by_type;
 	long			event_mask;
+	const struct iio_event_spec *event_spec;
+	unsigned int            num_event_specs;
 	const struct iio_chan_spec_ext_info *ext_info;
 	const char		*extend_name;
 	const char		*datasheet_name;
@@ -269,7 +295,7 @@ struct iio_dev;
  * @read_event_config:	find out if the event is enabled.
  * @write_event_config:	set if the event is enabled.
  * @read_event_value:	read a value associated with the event. Meaning
- *			is event dependant. event_code specifies which event.
+ *			is event dependant.
  * @write_event_value:	write the value associated with the event.
  *			Meaning is event dependent.
  * @validate_trigger:	function to validate the trigger when the
@@ -310,11 +336,17 @@ struct iio_info {
 				  int state);
 
 	int (*read_event_value)(struct iio_dev *indio_dev,
-				u64 event_code,
-				int *val);
+				const struct iio_chan_spec *chan,
+				enum iio_event_type type,
+				enum iio_event_direction dir,
+				enum iio_event_info info, int *val, int *val2);
+
 	int (*write_event_value)(struct iio_dev *indio_dev,
-				 u64 event_code,
-				 int val);
+				 const struct iio_chan_spec *chan,
+				 enum iio_event_type type,
+				 enum iio_event_direction dir,
+				 enum iio_event_info info, int val, int val2);
+
 	int (*validate_trigger)(struct iio_dev *indio_dev,
 				struct iio_trigger *trig);
 	int (*update_scan_mode)(struct iio_dev *indio_dev,

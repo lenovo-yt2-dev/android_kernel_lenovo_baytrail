@@ -37,6 +37,11 @@ config POWER_SUPPLY_BATTID
          framework. The framework would allow different battery identification
          drivers to interface with power supply subsystem. Also it allows consumer
          drivers to register for notification from the power_supply subsystem.
+config RAW_CC_THROTTLE
+	bool "Raw Charge Current Throttle"
+	help
+	  Say Y here to enable raw charge current throttling. This feature will
+	  expose n states where n is defined as (max_current_mA/100_mA)
 
 config POWER_SUPPLY_DEBUG
 	bool "Power supply debug"
@@ -407,7 +412,18 @@ config DC_XPWR_CHARGER
 	help
 	  Say Y here to enable support for Dollar Cove(Xpower) PMIC Charger.
 
+config INTEL_FUEL_GAUGE
+	bool "Intel Fuel Gauge driver"
+	help
+	  Say Y here to enable support for Intel SW Fuel Gauge driver.
 
+config INTEL_FG_UIFACE
+	bool "Intel Fuel Gauge User Interface"
+	help
+	  Say Y here to enable support for Intel SW Fuel gauge Algo User Interface.
+if PF450CL
+source "drivers/power/battery/Kconfig"
+endif
 source "drivers/power/reset/Kconfig"
 
 endif # POWER_SUPPLY

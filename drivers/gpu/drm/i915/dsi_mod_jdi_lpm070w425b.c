@@ -78,7 +78,8 @@ bool lpm070w425b_init(struct intel_dsi_device *dsi)
 	intel_dsi->clk_hs_to_lp_count = 0x16;
 	intel_dsi->video_frmt_cfg_bits = 0x8;
 	intel_dsi->dphy_reg = 0x2a18681f;
-
+	intel_dsi->port = 0; /* PORT_A by default */
+	intel_dsi->burst_mode_ratio = 100;
 	intel_dsi->backlight_off_delay = 20;
 	intel_dsi->send_shutdown = true;
 	intel_dsi->shutdown_pkt_delay = 20;

@@ -79,6 +79,9 @@ struct attribute_group {
 	.show	= _name##_show,					\
 }
 
+#define __ATTR_RW(_name) __ATTR(_name, (S_IWUSR | S_IRUGO),	\
+			 _name##_show, _name##_store)
+
 #define __ATTR_NULL { .attr = { .name = NULL } }
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
@@ -93,6 +96,18 @@ struct attribute_group {
 #endif
 
 #define attr_name(_attr) (_attr).attr.name
+
+#define __ATTRIBUTE_GROUPS(_name)				\
+static const struct attribute_group *_name##_groups[] = {	\
+	&_name##_group,						\
+	NULL,							\
+}
+
+#define ATTRIBUTE_GROUPS(_name)					\
+static const struct attribute_group _name##_group = {		\
+	.attrs = _name##_attrs,					\
+};								\
+__ATTRIBUTE_GROUPS(_name)
 
 struct file;
 struct vm_area_struct;

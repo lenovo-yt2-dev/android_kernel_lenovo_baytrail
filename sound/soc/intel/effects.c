@@ -194,7 +194,7 @@ static inline void sst_fill_dsp_payload(struct ipc_effect_payload *dsp_payload,
 }
 
 static int sst_get_pipe_id(struct sst_dev_stream_map *map, int map_size,
-				int dev, int mode, u8 *pipe_id)
+				u32 dev, u32 mode, u8 *pipe_id)
 {
 	int index;
 
@@ -310,7 +310,8 @@ static int sst_effects_set_params(struct snd_card *card,
 	if (ret < 0)
 		return ret;
 
-	sst_fill_dsp_payload(&dsp_payload, pipe_id, algo_id, params->buffer);
+	sst_fill_dsp_payload(&dsp_payload, pipe_id, algo_id,
+			(void *)(unsigned long)params->buffer_ptr);
 
 	ret = sst_send_effects(&dsp_payload, params->size, EFFECTS_SET_PARAMS);
 
@@ -343,7 +344,8 @@ static int sst_effects_get_params(struct snd_card *card,
 	if (ret < 0)
 		return ret;
 
-	sst_fill_dsp_payload(&dsp_payload, pipe_id, algo_id, params->buffer);
+	sst_fill_dsp_payload(&dsp_payload, pipe_id, algo_id,
+			(void *)(unsigned long)params->buffer_ptr);
 
 	ret = sst_send_effects(&dsp_payload, params->size, EFFECTS_GET_PARAMS);
 
@@ -385,7 +387,7 @@ static int sst_query_effects_caps(struct snd_card *card,
 		return -ENOMEM;
 	}
 
-	dstn = caps->buffer;
+	dstn = (void *)(unsigned long)caps->buffer_ptr;
 	for (i = 0; i < num_effects; i++) {
 		memcpy(dstn + offset, effs_map[i].descriptor, MAX_DESCRIPTOR_SIZE);
 		offset += MAX_DESCRIPTOR_SIZE;

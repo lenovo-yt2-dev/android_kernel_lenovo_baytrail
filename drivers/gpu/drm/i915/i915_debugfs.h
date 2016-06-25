@@ -46,6 +46,7 @@
 
 #define IOSF_FUSE_TOKEN	"FUSE"
 #define IOSF_PUNIT_TOKEN	"PUNIT"
+#define IOSF_CCU_TOKEN	"CCU"
 
 /* RC6 Operations */
 #define RC6_POWER_TOKEN	"PWRWELLS"

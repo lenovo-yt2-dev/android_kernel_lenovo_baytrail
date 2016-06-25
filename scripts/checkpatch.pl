@@ -1536,6 +1536,8 @@ sub process {
 
 			#warn "line<$line>\n";
 
+		} elsif ($line =~ /^GIT binary patch/ ) {
+			$is_patch = 2;
 		} elsif ($realcnt == 1) {
 			$realcnt--;
 		}

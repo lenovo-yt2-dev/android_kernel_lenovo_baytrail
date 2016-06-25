@@ -316,6 +316,8 @@ again:
 	return ret;
 }
 
+DEFINE_PER_CPU(u64, predicted_time);
+
 /**
  * menu_select - selects the next idle state to enter
  * @drv: cpuidle driver containing state data
@@ -367,6 +369,8 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 	/* Make sure to round up for half microseconds */
 	data->predicted_us = div_round64(data->expected_us * data->correction_factor[data->bucket],
 					 RESOLUTION * DECAY);
+
+	per_cpu(predicted_time, cpu) = data->predicted_us;
 
 #ifdef CONFIG_PM_DEBUG
 	/* Collect the idleness histogram data if it is activated */

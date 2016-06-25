@@ -866,10 +866,6 @@ static void dwc3_prepare_one_trb(struct dwc3_ep *dep,
 			length, last ? " last" : "",
 			chain ? " chain" : "");
 
-	/* Skip the LINK-TRB on ISOC */
-	if (((dep->free_slot & DWC3_TRB_MASK) == DWC3_TRB_NUM - 1) &&
-			usb_endpoint_xfer_isoc(dep->endpoint.desc))
-		dep->free_slot++;
 
 	trb = &dep->trb_pool[dep->free_slot & DWC3_TRB_MASK];
 
@@ -881,6 +877,10 @@ static void dwc3_prepare_one_trb(struct dwc3_ep *dep,
 	}
 
 	dep->free_slot++;
+	/* Skip the LINK-TRB on ISOC */
+	if (((dep->free_slot & DWC3_TRB_MASK) == DWC3_TRB_NUM - 1) &&
+			usb_endpoint_xfer_isoc(dep->endpoint.desc))
+		dep->free_slot++;
 
 	trb->size = DWC3_TRB_SIZE_LENGTH(length);
 	trb->bpl = lower_32_bits(dma);
@@ -1016,9 +1016,15 @@ static void dwc3_prepare_trbs(struct dwc3_ep *dep, bool starting)
 
 				if (i == (request->num_mapped_sgs - 1) ||
 						sg_is_last(s)) {
-					if (list_is_last(&req->list,
-							&dep->request_list))
-						last_one = true;
+					/* FIXME: After the first TRB is made
+					 * the USB request is removed from
+					 * request_list: we can't check if the
+					 * request is the last, but we could
+					 * check if the list is empty afterward
+					 * This is critical to get an interrupt
+					 * after the sg list is sent.
+					 */
+					last_one = true;
 					chain = false;
 				}
 
@@ -1479,7 +1485,7 @@ static int dwc3_gadget_ep_dequeue(struct usb_ep *ep,
 			dwc3_stop_active_transfer(dwc, dep->number, 1);
 			goto out1;
 		}
-		dev_err(dwc->dev, "request %p was not queued to %s\n",
+		dev_info(dwc->dev, "request %p was not queued to %s\n",
 				request, ep->name);
 		ret = -EINVAL;
 		goto out0;
@@ -1757,7 +1763,7 @@ static int dwc3_gadget_run_stop(struct dwc3 *dwc, int is_on)
 		/* WORKAROUND: reset PHY via FUNC_CTRL before disconnect
 		 * to avoid PHY hang
 		 */
-		if (!dwc->utmi_phy) {
+		if (!dwc->utmi_phy && !dwc3_is_cht()) {
 			usb_phy = usb_get_phy(USB_PHY_TYPE_USB2);
 			if (usb_phy)
 				usb_phy_io_write(usb_phy,
@@ -2268,7 +2274,7 @@ static int dwc3_cleanup_done_reqs(struct dwc3 *dwc, struct dwc3_ep *dep,
 			break;
 	} while (1);
 
-	if (usb_endpoint_xfer_isoc(dep->endpoint.desc) &&
+	if (dep->endpoint.desc && usb_endpoint_xfer_isoc(dep->endpoint.desc) &&
 			list_empty(&dep->req_queued)) {
 		if (list_empty(&dep->request_list)) {
 			/*
@@ -2297,6 +2303,12 @@ static void dwc3_endpoint_transfer_complete(struct dwc3 *dwc,
 {
 	unsigned		status = 0;
 	int			clean_busy;
+
+	if (!(dep->flags & DWC3_EP_ENABLED)) {
+		dev_warn(dwc->dev, "%s: %s event on disabled ep\n", dep->name,
+			dwc3_ep_event_string(event->endpoint_event));
+		return;
+	}
 
 	if (event->status & DEPEVT_STATUS_BUSERR)
 		status = -ECONNRESET;
@@ -2742,30 +2754,28 @@ static void dwc3_gadget_conndone_interrupt(struct dwc3 *dwc)
 		dwc3_gadget_ep0_desc.wMaxPacketSize = cpu_to_le16(512);
 		dwc->gadget.ep0->maxpacket = 512;
 		dwc->gadget.speed = USB_SPEED_SUPER;
-		__dwc3_vbus_draw(dwc, OTG_USB3_150MA);
 		break;
 	case DWC3_DCFG_HIGHSPEED:
 		dwc3_gadget_ep0_desc.wMaxPacketSize = cpu_to_le16(64);
 		dwc->gadget.ep0->maxpacket = 64;
 		dwc->gadget.speed = USB_SPEED_HIGH;
-		__dwc3_vbus_draw(dwc, OTG_USB2_100MA);
 		break;
 	case DWC3_DCFG_FULLSPEED2:
 	case DWC3_DCFG_FULLSPEED1:
 		dwc3_gadget_ep0_desc.wMaxPacketSize = cpu_to_le16(64);
 		dwc->gadget.ep0->maxpacket = 64;
 		dwc->gadget.speed = USB_SPEED_FULL;
-		__dwc3_vbus_draw(dwc, OTG_USB2_100MA);
 		break;
 	case DWC3_DCFG_LOWSPEED:
 		dwc3_gadget_ep0_desc.wMaxPacketSize = cpu_to_le16(8);
 		dwc->gadget.ep0->maxpacket = 8;
 		dwc->gadget.speed = USB_SPEED_LOW;
-		__dwc3_vbus_draw(dwc, OTG_USB2_100MA);
 		break;
 	}
 
-
+	/* Follow OTG2.0 spec. Unconfigured state, max charging cap should
+	 * not exceed 2.5ma. */
+	__dwc3_vbus_draw(dwc, OTG_USB2_0MA);
 
 	/* Enable USB2 LPM Capability */
 
@@ -3184,6 +3194,7 @@ int dwc3_gadget_init(struct dwc3 *dwc)
 	dwc->gadget.max_speed		= USB_SPEED_SUPER;
 	dwc->gadget.speed		= USB_SPEED_UNKNOWN;
 	dwc->gadget.sg_supported	= true;
+	dwc->gadget.quirk_ep_out_aligned_size = true;
 	dwc->gadget.name		= "dwc3-gadget";
 
 	INIT_DELAYED_WORK(&dwc->link_work, link_state_change_work);
@@ -3202,7 +3213,7 @@ int dwc3_gadget_init(struct dwc3 *dwc)
 	dwc3_writel(dwc->regs, DWC3_DCFG, reg);
 
 	/* Enable USB2 LPM and automatic phy suspend only on recent versions */
-	if (dwc->revision >= DWC3_REVISION_194A) {
+	if (!dwc3_is_cht() && dwc->revision >= DWC3_REVISION_194A) {
 		dwc3_gadget_usb2_phy_suspend(dwc, false);
 		dwc3_gadget_usb3_phy_suspend(dwc, false);
 	}

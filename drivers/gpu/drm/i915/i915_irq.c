@@ -773,10 +773,27 @@ static void i915_hotplug_work_func(struct work_struct *work)
 		if (hpd_event_bits & (1 << intel_encoder->hpd_pin)) {
 			if (intel_encoder->hot_plug)
 				intel_encoder->hot_plug(intel_encoder);
-			if (intel_hpd_irq_event(dev, connector))
+			if (intel_hpd_irq_event(dev, connector)) {
+				if (connector->status == connector_status_disconnected &&
+						intel_encoder->type == INTEL_OUTPUT_HDMI) {
+					/* Disable HDMI PORT immidiately for HDCP */
+					u32 temp;
+					struct intel_hdmi *intel_hdmi =
+						enc_to_intel_hdmi(&intel_encoder->base);
+					temp = I915_READ(intel_hdmi->hdmi_reg);
+					temp &= ~(SDVO_ENABLE | SDVO_AUDIO_ENABLE);
+					I915_WRITE(intel_hdmi->hdmi_reg, temp);
+					POSTING_READ(intel_hdmi->hdmi_reg);
+					dev_priv->port_disabled_on_unplug = true;
+				}
+
 				changed = true;
+			}
 		}
 	}
+
+	/* Encoder hotplug fn is suppose to use this, now clear it */
+	dev_priv->hotplug_status = 0;
 	mutex_unlock(&mode_config->mutex);
 
 	/* HDCPD needs a uevent, every time when there is a hotplug */
@@ -1325,7 +1342,7 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 	int pipe;
 	u32 pipe_stats[I915_MAX_PIPES] = {0};
 	int lpe_stream;
-	unsigned int reg;
+
 	atomic_inc(&dev_priv->irq_received);
 
 	while (true) {
@@ -1360,24 +1377,11 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 				I915_WRITE(reg, pipe_stats[pipe]);
 			}
 		}
-		reg = I915_READ(MIPI_INTR_STAT(1));
-		if(reg &(1<<22)){
-			I915_WRITE(MIPI_INTR_STAT(1),(1<<22));
-		}
 		spin_unlock_irqrestore(&dev_priv->irq_lock, irqflags);
 
 		for_each_pipe(pipe) {
-			if (pipe_stats[pipe] & PIPE_VBLANK_INTERRUPT_STATUS) {
-				if (dev_priv->pf_change_status[pipe] & BPP_CHANGED_PRIMARY)
-					I915_WRITE_BITS(VLV_DDL(pipe), dev_priv->pf_change_status[pipe], DL_PRIMARY_MASK);
-				if (dev_priv->pf_change_status[pipe] & BPP_CHANGED_SPRITEA)
-					I915_WRITE_BITS(VLV_DDL(pipe), dev_priv->pf_change_status[pipe], DL_SPRITEA_MASK);
-				if (dev_priv->pf_change_status[pipe] & BPP_CHANGED_SPRITEB)
-					I915_WRITE_BITS(VLV_DDL(pipe), dev_priv->pf_change_status[pipe], DL_SPRITEB_MASK);
-
-				dev_priv->pf_change_status[pipe] = 0x0;
+			if (pipe_stats[pipe] & PIPE_VBLANK_INTERRUPT_STATUS)
 				drm_handle_vblank(dev, pipe);
-			}
 			if (pipe_stats[pipe] & PLANE_FLIPDONE_INT_STATUS_VLV) {
 				intel_prepare_page_flip(dev, pipe);
 				intel_finish_page_flip(dev, pipe);
@@ -1422,7 +1426,9 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 			if (!(hotplug_trigger & HPD_SHORT_PULSE)) {
 				DRM_DEBUG_DRIVER("hotplug event received, stat 0x%08x\n",
 					 hotplug_status);
-
+				/* Few display's cant set the status for long time. Lets save this status for
+				future references like in bottom halves */
+				dev_priv->hotplug_status = hotplug_status;
 				intel_hpd_irq_handler(dev, hotplug_trigger, hpd_status_i915);
 			}
 			I915_WRITE(PORT_HOTPLUG_STAT, hotplug_status);

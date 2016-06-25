@@ -17,16 +17,24 @@
 #include <linux/module.h>
 #include <media/v4l2-subdev.h>
 #include <asm/intel-mid.h>
+#include <asm/intel_scu_pmic.h>
 #include "platform_camera.h"
 #include "platform_imx175.h"
 #include "platform_imx134.h"
 #include "platform_ov2722.h"
+#include "platform_gc2235.h"
 #include "platform_ov5693.h"
 #include "platform_lm3554.h"
+#include "platform_lm3642.h"
 #include "platform_ap1302.h"
 #include "platform_ov8865.h"
 #include "platform_ov9760.h"
 #include "platform_sy7802.h"
+#include "platform_pixter.h"
+#include "platform_m10mo.h"
+#ifdef CONFIG_CRYSTAL_COVE
+#include <linux/mfd/intel_mid_pmic.h>
+#endif
 
 /*
  * TODO: Check whether we can move this info to OEM table or
@@ -36,6 +44,7 @@ const struct intel_v4l2_subdev_id v4l2_ids[] = {
 	{"ov8865", RAW_CAMERA, ATOMISP_CAMERA_PORT_PRIMARY},
 	{"ov9760", RAW_CAMERA, ATOMISP_CAMERA_PORT_SECONDARY},
 	{"lm3554", LED_FLASH, -1},
+	{},
 };
 
 struct camera_device_table {
@@ -43,7 +52,8 @@ struct camera_device_table {
 	struct devs_id dev;
 };
 
-/* Baytrail camera devs table */
+/* Baytrail Cherrytrail camera devs table */
+#ifdef CONFIG_ACPI
 static struct camera_device_table byt_ffrd10_cam_table[] = {
 	{
 		{SFI_DEV_TYPE_I2C, 4, 0x36, 0x0, 0x0, "ov8865"},
@@ -73,7 +83,6 @@ static struct camera_device_table byt_ffrd8_cam_table[] = {
 		{"ov9760", SFI_DEV_TYPE_I2C, 0, &ov9760_platform_data,
 			&intel_register_i2c_camera_device}
 	},
-
 	{
 		{SFI_DEV_TYPE_I2C, 3, 0x53, 0x0, 0x0, "lm3554"},
 		{"lm3554", SFI_DEV_TYPE_I2C, 0, &lm3554_platform_data_func,
@@ -86,12 +95,9 @@ static struct camera_device_table byt_crv2_cam_table[] = {
 		{SFI_DEV_TYPE_I2C, 2, 0x53, 0x0, 0x0, "lm3554"},
 		{"lm3554", SFI_DEV_TYPE_I2C, 0, &lm3554_platform_data_func,
 			&intel_register_i2c_camera_device}
-	},
+	}, 
 };
 
-static struct atomisp_camera_caps default_camera_caps;
-
-#ifdef CHT_RVP_USE_BYT_CAM_AOB
 static struct camera_device_table cht_rvp_cam_table[] = {
 	{
 		{SFI_DEV_TYPE_I2C, 4, 0x10, 0x0, 0x0, "imx175"},
@@ -107,24 +113,47 @@ static struct camera_device_table cht_rvp_cam_table[] = {
 			&intel_register_i2c_camera_device}
 	},
 };
-#else
-static struct camera_device_table cht_rvp_cam_table[] = {
+
+static struct camera_device_table cht_ffd_cam_table[] = {
 	{
-		{SFI_DEV_TYPE_I2C, 2, 0x10, 0x0, 0x0, "imx175"},
-		{"imx175", SFI_DEV_TYPE_I2C, 0, &imx175_platform_data,
+		{SFI_DEV_TYPE_I2C, 4, 0x10, 0x0, 0x0, "ov5693"},
+		{"ov5693", SFI_DEV_TYPE_I2C, 0, &ov5693_platform_data,
 			&intel_register_i2c_camera_device}
 	}, {
-		{SFI_DEV_TYPE_I2C, 4, 0x3C, 0x0, 0x0, "ap1302"},
-		{"ap1302", SFI_DEV_TYPE_I2C, 0, &ap1302_platform_data,
+		{SFI_DEV_TYPE_I2C, 4, 0x36, 0x0, 0x0, "ov2722"},
+		{"ov2722", SFI_DEV_TYPE_I2C, 0, &ov2722_platform_data,
 			&intel_register_i2c_camera_device}
 	}, {
 		{SFI_DEV_TYPE_I2C, 1, 0x53, 0x0, 0x0, "lm3554"},
 		{"lm3554", SFI_DEV_TYPE_I2C, 0, &lm3554_platform_data_func,
 			&intel_register_i2c_camera_device}
+	}
+};
+
+static struct camera_device_table cht_somc_cam_table[] = {
+	{
+		{SFI_DEV_TYPE_I2C, 4, 0x1f, 0x0, 0x0, "m10mo"},
+		{"m10mo", SFI_DEV_TYPE_I2C, 0, &m10mo_platform_data,
+			&intel_register_i2c_camera_device}
 	},
+};
+
+#ifdef CONFIG_VIDEO_PIXTER
+static struct camera_device_table pixter_cam_table[] = {
+	{
+		{SFI_DEV_TYPE_I2C, 4, 0x70, 0x0, 0x0, "pixter_0"},
+		{"pixter_0", SFI_DEV_TYPE_I2C, 0, &pixter_0_platform_data,
+			&intel_register_i2c_camera_device}
+	}, {
+		{SFI_DEV_TYPE_I2C, 4, 0x72, 0x0, 0x0, "pixter_1"},
+		{"pixter_1", SFI_DEV_TYPE_I2C, 0, &pixter_1_platform_data,
+			&intel_register_i2c_camera_device}
+	}
 };
 #endif
 
+#endif
+static struct atomisp_camera_caps default_camera_caps;
 /*
  * One-time gpio initialization.
  * @name: gpio name: coded in SFI table
@@ -170,6 +199,12 @@ int camera_sensor_gpio(int gpio, char *name, int dir, int value)
 	return ret ? ret : pin;
 }
 
+void camera_sensor_gpio_free(int pin)
+{
+	if (pin != -1)
+		gpio_free(pin);
+}
+
 /*
  * Configure MIPI CSI physical parameters.
  * @port: ATOMISP_CAMERA_PORT_PRIMARY or ATOMISP_CAMERA_PORT_SECONDARY
@@ -195,6 +230,8 @@ int camera_sensor_csi(struct v4l2_subdev *sd, u32 port,
 		csi->input_format = format;
 		csi->raw_bayer_order = bayer_order;
 		v4l2_set_subdev_hostdata(sd, (void *)csi);
+		csi->metadata_format = ATOMISP_INPUT_FORMAT_EMBEDDED;
+		csi->metadata_effective_width = NULL;
 		dev_info(&client->dev,
 			 "camera pdata: port: %d lanes: %d order: %8.8x\n",
 			 port, lanes, bayer_order);
@@ -225,6 +262,19 @@ static const struct intel_v4l2_subdev_id *get_v4l2_ids(int *n_subdev)
 }
 
 static struct atomisp_platform_data *atomisp_platform_data;
+
+#ifdef CONFIG_ACPI
+void atomisp_register_device_table(int entry_num,
+	struct camera_device_table *table)
+{
+	int i;
+	for (i = 0; i < entry_num; i++, table++) {
+		if (table->dev.device_handler)
+			table->dev.device_handler(&table->entry,
+				&table->dev);
+	}
+}
+#endif
 
 void intel_register_i2c_camera_device(struct sfi_device_table_entry *pentry,
 					struct devs_id *dev)
@@ -304,6 +354,7 @@ void intel_register_i2c_camera_device(struct sfi_device_table_entry *pentry,
 			kfree(subdev_table);
 			return;
 		}
+		i = 0;
 		atomisp_platform_data->subdevs = subdev_table;
 	}
 
@@ -343,6 +394,11 @@ static void atomisp_unregister_acpi_devices(struct atomisp_platform_data *pdata)
 		"4-0036",	/* Bld II ov8865 */
 		"4-0010",	/* Bld II ov9760 */
 		"3-0053", 	/* led sy7802 */
+#if 0
+		"INTCF0B:00",	/* From ACPI ov2722 */
+		"INTCF1A:00",	/* From ACPI imx175 */
+		"INTCF1C:00",	/* From ACPI lm3554 */
+#endif
 	};
 	struct device *dev;
 	struct i2c_client *client;
@@ -399,6 +455,7 @@ const struct atomisp_camera_caps *atomisp_get_default_camera_caps(void)
 	if (!init) {
 		default_camera_caps.sensor_num = 1;
 		default_camera_caps.sensor[0].stream_num = 1;
+		default_camera_caps.sensor[0].is_slave = false;
 		init = true;
 	}
 	return &default_camera_caps;
@@ -446,40 +503,184 @@ const struct camera_af_platform_data *camera_get_af_platform_data(void)
 }
 EXPORT_SYMBOL_GPL(camera_get_af_platform_data);
 
+#ifdef CONFIG_CRYSTAL_COVE
+/*
+ * WA for BTY as simple VRF management
+ */
+int camera_set_pmic_power(enum camera_pmic_pin pin, bool flag)
+{
+	u8 reg_addr[CAMERA_POWER_NUM] = {VPROG_1P8V, VPROG_2P8V};
+	u8 reg_value[2] = {VPROG_DISABLE, VPROG_ENABLE};
+	int val;
+	static DEFINE_MUTEX(mutex_power);
+	int ret = 0;
+
+	if (pin >= CAMERA_POWER_NUM)
+		return -EINVAL;
+
+	mutex_lock(&mutex_power);
+	val = intel_mid_pmic_readb(reg_addr[pin]) & 0x3;
+
+	if ((flag && (val == VPROG_DISABLE)) ||
+		(!flag && (val == VPROG_ENABLE)))
+		ret = intel_mid_pmic_writeb(reg_addr[pin], reg_value[flag]);
+
+	mutex_unlock(&mutex_power);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(camera_set_pmic_power);
+#endif
+
+#ifdef CONFIG_INTEL_SCU_IPC_UTIL
+/*
+ *  Simple power management is needed since camera sensors
+ *  share the same power rail. When 2 sensors are working simulatenously,
+ *  the power rail should be off after all callers stop.
+ */
+
+static int camera_set_vprog3(bool flag, enum camera_vprog_voltage voltage)
+{
+	/*
+	 * Currently it is not possible to control the voltage outside of
+	 * intel_scu_ipcut so have to do it manually here
+	 */
+#define MSIC_VPROG3_MRFLD_CTRL		0xae
+#define MSIC_VPROG3_MRFLD_ON_1_05	0x01	/* 1.05V and Auto mode */
+#define MSIC_VPROG3_MRFLD_ON_1_83	0x41	/* 1.83V and Auto mode */
+#define MSIC_VPROG_MRFLD_OFF		0	/* OFF */
+
+	if (intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE) {
+		if (voltage == CAMERA_1_05_VOLT) {
+			return intel_scu_ipc_iowrite8(MSIC_VPROG3_MRFLD_CTRL,
+			       flag ? MSIC_VPROG3_MRFLD_ON_1_05 :
+			       MSIC_VPROG_MRFLD_OFF);
+		} else if (voltage == CAMERA_1_83_VOLT) {
+			return intel_scu_ipc_iowrite8(MSIC_VPROG3_MRFLD_CTRL,
+			       flag ? MSIC_VPROG3_MRFLD_ON_1_83 :
+			       MSIC_VPROG_MRFLD_OFF);
+		} else {
+			pr_err("Error: Unsupported vprog3 voltage\n");
+			return -ENODEV;
+		}
+	} else {
+		pr_err("Error: vprog3 not supported\n");
+		return -ENODEV;
+	}
+}
+
+int camera_set_vprog_power(enum camera_vprog vprog, bool flag,
+			   enum camera_vprog_voltage voltage)
+{
+	static struct vprog_status status[CAMERA_VPROG_NUM];
+	static DEFINE_MUTEX(mutex_power);
+	int ret = 0;
+
+	if (vprog >= CAMERA_VPROG_NUM) {
+		pr_err("%s: invalid vprog number: %d\n", __func__, vprog);
+		return -EINVAL;
+	}
+
+	mutex_lock(&mutex_power);
+	/*
+	 * only set power at: first to power on last to power off
+	 */
+	if ((flag && status[vprog].user == 0)
+	    || (!flag && status[vprog].user == 1)) {
+		switch (vprog) {
+		case CAMERA_VPROG1:
+			if (voltage == DEFAULT_VOLTAGE) {
+				ret = intel_scu_ipc_msic_vprog1(flag);
+			} else {
+				pr_err("Error: non-default vprog1 voltage\n");
+				ret = -EINVAL;
+			}
+			break;
+		case CAMERA_VPROG2:
+			if (voltage == DEFAULT_VOLTAGE) {
+				ret = intel_scu_ipc_msic_vprog2(flag);
+			} else {
+				pr_err("Error: non-default vprog2 voltage\n");
+				ret = -EINVAL;
+			}
+			break;
+		case CAMERA_VPROG3:
+			ret = camera_set_vprog3(flag, voltage);
+			break;
+		default:
+			pr_err("camera set vprog power: invalid pin number.\n");
+			ret = -EINVAL;
+		}
+		if (ret)
+			goto done;
+	}
+
+	if (flag)
+		status[vprog].user++;
+	else
+		if (status[vprog].user)
+			status[vprog].user--;
+done:
+	mutex_unlock(&mutex_power);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(camera_set_vprog_power);
+#endif /* CONFIG_INTEL_SCU_IPC_UTIL */
+
+#define HEXPREF(x)	((x) != 0 ? "0x" : "")
+#define HEX(x)		HEXPREF(x), (x)
+
+char *camera_get_msr_filename(char *buf, int buf_size, char *sensor, int cam)
+{
+	snprintf(buf, buf_size, "%02d%s-%s%x-%s%x-%s%x.drvb",
+		 cam, sensor, HEX(spid.vendor_id),
+		 HEX(spid.platform_family_id), HEX(spid.product_line_id));
+	return buf;
+}
+
 #ifdef CONFIG_ACPI
 void __init camera_init_device(void)
 {
 	struct camera_device_table *table = NULL;
 	int entry_num = 0;
-	int i;
+#ifndef CONFIG_VIDEO_PIXTER
 	if (INTEL_MID_BOARD(1, TABLET, BYT)) {
 		if (spid.hardware_id == BYT_TABLET_BLK_8PR0 ||
 		    spid.hardware_id == BYT_TABLET_BLK_8PR1) {
-		    printk("test BYT_TABLET_BLK_8PR 0/1 @function %s  @line %d",__FUNCTION__,__LINE__);
+		    //printk("[%s:] yxw test  line = %d\n",__FUNCTION__,__LINE__);
 			table = byt_ffrd8_cam_table;
 			entry_num = ARRAY_SIZE(byt_ffrd8_cam_table);
 		} else if (spid.hardware_id == BYT_TABLET_BLK_CRV2) {
-			printk("test BYT_TABLET_BLK_CRV2 @function %s  @line %d",__FUNCTION__,__LINE__);
 			table = byt_crv2_cam_table;
 			entry_num = ARRAY_SIZE(byt_crv2_cam_table);
 		} else {
-			printk("test byt_ffrd10_cam_table @function %s  @line %d",__FUNCTION__,__LINE__);
-			
 			table = byt_ffrd10_cam_table;
 			entry_num = ARRAY_SIZE(byt_ffrd10_cam_table);
 		}
+	} else if (INTEL_MID_BOARD(1, TABLET, CHT) ||
+		   INTEL_MID_BOARD(1, PHONE, CHT)) {
+		int fw_type = m10mo_platform_identify_fw();
+		if (fw_type != -1) {
+			table = cht_somc_cam_table;
+			entry_num = ARRAY_SIZE(cht_somc_cam_table);
+			pr_info("M10MO for SOMC is detected.\n");
+		} else {
+			if (spid.hardware_id == CHT_TABLET_RVP1 ||
+			    spid.hardware_id == CHT_TABLET_RVP2 ||
+			    spid.hardware_id == CHT_TABLET_RVP3 ||
+			    spid.hardware_id == CHT_TABLET_FRD_PR0 ||
+			    spid.hardware_id == CHT_TABLET_FRD_PR1 ||
+			    spid.hardware_id == CHT_TABLET_FRD_PR2) {
+				table = cht_ffd_cam_table;
+				entry_num = ARRAY_SIZE(cht_ffd_cam_table);
+			} else
+				pr_warn("unknown CHT platform variant.\n");
+		}
 	}
-	/* For CHT, INTEL_MID_BOARD is not ready at the moment. */
-	/* Need to call INTEL_MID_BOARD to indentify CHT. */
-#ifdef BOARD_CHT
-	table = cht_rvp_cam_table;
-	entry_num = ARRAY_SIZE(cht_rvp_cam_table);
+#else
+	table = pixter_cam_table;
+	entry_num = ARRAY_SIZE(pixter_cam_table);
 #endif
-	for (i = 0; i < entry_num; i++, table++) {
-		if (table->dev.device_handler)
-			table->dev.device_handler(&table->entry,
-				&table->dev);
-	}
+	atomisp_register_device_table(entry_num, table);
 }
 device_initcall(camera_init_device);
 #endif

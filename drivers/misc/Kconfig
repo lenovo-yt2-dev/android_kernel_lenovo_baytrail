@@ -159,6 +159,17 @@ config INTEL_PTI_STM
 	  It provide the ability to PTI driver to setup the output and
 	  to user to change the output with sysfs and exported header.
 
+config INTEL_PTI_STM_DVC_IO
+	tristate "STM trace over DvC"
+	default n
+	depends on INTEL_PTI_STM
+	help
+	  The STM (Sytem Trace Monitor) driver control trace data
+	  route through an Intel Tangier PTI port or through USB xDCI
+	  interface with Debug-Class DvC.Trace support.
+
+	  It provides the ability to output STM traces over USB DvC trace.
+
 config SGI_IOC4
 	tristate "SGI IOC4 Base IO support"
 	depends on PCI
@@ -552,11 +563,6 @@ config SRAM
 	  the genalloc API. It is supposed to be used for small on-chip SRAM
 	  areas found on many SoCs.
 
-config VLV2_PLAT_CLK
-	tristate "Vlv2 platform clock control driver"
-	---help---
-	 Driver to enable the platform clock control for valleyview2
-
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
@@ -566,4 +572,5 @@ source "drivers/misc/carma/Kconfig"
 source "drivers/misc/altera-stapl/Kconfig"
 source "drivers/misc/mei/Kconfig"
 source "drivers/misc/vmw_vmci/Kconfig"
+source "drivers/misc/heci/Kconfig"
 endmenu

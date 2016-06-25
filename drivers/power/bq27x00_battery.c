@@ -34,10 +34,10 @@
 #include <linux/i2c.h>
 #include <linux/slab.h>
 #include <asm/unaligned.h>
-
+#include <linux/reboot.h>
 #include <linux/switch.h>
 #include <linux/interrupt.h>
-
+#include <linux/alarmtimer.h>
 #include <linux/wakelock.h>
 #include <linux/power/bq27x00_battery.h>
 #include <linux/mfd/intel_mid_pmic.h>
@@ -551,6 +551,8 @@ struct bq27x00_device_info {
 
 	struct switch_dev sdev;
 	struct wake_lock wake_lock;
+	struct alarm			vddtrim_alarm;//add by yxf
+	struct work_struct		vddtrim_work;//add  by yxf
 };
 
 static enum power_supply_property bq27x00_battery_props[] = {
@@ -771,6 +773,7 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 	unsigned char block_addr;
 	int block_len;
 	struct timespec   ts;
+	static int  last_capacity =0;
 	static  int  flag_no_read_temp = 1, dvt1_board_detect = 1,is_dvt1_board =0;
 
 #ifdef DBG_FG_IC
@@ -809,6 +812,7 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 		cache.DOD0 = bq27x00_read(di, BQ27541_DOD0, false);
 	#else
 		cache.capacity = bq27x00_battery_read_rsoc(di);
+		
 		if(flag_no_read_temp )
 		{
 			flag_no_read_temp   = 0;
@@ -845,6 +849,15 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 			}
 		}
 		cache.voltage = bq27x00_read_reg(di, BQ27x00_REG_VOLT, false);
+		if(  (cache.capacity == 0)&& (last_capacity ==1)  )
+		{
+			if(cache.voltage >=3380)
+			{
+				printk(KERN_ERR"because voltage = %d >=3350, set capacity = 0% \n",cache.voltage);
+				cache.capacity = 1;
+			}
+		}
+		last_capacity = cache.capacity;
 		printk(" cache.voltage %d,capacity =%d, temp =%d  \n",cache.voltage,cache.capacity,cache.temperature);
 		cache.nom_avail_cap = bq27x00_read_reg(di, BQ27x00_REG_NAC, false);
 		cache.full_avail_cap = bq27x00_read_reg(di, BQ27x00_REG_FAC, false);
@@ -1055,6 +1068,7 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 	if (memcmp(&di->cache, &cache, sizeof(cache) - sizeof(int)) != 0) {
 		di->cache = cache;
 		power_supply_changed(&di->bat);
+		printk(KERN_ERR"send power_supply_changed capacity =%d \n",cache.capacity);
 	}
 
 	di->last_update = jiffies;
@@ -1318,6 +1332,7 @@ static int bq27x00_battery_get_property(struct power_supply *psy,
 					union power_supply_propval *val)
 {
 	int ret = 0;
+	static int   before_capacity =  0;
 	struct bq27x00_device_info *di = to_bq27x00_device_info(psy);
 
 	mutex_lock(&di->lock);
@@ -1364,12 +1379,14 @@ static int bq27x00_battery_get_property(struct power_supply *psy,
 			if(di->cache.capacity == 100)
 			{
 				bq27x00_battery_status(di,val);
-				if(val->intval !=POWER_SUPPLY_STATUS_FULL && battery_is_charging())
+				if(val->intval !=POWER_SUPPLY_STATUS_FULL && battery_is_charging()&&(before_capacity !=100) )
 				{
-					printk("cap =100%,but not full and we will set 99%\n");
+					printk("cap =100%,but charge doesnt end and set it 99%\n");
 					di->cache.capacity =99;
 				}
 			}
+
+			before_capacity = di->cache.capacity;
 		
 			ret = bq27x00_simple_value(di->cache.capacity, val);
 		}
@@ -1619,6 +1636,7 @@ static int bq27x00_read_i2c(struct bq27x00_device_info *di, u8 reg, bool single)
 
 static int bq27x00_write_i2c(struct bq27x00_device_info *di, u8 reg, int value, bool single)
 {
+#if 0   //it has difference between 4.4 and 5.0
 	struct i2c_client *client = to_i2c_client(di->dev);
 	struct i2c_msg msg[2];
 	unsigned char data[2];
@@ -1643,8 +1661,36 @@ static int bq27x00_write_i2c(struct bq27x00_device_info *di, u8 reg, int value, 
 		msg[1].len = 1;
 	else
 		msg[1].len = 2;
+#else
+	struct i2c_client *client = to_i2c_client(di->dev);
+	struct i2c_msg msg;
+	unsigned char data[3];
+	int ret;
 
-	ret = i2c_transfer(client->adapter, msg, ARRAY_SIZE(msg));
+	if (!client->adapter)
+		return -ENODEV;
+
+
+	msg.addr = client->addr;
+	msg.flags = 0;
+	msg.buf = data;
+	msg.len = sizeof(reg);
+
+	if (single)
+	{
+		data[0] =reg;
+		data[1] =value;
+		msg.len = 2;
+	}
+	else
+	{
+		data[0] =reg;
+		data[1] =value;
+		data[2] =value;
+		msg.len = 3;
+	}
+#endif
+	ret = i2c_transfer(client->adapter, &msg, 1);
 	if (ret < 0)
 		return ret;
 
@@ -2301,6 +2347,7 @@ static ssize_t set_debug_print_interval(struct device *dev,
 		return -EINVAL;
 
 	if (val < 0 || val > DEBUG_1HZ_MAX_COUNT) return -EINVAL;
+	printk(" debug  val =%d \n",val);
 	di->debug_print_interval = val;
 	di->debug_index = 0;
 
@@ -2436,9 +2483,14 @@ static u8 command_array1[]= {0x00,0x13,0x00};
 /* remove 3 piece of array since they are comments
    20140817
  */
+ static u8 add_command_array2[]= {0x3E,0x50,0x00};
+static u8 add_command_array3[]= {0x56,0x03,0xDE};
+static u8 add_command_array4[]= {0x60,0xFD};
+
 static u8 command_array2[]= {0x3E, 0x50,0x02};
+static u8 addmid_command_array3[]= {0x40,0x01};
 static u8 command_array3[]= {0x45,0x01};
-static u8 command_array4[]= {0x60,0xca};
+static u8 command_array4[]= {0x60,0xd4};// 0xcd->0xd4
 
 static u8 command_array5[]= {0x3E, 0x50, 0x01};
 static u8 command_array6[]= {0x58,0x00,0xb9};
@@ -2486,13 +2538,18 @@ static void bq27x00_set_initdata(struct bq27x00_device_info *di)
 {
 	if( 4290 ==bq27x00_read_reg(di, 0x3c, false) )   //if has inited ,return
 	{
-		printk(" has inited0806 \n");
+		printk(KERN_ERR" has inited1029 \n");
 		return;
 	}
 	printk("%s 2-0-4290  int  start  \n",__func__);
 	bq27x00_send_command(di, command_array1, sizeof(command_array1));
 	msleep(200);
+		bq27x00_send_command(di, add_command_array2, sizeof(add_command_array2));
+	bq27x00_send_command(di, add_command_array3, sizeof(add_command_array3));
+	bq27x00_send_command(di, add_command_array4, sizeof(add_command_array4));
+	
 	bq27x00_send_command(di, command_array2, sizeof(command_array2));
+		bq27x00_send_command(di, addmid_command_array3, sizeof(addmid_command_array3));
 	bq27x00_send_command(di, command_array3, sizeof(command_array3));
 	bq27x00_send_command(di, command_array4, sizeof(command_array4));
 //	msleep(200); //remove it to decrease the time of startup 0621
@@ -2533,6 +2590,58 @@ static void bq27x00_set_initdata(struct bq27x00_device_info *di)
 
 }
 
+#define TRIM_PERIOD_INIT_NS      (3600LL * NSEC_PER_SEC)
+#define TRIM_PERIOD_BATTERY_LOW_NS			(900LL * NSEC_PER_SEC)
+#define TRIM_PERIOD_BATTERY_MID_NS			(3600LL * NSEC_PER_SEC)
+#define TRIM_PERIOD_BATTERY_HIGH_NS			(3600LL * NSEC_PER_SEC)
+
+static inline int bq27x00_battery_get_capacity(struct bq27x00_device_info* di){
+	return di->cache.capacity;
+}
+
+static void qpnp_lbc_vddtrim_work_fn(struct work_struct *work)
+{
+	ktime_t kt;
+	int capacity = 0;
+	static unsigned char  shutdown_force =0;
+	struct bq27x00_device_info *chip = container_of(work, struct bq27x00_device_info,
+						vddtrim_work);
+	capacity = bq27x00_battery_get_capacity(chip);
+	if(capacity> 10){
+		kt = ns_to_ktime(TRIM_PERIOD_BATTERY_HIGH_NS);
+	} else if (capacity> 5){
+		kt = ns_to_ktime(TRIM_PERIOD_BATTERY_MID_NS);
+	} else {
+		kt = ns_to_ktime(TRIM_PERIOD_BATTERY_LOW_NS);
+	}
+	if(battery_is_charging())
+		shutdown_force = 0;
+	else
+	{
+		if(0== capacity)
+			shutdown_force++;
+		else
+			shutdown_force = 0;
+	}
+	if(shutdown_force>2)
+			kernel_power_off();
+
+	alarm_start_relative(&chip->vddtrim_alarm, kt);
+	printk(KERN_ALERT"%s  yxf1012  capacity=%d\n",__func__,capacity);
+	pm_relax(chip->dev);
+}
+static enum alarmtimer_restart vddtrim_callback(struct alarm *alarm,
+					ktime_t now)
+{
+	struct bq27x00_device_info *chip = container_of(alarm, struct bq27x00_device_info,vddtrim_alarm);
+	wake_lock_timeout(&chip->wake_lock,3*HZ);
+	pm_stay_awake(chip->dev);
+	schedule_work(&chip->vddtrim_work);
+
+	return ALARMTIMER_NORESTART;
+}
+
+
 static int bq27x00_battery_probe(struct i2c_client *client,
 				 const struct i2c_device_id *id)
 {
@@ -2540,9 +2649,9 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 	struct bq27x00_device_info *di;
 	int num;
 	int retval = 0;
+		ktime_t kt;
 	struct bq27x00_platform_data *pdata = client->dev.platform_data;
 
-	pr_axs("++\n");
 
 	/* Get new ID for the new battery device */
 	retval = idr_pre_get(&battery_id, GFP_KERNEL);
@@ -2553,7 +2662,6 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 	mutex_unlock(&battery_mutex);
 	if (retval < 0)
 		return retval;
-
 	//name = kasprintf(GFP_KERNEL, "%s-%d", id->name, num);
 	name = kasprintf(GFP_KERNEL, "bq27541_battery");
 	if (!name) {
@@ -2561,7 +2669,6 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 		retval = -ENOMEM;
 		goto batt_failed_1;
 	}
-
 	di = kzalloc(sizeof(*di), GFP_KERNEL);
 	if (!di) {
 		dev_err(&client->dev, "failed to allocate device info data\n");
@@ -2575,7 +2682,7 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 	di->bat.name = name;
 	di->bus.read = &bq27x00_read_i2c;
 	di->bus.write = &bq27x00_write_i2c;
-	di->debug_print_interval = DEBUG_1HZ_MAX_COUNT;
+	di->debug_print_interval = 0;
 	di->debug_index = 0;
 
 	if (pdata && pdata->translate_temp)
@@ -2625,9 +2732,13 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 		di->data_flash_update_time =
 			jiffies + msecs_to_jiffies(debug_dataflash_interval);
 	}
-	
+	INIT_WORK(&di->vddtrim_work, qpnp_lbc_vddtrim_work_fn);
+	alarm_init(&di->vddtrim_alarm, ALARM_REALTIME, vddtrim_callback);
+		kt = ns_to_ktime(TRIM_PERIOD_INIT_NS);
+		alarm_start_relative(&di->vddtrim_alarm, kt);
+		printk(KERN_ALERT"%s probe exit yxf1012 \n",__func__);
 	pr_axs("--\n");
-
+printk("yxf  %s+end+\n", __func__);
 	return 0;
 
 batt_failed_3:
@@ -2699,14 +2810,17 @@ static int bq27x00_battery_suspend_resume(struct i2c_client *client, const char 
 	}
 
 	mutex_lock(&di->lock);
-
+	printk(KERN_ERR"di->debug_print_interval = %d ,suspend_resume =%s\n",di->debug_print_interval,suspend_resume);
 	ret = bq27x00_battery_dump_qpassed(di, buf, sizeof(buf));
 
-	if (di->debug_print_interval > 0) {
+	if (1) {
 		if (suspend_resume == SUSPEND_STR)
+		{
 			cancel_delayed_work_sync(&di->work);
+			cancel_delayed_work_sync(&di->debug_work);
+		}
 		else if (suspend_resume == RESUME_STR)
-			schedule_delayed_work(&di->debug_work, HZ);
+			schedule_delayed_work(&di->work, 0);
 	}
 
 	mutex_unlock(&di->lock);
@@ -2734,8 +2848,8 @@ static int bq27x00_battery_resume(struct i2c_client *client)
 
 static const struct i2c_device_id bq27x00_id[] = {
 	{ "bq27200", BQ27000 },	/* bq27200 is same as bq27000, but with i2c */
+	{ "BQF27541:00", BQ27500 },
 	{ "bq27500", BQ27500 },
-	{ "bq27520", BQ27500 },
 	{},
 };
 MODULE_DEVICE_TABLE(i2c, bq27x00_id);
@@ -2766,7 +2880,6 @@ static inline void bq27x00_battery_i2c_exit(void)
 }
 
 #else
-
 static inline int bq27x00_battery_i2c_init(void) { return 0; }
 static inline void bq27x00_battery_i2c_exit(void) {};
 
@@ -2904,7 +3017,7 @@ static int __init bq27x00_battery_init(void)
 {
 	int ret;
 
-	pr_axs("++ \n");
+	pr_axs("  %s ++ \n",__func__);
 	
 	ret = bq27x00_battery_i2c_init();
 	if (ret)

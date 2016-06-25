@@ -2097,67 +2097,6 @@ void gpio_set_value_cansleep(unsigned gpio, int value)
 }
 EXPORT_SYMBOL_GPL(gpio_set_value_cansleep);
 
-static void gpiolib_show(struct gpio_chip *chip)
-{
-	unsigned		i;
-	unsigned		gpio = chip->base;
-	struct gpio_desc	*gdesc = &chip->desc[0];
-	int			is_out;
-
-	for (i = 0; i < chip->ngpio; i++, gpio++, gdesc++) {
-		gpiod_get_direction(gdesc);
-		is_out = test_bit(FLAG_IS_OUT, &gdesc->flags);
-		printk(" gpio-%-3d (%-20.20s) %s %s",
-			gpio, gdesc->label,
-			is_out ? "out" : "in ",
-			chip->get
-				? (chip->get(chip, i) ? "hi" : "lo")
-				: "?  ");
-		printk("\n");
-	}
-}
-
-
-void gpio_print_all()
-{
-	struct gpio_chip	*chip = NULL;
-	unsigned		gpio;
-	int			started = 0;
-
-	/* REVISIT this isn't locked against gpio_chip removal ... */
-
-	for (gpio = 0; gpio_is_valid(gpio)&&gpio<200; gpio++) {
-		struct device *dev;
-
-		if (chip == gpio_desc[gpio].chip)
-			continue;
-		chip = gpio_desc[gpio].chip;
-		if (!chip)
-			continue;
-
-		printk("%sGPIOs %d-%d",
-				started ? "\n" : "",
-				chip->base, chip->base + chip->ngpio - 1);
-		dev = chip->dev;
-		if (dev)
-			printk(", %s/%s",
-				dev->bus ? dev->bus->name : "no-bus",
-				dev_name(dev));
-		if (chip->label)
-			printk(", %s", chip->label);
-		if (chip->can_sleep)
-			printk(", can sleep");
-		printk(":\n");
-
-		started = 1;
-		gpiolib_show(chip);
-	}
-	return 0;
-}
-
-EXPORT_SYMBOL_GPL(gpio_print_all);
-
-
 #ifdef CONFIG_DEBUG_FS
 
 static void gpiolib_dbg_show(struct seq_file *s, struct gpio_chip *chip)

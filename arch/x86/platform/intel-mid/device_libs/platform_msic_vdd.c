@@ -50,7 +50,7 @@ void __init *msic_vdd_platform_data(void *info)
 	/* Disabling VCRIT and VWARNB for clvp */
 	if (INTEL_MID_BOARD(1, PHONE, CLVTP)) {
 		msic_vdd_pdata.disable_unused_comparator =
-			 DISABLE_VCRIT | DISABLE_VWARNB;
+			 DISABLE_VCRIT;
 		msic_vdd_pdata.is_clvp = true;
 	}
 	pdev->dev.platform_data = &msic_vdd_pdata;

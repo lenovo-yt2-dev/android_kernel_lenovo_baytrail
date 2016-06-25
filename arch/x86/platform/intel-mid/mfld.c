@@ -98,12 +98,12 @@ static void __init penwell_arch_setup()
 	x86_platform.calibrate_tsc = mfld_calibrate_tsc;
 }
 
-void *get_penwell_ops()
+void *get_penwell_ops(void)
 {
 	return &penwell_ops;
 }
 
-void *get_cloverview_ops()
+void *get_cloverview_ops(void)
 {
 	return &penwell_ops;
 }

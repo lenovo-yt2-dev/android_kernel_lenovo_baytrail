@@ -37,7 +37,11 @@ void *ctp_audio_platform_data(void *info)
 	char name[SFI_NAME_LEN+1];
 
 	ctp_audio_pdata.codec_gpio_hsdet = get_gpio_by_name("gpio_plugdet");
+#if defined(CONFIG_ME372CL) || defined(CONFIG_PF450CL)
+	ctp_audio_pdata.codec_gpio_button = get_gpio_by_name("HOOK_DET");
+#else
 	ctp_audio_pdata.codec_gpio_button = get_gpio_by_name("gpio_codec_int");
+#endif /* CONFIG_ME372CL */
 	ctp_audio_pdata.codec_gpio_dmic = GPIO_DMIC_1_EN;
 	ret = add_sst_platform_device();
 	if (ret < 0)

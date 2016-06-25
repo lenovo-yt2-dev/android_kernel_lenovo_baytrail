@@ -281,42 +281,39 @@ static int alarmtimer_suspend(struct device *dev)
 	return ret;
 }
 
-
 /**
  * alarmtimer_resume - Resume time callback
  * @dev: unused
  *
- * We have just woken up. We now need to cancel all
- * pending rtctimer alarms.
+ * We just waked up, no need of rtc timer anymore,
+ * so we can cancel it.
  */
 static int alarmtimer_resume(struct device *dev)
 {
 	struct rtc_device *rtc;
 
 	rtc = alarmtimer_get_rtcdev();
+	/* If we have no rtcdev, just return */
 	if (!rtc)
 		return 0;
 
-	/* Cancel Pending timers */
+	/* cancel rtc timer if pending */
 	rtc_timer_cancel(rtc, &rtctimer);
+
 	return 0;
 }
-
 
 static void write_rtc_wakeup(void)
 {
 	struct rtc_time tm;
-	ktime_t min, now;
+	ktime_t now, delta;
 	unsigned long flags;
 	struct rtc_device *rtc;
-	struct alarm_base *base = &alarm_bases[ALARM_REALTIME_OFF];
 	struct timerqueue_node *next;
-	ktime_t delta;
-
-	spin_lock_irqsave(&freezer_delta_lock, flags);
-	min = freezer_delta;
-	freezer_delta = ktime_set(0, 0);
-	spin_unlock_irqrestore(&freezer_delta_lock, flags);
+	struct alarm_base *base = &alarm_bases[ALARM_REALTIME_OFF];
+	struct rtc_wkalrm alrm;
+	int rtc_alarm = 0;
+	int err;
 
 	rtc = alarmtimer_get_rtcdev();
 	/* If we have no rtcdev, just return */
@@ -328,23 +325,33 @@ static void write_rtc_wakeup(void)
 	spin_lock_irqsave(&base->lock, flags);
 	next = timerqueue_getnext(&base->timerqueue);
 	spin_unlock_irqrestore(&base->lock, flags);
-	if (!next) {
-		rtc_timer_cancel(rtc, &rtctimer);
+
+	err = rtc_read_alarm(rtc, &alrm);
+	if (err == 0)
+		rtc_alarm = alrm.enabled;
+
+	if (!next && !rtc_alarm) {
+		/* no OFF alarm and no rtc alarm pending, cancel everything
+		 * else and disable RTC alarm.
+		 */
+		rtc_cancel_all_timers(rtc);
 		return;
 	}
 
-	delta = ktime_sub(next->expires, base->gettime());
-	if (!min.tv64 || (delta.tv64 < min.tv64))
-		min = delta;
+	if (next) {
+		delta = ktime_sub(next->expires, base->gettime());
+		if (delta.tv64 == 0)
+			return;
 
-	if (min.tv64 == 0)
-		return;
+		rtc_read_time(rtc, &tm);
+		now = rtc_tm_to_ktime(tm);
+		now = ktime_add(now, delta);
+	} else
+		/* alarm has been programmed through sysfs*/
+		now = rtc_tm_to_ktime(alrm.time);
 
 	/* Setup an rtc timer to fire that far in the future */
-	rtc_timer_cancel(rtc, &rtctimer);
-	rtc_read_time(rtc, &tm);
-	now = rtc_tm_to_ktime(tm);
-	now = ktime_add(now, min);
+	rtc_cancel_all_timers(rtc);
 
 	/* Set alarm */
 	rtc_timer_start(rtc, &rtctimer, now, ktime_set(0, 0));
@@ -855,7 +862,6 @@ static int alarm_timer_nsleep(const clockid_t which_clock, int flags,
 out:
 	return ret;
 }
-
 
 
 /* Suspend hook structures */

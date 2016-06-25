@@ -97,6 +97,9 @@ fill_detail_timing_data(struct drm_display_mode *panel_fixed_mode,
 	panel_fixed_mode->clock = dvo_timing->clock * 10;
 	panel_fixed_mode->type = DRM_MODE_TYPE_PREFERRED;
 
+	panel_fixed_mode->width_mm = dvo_timing->h_image | ((dvo_timing->max_hv & 15) << 8);
+	panel_fixed_mode->height_mm = dvo_timing->v_image | ((dvo_timing->max_hv >> 4) << 8);
+
 	if (dvo_timing->hsync_positive)
 		panel_fixed_mode->flags |= DRM_MODE_FLAG_PHSYNC;
 	else
@@ -265,6 +268,9 @@ parse_lfp_panel_data(struct drm_i915_private *dev_priv,
 	if (!lvds_lfp_data)
 		return;
 
+	dev_priv->vbt.drrs_min_vrefresh = (unsigned int)
+			lvds_lfp_data->seamless_drrs_min_vrefresh[panel_type];
+
 	lvds_lfp_data_ptrs = find_section(bdb, BDB_LVDS_LFP_DATA_PTRS);
 	if (!lvds_lfp_data_ptrs)
 		return;
@@ -407,14 +413,16 @@ parse_general_features(struct drm_i915_private *dev_priv,
 		dev_priv->vbt.lvds_ssc_freq =
 			intel_bios_ssc_frequency(dev, general->ssc_freq);
 		dev_priv->vbt.display_clock_mode = general->display_clock_mode;
+		dev_priv->vbt.is_180_rotation_enabled = general->enable_180_rotation;
 		dev_priv->vbt.fdi_rx_polarity_inverted = general->fdi_rx_polarity_inverted;
-		DRM_DEBUG_KMS("BDB_GENERAL_FEATURES int_tv_support %d int_crt_support %d lvds_use_ssc %d lvds_ssc_freq %d display_clock_mode %d fdi_rx_polarity_inverted %d\n",
-			      dev_priv->vbt.int_tv_support,
-			      dev_priv->vbt.int_crt_support,
-			      dev_priv->vbt.lvds_use_ssc,
-			      dev_priv->vbt.lvds_ssc_freq,
-			      dev_priv->vbt.display_clock_mode,
-			      dev_priv->vbt.fdi_rx_polarity_inverted);
+		DRM_DEBUG_KMS("BDB_GENERAL_FEATURES int_tv_support %d int_crt_support %d lvds_use_ssc %d lvds_ssc_freq %d display_clock_mode %d fdi_rx_polarity_inverted %d enable_180_rotation %d\n",
+				dev_priv->vbt.int_tv_support,
+				dev_priv->vbt.int_crt_support,
+				dev_priv->vbt.lvds_use_ssc,
+				dev_priv->vbt.lvds_ssc_freq,
+				dev_priv->vbt.display_clock_mode,
+				dev_priv->vbt.fdi_rx_polarity_inverted,
+				dev_priv->vbt.is_180_rotation_enabled);
 	}
 }
 

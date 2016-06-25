@@ -54,6 +54,8 @@
 	(1000 +	(SMIAPP_RESET_DELAY_CLOCKS * 1000	\
 		 + (clk) / 1000 - 1) / ((clk) / 1000))
 
+#define SMIAPP_COLOUR_COMPONENTS	4
+
 #include "smiapp-limits.h"
 
 struct smiapp_quirk;
@@ -199,7 +201,7 @@ struct smiapp_sensor {
 	struct smiapp_platform_data *platform_data;
 	struct regulator *vana;
 	struct clk *ext_clk;
-	u32 limits[SMIAPP_LIMIT_LAST];
+	u64 limits[SMIAPP_LIMIT_LAST];
 	u8 nbinning_subtypes;
 	struct smiapp_binning_subtype binning_subtypes[SMIAPP_BINNING_SUBTYPES];
 	u32 mbus_frame_fmts;
@@ -241,6 +243,8 @@ struct smiapp_sensor {
 	/* src controls */
 	struct v4l2_ctrl *link_freq;
 	struct v4l2_ctrl *pixel_rate_csi;
+	/* test pattern colour components */
+	struct v4l2_ctrl *test_data[SMIAPP_COLOUR_COMPONENTS];
 };
 
 #define to_smiapp_subdev(_sd)				\

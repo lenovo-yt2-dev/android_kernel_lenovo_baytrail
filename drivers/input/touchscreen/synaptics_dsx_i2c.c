@@ -146,7 +146,7 @@ static ssize_t synaptics_rmi4_0dbutton_store(struct device *dev,
 
 static ssize_t synaptics_rmi4_suspend_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count);
-//wqf add for config id read declare start
+//lxh add for config id read declare start
 static ssize_t synaptics_rmi4_fwid_show(struct device *dev,
 		struct device_attribute *attr, char *buf);
 
@@ -154,7 +154,7 @@ static ssize_t synaptics_rmi4_fwid_show(struct device *dev,
 static ssize_t synaptics_rmi4_fwid_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count);
 
-//wqf add for config id read declare end
+//lxh add for config id read declare end
 struct synaptics_rmi4_f01_device_status {
 	union {
 		struct {
@@ -388,13 +388,13 @@ static struct device_attribute attrs[] = {
 	__ATTR(suspend, (S_IWUSR|S_IWGRP),
 			synaptics_rmi4_show_error,
 			synaptics_rmi4_suspend_store),
-/*wqf add for read firmware config ID start*/
+/*lxh add for read firmware config ID start*/
 	__ATTR(fwid, (S_IRUGO | S_IWUSR|S_IWGRP),
 			synaptics_rmi4_fwid_show,
 			synaptics_rmi4_fwid_store),
-/*wqf add for read firmware config ID end*/
+/*lxh add for read firmware config ID end*/
 };
-/*wqf add for read firmware config ID function start*/
+/*lxh add for read firmware config ID function start*/
 static ssize_t synaptics_rmi4_fwid_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -421,7 +421,7 @@ static ssize_t synaptics_rmi4_fwid_store(struct device *dev,
 {
 	return 0;
 }
-/*wqf add for read firmware config ID function end*/
+/*lxh add for read firmware config ID function end*/
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static ssize_t synaptics_rmi4_full_pm_cycle_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -2580,9 +2580,9 @@ EXPORT_SYMBOL(synaptics_rmi4_new_function);
  void  start_to_init_tp(u32  value)
  {
  	static u32  flag = 0;
-	printk("wqf %s line %d flag=%x\n",__func__,__LINE__,flag);
+	printk("lxh %s line %d flag=%x\n",__func__,__LINE__,flag);
 	flag |= value;
-	printk("wqf %s line %d flag=%x\n",__func__,__LINE__,flag);
+	printk("lxh %s line %d flag=%x\n",__func__,__LINE__,flag);
 	if( (flag&3) ==3)
 		schedule_delayed_work(&pmic_tp_platform_data->late_init_wrkr, msecs_to_jiffies(500));	
  }
@@ -2595,7 +2595,7 @@ EXPORT_SYMBOL(synaptics_rmi4_new_function);
 	const struct synaptics_dsx_platform_data *platform_data = 
 		container_of(work, struct synaptics_dsx_platform_data, late_init_wrkr.work);
 	struct i2c_client *client = rmi4_data->i2c_client;
-	printk("%s exec start\n",__func__);
+	printk("lxh:**%s:%d\n",__func__, __LINE__);
 	
 	if (platform_data->gpio_config) {		//synaptics_gpio_setup
 		retval = platform_data->gpio_config(platform_data->irq_gpio, true, 0, 0);
@@ -2607,7 +2607,8 @@ EXPORT_SYMBOL(synaptics_rmi4_new_function);
 			retval = platform_data->gpio_config(platform_data->power_gpio,true, 1, platform_data->power_on_state);
 			if (retval < 0) {
 				dev_err(&client->dev,"%s: Failed to configure power GPIO\n",__func__);
-				goto err_gpio_power;
+					//printk("lxh:**but i still let it continue**\n");
+					goto err_gpio_power;  // lxh:del;0204;
 			}
 		}
 
@@ -2620,10 +2621,9 @@ EXPORT_SYMBOL(synaptics_rmi4_new_function);
 			}
 		}
 		borad_id0_value=intel_mid_pmic_readb(0x35);
-		printk("wqf-%s the board id 0 value is %d\n",__func__,borad_id0_value);
+
 		if(!borad_id0_value)
 		{
-			printk("wqf-%s boot up pull down tp power\n",__func__);
 			printk("%s power gpio=%d value=%d-before\n",__func__,platform_data->power_gpio,gpio_get_value_cansleep(platform_data->power_gpio));
 			//power down
 			lnw_gpio_set_pininfo(142,TYPE_PULLMODE,"pulldown");
@@ -2636,8 +2636,6 @@ EXPORT_SYMBOL(synaptics_rmi4_new_function);
 				msleep(160);
 			}
 			msleep(400);
-			printk("%s power gpio=%d value=%d-after\n",__func__,platform_data->power_gpio,gpio_get_value_cansleep(platform_data->power_gpio));
-
 			//power up
 			if (platform_data->power_gpio >= 0) {
 				gpio_set_value_cansleep(platform_data->power_gpio, 1);
@@ -2646,7 +2644,9 @@ EXPORT_SYMBOL(synaptics_rmi4_new_function);
 			lnw_gpio_set_pininfo(88,TYPE_PULLMODE,"pullup");
 			lnw_gpio_set_pininfo(89,TYPE_PULLMODE,"pullup");
 			lnw_gpio_set_pininfo(142,TYPE_PULLMODE,"pullup");
+
 			
+			printk("%s power gpio=%d value=%d-after\n",__func__,platform_data->power_gpio,gpio_get_value_cansleep(platform_data->power_gpio));
 		}
 
 		gpio_set_value(platform_data->reset_gpio, 1);
@@ -2687,6 +2687,8 @@ EXPORT_SYMBOL(synaptics_rmi4_new_function);
 	}		
 
 	INIT_DELAYED_WORK(&exp_data.work, synaptics_rmi4_exp_fn_work);
+	exp_data.queue_work = true;
+
 	queue_delayed_work(exp_data.workqueue,&exp_data.work,msecs_to_jiffies(EXP_FN_WORK_DELAY_MS));
 
 	for (attr_count = 0; attr_count < ARRAY_SIZE(attrs); attr_count++) {
@@ -2699,7 +2701,7 @@ EXPORT_SYMBOL(synaptics_rmi4_new_function);
 			goto err_sysfs;
 		}
 	}
-	printk("%s exec successfully\n",__func__);
+	printk("lxh:**%s done\n",__func__);
 	return ;
 		
 err_sysfs:
@@ -2762,7 +2764,7 @@ static int  synaptics_rmi4_probe(struct i2c_client *client,
 	struct synaptics_rmi4_data *rmi4_data;
 	struct synaptics_dsx_platform_data *platform_data =
 			client->dev.platform_data;
-	printk("%s exec start\n",__func__);
+	printk("lxh:**%s:%d\n",__func__, __LINE__);
 	if (!i2c_check_functionality(client->adapter,
 			I2C_FUNC_SMBUS_BYTE_DATA)) {
 		dev_err(&client->dev,
@@ -2831,7 +2833,7 @@ static int  synaptics_rmi4_probe(struct i2c_client *client,
 
 	exp_data.workqueue = create_singlethread_workqueue("dsx_exp_workqueue");
 	exp_data.rmi4_data = rmi4_data;
-	exp_data.queue_work = true;
+//	exp_data.queue_work = true;
 	printk("%s exec done\n",__func__);
 	return retval;
 

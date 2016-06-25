@@ -35,9 +35,12 @@
 #define MAX_LOOP_BACK_DWORDS 8
 /* IPC base address and mailbox, timestamp offsets */
 #define SST_MAILBOX_SIZE 0x0400
+#define SST_MAILBOX_SIZE_MOFD 0x1000
+#define SST_DDR_MAILBOX_BASE     0x1000 /* Mailbox offset from IMR base */
 #define SST_MAILBOX_SEND 0x0000
 #define SST_TIME_STAMP 0x1800
 #define SST_TIME_STAMP_MRFLD 0x680
+#define SST_TIME_STAMP_MOFD 0x0000
 #define SST_TIME_STAMP_BYT 0x800
 #define SST_RESERVED_OFFSET 0x1A00
 #define SST_SCU_LPE_MAILBOX 0x1000
@@ -64,6 +67,7 @@
 #define IPC_IA_SET_PPP_PARAMS 0x12
 #define IPC_IA_GET_PPP_PARAMS 0x13
 #define IPC_SST_PERIOD_ELAPSED_MRFLD 0xA
+#define IPC_SST_VB_RESET 0x28
 #define IPC_IA_ALG_PARAMS 0x1A
 #define IPC_IA_TUNING_PARAMS 0x1B
 #define IPC_IA_SET_RUNTIME_PARAMS 0x1C
@@ -560,6 +564,8 @@ struct snd_sst_params {
 	u8 stream_type;
 	u8 device_type;
 	u8 task;
+	/* Firmware should raise period elapsed or not */
+	u8 no_irq;
 	struct snd_sst_stream_params sparams;
 	struct snd_sst_alloc_params_ext aparams;
 };
@@ -572,6 +578,7 @@ struct snd_sst_alloc_mrfld {
 	u32 frag_size;
 	u32 ts;
 	struct snd_sst_stream_params codec_params;
+	u8 no_irq;
 } __packed;
 
 /* Alloc stream params structure */

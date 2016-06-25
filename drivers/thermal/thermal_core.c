@@ -1849,9 +1849,11 @@ struct thermal_zone_device *thermal_zone_device_register(const char *type,
 	}
 
 #ifdef CONFIG_THERMAL_EMULATION
-	result = device_create_file(&tz->device, &dev_attr_emul_temp);
-	if (result)
-		goto unregister;
+	if (tz->ops->set_emul_temp) {
+		result = device_create_file(&tz->device, &dev_attr_emul_temp);
+		if (result)
+			goto unregister;
+	}
 #endif
 	/* Create policy attribute */
 	result = device_create_file(&tz->device, &dev_attr_policy);
@@ -1881,7 +1883,13 @@ struct thermal_zone_device *thermal_zone_device_register(const char *type,
 
 	INIT_DELAYED_WORK(&(tz->poll_queue), thermal_zone_device_check);
 
-	thermal_zone_device_update(tz);
+	/*
+	 * Emulation temperature may need user land to provide
+	 * temperature data. In that case, do not try to update
+	 * this 'tzd' during registration.
+	 */
+	if (!tz->ops->set_emul_temp)
+		thermal_zone_device_update(tz);
 
 	if (!result)
 		return tz;
@@ -1950,6 +1958,10 @@ void thermal_zone_device_unregister(struct thermal_zone_device *tz)
 		device_remove_file(&tz->device, &dev_attr_slope);
 	if (tz->ops->get_intercept)
 		device_remove_file(&tz->device, &dev_attr_intercept);
+#ifdef CONFIG_THERMAL_EMULATION
+	if (tz->ops->set_emul_temp)
+		device_remove_file(&tz->device, &dev_attr_emul_temp);
+#endif
 
 	device_remove_file(&tz->device, &dev_attr_policy);
 	remove_trip_attrs(tz);

@@ -508,7 +508,7 @@
 
 #define _DPIO_TX3_SWING_CTL4_A		0x690
 #define _DPIO_TX3_SWING_CTL4_B		0x2a90
-#define DPIO_TX3_SWING_CTL4(pipe) _PIPE(pipe, _DPIO_TX_SWING_CTL4_A, \
+#define DPIO_TX3_SWING_CTL4(pipe) _PIPE(pipe, _DPIO_TX3_SWING_CTL4_A, \
 					_DPIO_TX3_SWING_CTL4_B)
 
 /*
@@ -1948,6 +1948,8 @@
 #define BCLRPAT(pipe) _PIPE(pipe, _BCLRPAT_A, _BCLRPAT_B)
 #define VSYNCSHIFT(trans) _TRANSCODER(trans, _VSYNCSHIFT_A, _VSYNCSHIFT_B)
 
+#define VERTICAL_ACTIVE_DISPLAY_MASK		(0xfff)
+
 /* HSW eDP PSR registers */
 #define EDP_PSR_CTL				0x64800
 #define   EDP_PSR_ENABLE			(1<<31)
@@ -2416,8 +2418,11 @@ EDP_PSR_SW_TIMER
 #define   PFIT_SCALING_PROGRAMMED (1 << 26)
 #define   PFIT_SCALING_PILLAR	(2 << 26)
 #define   PFIT_SCALING_LETTER	(3 << 26)
+#define	  MASK_PFIT_SCALING_MODE (0xe3ffffff)
 #define PFIT_PGM_RATIOS	(dev_priv->info->display_mmio_offset + 0x61234)
 #define	PFIT_SIZE_LIMIT		2000
+#define SCALING_SRCSIZE_SHIFT	16
+#define	SCALING_SRCSIZE_MASK	0xffff
 /* Pre-965 */
 #define		PFIT_VERT_SCALE_SHIFT		20
 #define		PFIT_VERT_SCALE_MASK		0xfff00000
@@ -3232,7 +3237,6 @@ EDP_PSR_SW_TIMER
 #define   PIPECONF_6BPC		(2<<5)
 #define   DISPLAY_8BPC         8
 #define   DISPLAY_6BPC         6
-#define   PIPE_24BPP           24
 #define   PIPECONF_12BPC	(3<<5)
 #define   PIPECONF_DITHER_EN	(1<<4)
 #define   PIPECONF_DITHER_TYPE_MASK (0x0000000c)
@@ -3321,7 +3325,8 @@ EDP_PSR_SW_TIMER
 #define   PLANEA_INVALID_GTT_STATUS		(1<<0)
 #define   DPINVGTT_STATUS_MASK			0xff
 
-#define DSPARB			0x70030
+#define DSPARB			(dev_priv->info->display_mmio_offset + 0x70030)
+#define DSPARB_VLV_DEFAULT	0xc080c080
 #define   DSPARB_CSTART_MASK	(0x7f << 7)
 #define   DSPARB_CSTART_SHIFT	7
 #define   DSPARB_BSTART_MASK	(0x7f)
@@ -3410,6 +3415,8 @@ EDP_PSR_SW_TIMER
 #define DDL_SPRITEB_SHIFT		16
 #define DDL_PLANEB_PRECISION_64		(1<<7)
 #define DDL_PLANEB_PRECISION_32		(0<<7)
+#define DDL_PLANE_PRECISION_64		(1<<7)
+#define DDL_PLANE_PRECISION_32		(0<<7)
 
 /* FIFO watermark sizes etc */
 #define G4X_FIFO_LINE_SIZE	64
@@ -5539,6 +5546,7 @@ EDP_PSR_SW_TIMER
 #define  DPI_ENABLE					(1 << 31) /* A + B */
 #define  MIPIA_MIPI4DPHY_DELAY_COUNT_SHIFT		27
 #define  MIPIA_MIPI4DPHY_DELAY_COUNT_MASK		(0xf << 27)
+#define  DUAL_LINK_MODE_SHIFT				26
 #define  DUAL_LINK_MODE_MASK				(1 << 26)
 #define  DUAL_LINK_MODE_FRONT_BACK			(0 << 26)
 #define  DUAL_LINK_MODE_PIXEL_ALTERNATIVE		(1 << 26)
@@ -5957,6 +5965,10 @@ EDP_PSR_SW_TIMER
 #define VLV_PWRGT_DPIO_CMN_LANES_MASK  0x00000C00
 #define VLV_PWRGT_DPIO_RX_TX_LANES_MASK        0x00FFF000
 
+#define VLV_CHICKEN_3		0x7040C
+#define PIXEL_OVERLAP_CNT_MASK		(3 << 30)
+#define PIXEL_OVERLAP_CNT_SHIFT		30
+
 #define PUNIT_GVD_SPARE1	0xD6
 #define PUNIT_CLKS_OFF		0x1
 #define PUNIT_CLKS_ON		0x0
@@ -5971,10 +5983,5 @@ EDP_PSR_SW_TIMER
 #define VHDMICNT		0x6d
 #define VHDMI_ON		0x03
 #define VHDMI_OFF		0x02
-
-/*
- * This rail is valid only for FFRD8 Baytrail.
- */
-#define FFRD8_PR1_DISP_BKLGHT_REGULATOR	"v3p3s"
 
 #endif /* _I915_REG_H_ */

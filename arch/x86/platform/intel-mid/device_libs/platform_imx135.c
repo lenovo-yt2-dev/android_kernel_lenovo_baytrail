@@ -21,12 +21,12 @@
 #include "platform_imx135.h"
 
 
-static int camera_reset;
-static int camera_power;
+static int camera_reset = -1;
+static int camera_power = -1;
 
-static int camera_vemmc1_on;  
-static struct regulator *vemmc1_reg;  
-#define VEMMC1_VAL 2850000  
+static int camera_vemmc1_on;
+static struct regulator *vemmc1_reg;
+#define VEMMC1_VAL 2850000
 
 static int camera_vprog1_on;
 static struct regulator *vprog1_reg;
@@ -46,14 +46,15 @@ static int is_victoriabay(void)
 	       || INTEL_MID_BOARD(3, PHONE, CLVTP, RHB, ENG, VVLITE)
 	       || ((INTEL_MID_BOARD(2, PHONE, CLVTP, RHB, PRO)
 		    || INTEL_MID_BOARD(2, PHONE, CLVTP, RHB, ENG))
-		   && (SPID_HARDWARE_ID(CLVTP, PHONE, VB, PR1A)   
+		   && (SPID_HARDWARE_ID(CLVTP, PHONE, VB, PR1A)
 		       || SPID_HARDWARE_ID(CLVTP, PHONE, VB, PR1B)
 		       || SPID_HARDWARE_ID(CLVTP, PHONE, VB, PR20)));
 }
 
 static int is_moorefield(void)
 {
-	return INTEL_MID_BOARD(1, PHONE, MOFD);
+	return INTEL_MID_BOARD(1, PHONE, MOFD) ||
+	       INTEL_MID_BOARD(1, TABLET, MOFD);
 }
 
 /*
@@ -102,20 +103,30 @@ static int imx135_power_ctrl(struct v4l2_subdev *sd, int flag)
 
 	if (is_moorefield()) {
 #ifdef CONFIG_INTEL_SCU_IPC_UTIL
-		ret = intel_scu_ipc_msic_vprog1(flag);
+		ret = camera_set_vprog_power(CAMERA_VPROG1, flag,
+					     DEFAULT_VOLTAGE);
 		if (ret) {
-			pr_err("imx135 power failed\n");
+			pr_err("imx135 power %s vprog1 failed\n",
+			       flag ? "on" : "off");
 			return ret;
 		}
-		ret = intel_scu_ipc_msic_vprog3(flag);
+
+		ret = camera_set_vprog_power(CAMERA_VPROG3, flag,
+					     CAMERA_1_05_VOLT);
+		if (ret) {
+			pr_err("imx135 power %s vprog3 failed\n",
+			       flag ? "on" : "off");
+			if (flag)
+				camera_set_vprog_power(CAMERA_VPROG1, !flag,
+						       DEFAULT_VOLTAGE);
+			return ret;
+		}
+
+		if (flag)
+			usleep_range(1000, 1200);
 #else
 		ret = -ENODEV;
 #endif
-		if (ret)
-			pr_err("imx135 power failed\n");
-		if (flag)
-			usleep_range(1000, 1200);
-
 		return ret;
 	}
 
@@ -233,6 +244,12 @@ static int imx135_platform_deinit(void)
 	if (is_ctp())
 		regulator_put(vemmc1_reg);
 
+	camera_sensor_gpio_free(camera_power);
+	camera_sensor_gpio_free(camera_reset);
+
+	camera_reset = -1;
+	camera_power = -1;
+
 	return 0;
 }
 
@@ -245,20 +262,9 @@ static int imx135_csi_configure(struct v4l2_subdev *sd, int flag)
 
 static char *imx135_msr_file_name(void)
 {
-	/*
-	 * drvb contains the SPID in the file name as:
-	 * sensor_name-vendorIdValue-platformFamilyIdValue-productLineIdValue.drvb
-	 */
-	if (spid.vendor_id == 0 && spid.platform_family_id == 0x4 &&
-	    spid.product_line_id == 0) {
-		return "00imx135-0-0x4-0.drvb";
-	} else {
-		pr_warn("drvb file name does not exists");
-	}
-
-	return 0;
+	static char buffer[32];
+	return camera_get_msr_filename(buffer, sizeof(buffer), "imx135", 0);
 }
-
 
 static struct camera_sensor_platform_data imx135_sensor_platform_data = {
 	.gpio_ctrl      = imx135_gpio_ctrl,
@@ -272,9 +278,6 @@ static struct camera_sensor_platform_data imx135_sensor_platform_data = {
 
 void *imx135_platform_data(void *info)
 {
-	camera_reset = -1;
-	camera_power = -1;
-
 	return &imx135_sensor_platform_data;
 }
 

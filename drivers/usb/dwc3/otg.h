@@ -47,19 +47,19 @@ struct dwc_device_par {
 #endif
 
 #define otg_dbg(d, fmt, args...)  \
-	do { if (DWC_OTG_DEBUG) dev_dbg((d)->dev, \
+	do { dev_dbg((d)->dev, \
 			"%s(): " fmt , __func__, ## args); } while (0)
 #define otg_vdbg(d, fmt, args...)  \
 	do { if (DWC_OTG_DEBUG) dev_dbg((d)->dev, \
 			"%s(): " fmt , __func__, ## args); } while (0)
 #define otg_err(d, fmt, args...)  \
-	do { if (DWC_OTG_DEBUG) dev_err((d)->dev, \
+	do { dev_err((d)->dev, \
 			"%s(): " fmt , __func__, ## args); } while (0)
 #define otg_warn(d, fmt, args...)  \
-	do { if (DWC_OTG_DEBUG) dev_warn((d)->dev, \
+	do { dev_warn((d)->dev, \
 			"%s(): " fmt , __func__, ## args); } while (0)
 #define otg_info(d, fmt, args...)  \
-	do { if (DWC_OTG_DEBUG) dev_info((d)->dev, \
+	do { dev_info((d)->dev, \
 			"%s(): " fmt , __func__, ## args); } while (0)
 
 #ifdef DEBUG
@@ -386,6 +386,7 @@ struct dwc_otg2 {
 #define VBUS_TIMEOUT	20
 #define PCI_DEVICE_ID_DWC 0x119E
 #define PCI_DEVICE_ID_DWC_VLV 0x0F37
+#define PCI_DEVICE_ID_DWC_CHT 0x22B7
 
 enum dwc3_otg_mode {
 	DWC3_DEVICE_ONLY,
@@ -404,6 +405,7 @@ struct dwc3_otg_hw_ops {
 
 	int (*set_power)(struct usb_phy *_otg, unsigned ma);
 	int (*platform_init)(struct dwc_otg2 *otg);
+	int (*platform_exit)(struct dwc_otg2 *otg);
 	int (*otg_notifier_handler)(struct notifier_block *nb,
 			unsigned long event, void *data);
 	int (*prepare_start_peripheral)(struct dwc_otg2 *otg);
@@ -436,4 +438,5 @@ void dwc3_wakeup_otg_thread(struct dwc_otg2 *otg);
 struct dwc_otg2 *dwc3_get_otg(void);
 int dwc3_otg_register(struct dwc3_otg_hw_ops *pdata);
 int dwc3_otg_unregister(struct dwc3_otg_hw_ops *pdata);
+int dwc3_is_cht(void);
 #endif /* __DWC3_OTG_H */

@@ -1659,7 +1659,7 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 	 * behaviour if any general state is accessed within a page above 4GB,
 	 * which also needs to be handled carefully.
 	 */
-	if (IS_BROADWATER(dev) || IS_CRESTLINE(dev))
+	if (IS_BROADWATER(dev) || IS_CRESTLINE(dev) || IS_VALLEYVIEW(dev))
 		dma_set_coherent_mask(&dev->pdev->dev, DMA_BIT_MASK(32));
 
 	aperture_size = dev_priv->gtt.mappable_end;

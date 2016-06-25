@@ -31,6 +31,7 @@
 
 #include <linux/types.h>
 #include "dx_driver_abi.h"
+#include "crypto_api.h"
 
 /**
  * struct dxdi_kmemref - Kernel memory reference
@@ -123,5 +124,12 @@ int dx_sepapp_command_invoke(void *ctx,
 			     u32 command_id,
 			     struct dxdi_sepapp_kparams *command_params,
 			     enum dxdi_sep_module *ret_origin);
+
+int async_sepapp_command_invoke(void *ctx,
+			     int session_id,
+			     u32 command_id,
+			     struct dxdi_sepapp_kparams *command_params,
+			     enum dxdi_sep_module *ret_origin,
+			     struct async_req_ctx *areq_ctx);
 
 #endif /*__DX_SEPAPP_KAPI_H__*/

@@ -37,6 +37,8 @@
 #include <drm/i915_drm.h>
 #include "i915_drv.h"
 
+#define ENABLE_PFIT_HDMI 0
+
 static struct drm_device *intel_hdmi_to_dev(struct intel_hdmi *intel_hdmi)
 {
 	return hdmi_to_dig_port(intel_hdmi)->base.base.dev;
@@ -740,35 +742,11 @@ static void intel_hdmi_mode_set(struct intel_encoder *encoder)
 	else
 		hdmi_val |= SDVO_PIPE_SEL(crtc->pipe);
 
-	if (intel_hdmi->pfit) {
-		/*Enable panel fitter only if the scaling ratio is > 1 and the
-			input src size should be < 2kx2k */
-		if (((adjusted_mode->hdisplay < PFIT_SIZE_LIMIT) &&
-		(adjusted_mode->vdisplay < PFIT_SIZE_LIMIT)) &&
-		((adjusted_mode->hdisplay != crtc->base.fb->width) ||
-		(adjusted_mode->vdisplay != crtc->base.fb->height))) {
-			u32 val = 0;
-			if (intel_hdmi->pfit == AUTOSCALE)
-				val =  PFIT_ENABLE | (crtc->pipe <<
-					PFIT_PIPE_SHIFT) | PFIT_SCALING_AUTO;
-			if (intel_hdmi->pfit == PILLARBOX)
-				val =  PFIT_ENABLE | (crtc->pipe <<
-					PFIT_PIPE_SHIFT) | PFIT_SCALING_PILLAR;
-			else if (intel_hdmi->pfit == LETTERBOX)
-				val =  PFIT_ENABLE | (crtc->pipe <<
-					PFIT_PIPE_SHIFT) | PFIT_SCALING_LETTER;
-			DRM_DEBUG_DRIVER("pfit val = %x", val);
-			I915_WRITE(PFIT_CONTROL, val);
-			crtc->base.panning_en = true;
-		} else
-			DRM_DEBUG_DRIVER("Wrong panel fitter input src config");
-	} else
-		crtc->base.panning_en = false;
-
 	I915_WRITE(intel_hdmi->hdmi_reg, hdmi_val);
 	POSTING_READ(intel_hdmi->hdmi_reg);
 
 	intel_hdmi->set_infoframes(&encoder->base, adjusted_mode);
+	switch_set_state(&intel_hdmi->sdev, 1);
 }
 
 static bool intel_hdmi_get_hw_state(struct intel_encoder *encoder,
@@ -952,6 +930,10 @@ bool intel_hdmi_compute_config(struct intel_encoder *encoder,
 	struct drm_display_mode *adjusted_mode = &pipe_config->adjusted_mode;
 	int clock_12bpc = pipe_config->requested_mode.clock * 3 / 2;
 	int desired_bpp;
+#if ENABLE_PFIT_HDMI
+	struct intel_crtc *intel_crtc = encoder->new_crtc;
+	struct intel_connector *intel_connector = intel_hdmi->attached_connector;
+#endif
 
 	if (intel_hdmi->color_range_auto) {
 		/* See CEA-861-E - 5.1 Default Encoding Parameters */
@@ -961,7 +943,14 @@ bool intel_hdmi_compute_config(struct intel_encoder *encoder,
 		else
 			intel_hdmi->color_range = 0;
 	}
+	/*TODO: Panel fitter is not enabled for HDMI */
 
+#if ENABLE_PFIT_HDMI
+	if (IS_VALLEYVIEW(dev)) {
+		intel_gmch_panel_fitting(intel_crtc, pipe_config,
+				intel_connector->panel.fitting_mode);
+	}
+#endif
 	if (intel_hdmi->color_range)
 		pipe_config->limited_color_range = true;
 
@@ -1061,21 +1050,40 @@ void intel_hdmi_send_uevent(struct drm_device *dev, char *uevent)
 struct edid *intel_hdmi_get_edid(struct drm_connector *connector, bool force)
 {
 	bool current_state = false;
+	bool saved_state = false;
 
 	struct edid *new_edid = NULL;
 	struct i2c_adapter *adapter = NULL;
 	struct drm_device *dev = connector->dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_hdmi *intel_hdmi = intel_attached_hdmi(connector);
+	u32 hotplug_status = dev_priv->hotplug_status;
+	enum port hdmi_port = hdmi_to_dig_port(intel_hdmi)->port;
+	unsigned char retry = HDMI_EDID_RETRY_COUNT;
 
 	if (!intel_hdmi) {
 		DRM_ERROR("Invalid input to get hdmi\n");
 		return NULL;
 	}
 
-	current_state = intel_hdmi_live_status(connector);
-	/* Read EDID if live status is up */
-	if (current_state || force) {
+	/* Get the saved status from top half */
+	saved_state = hotplug_status & (1 << (HDMI_LIVE_STATUS_BASE - hdmi_port));
+
+	/* Few monitors are slow to respond on EDID and live status,
+	so read live status multiple times within a max delay of 30ms */
+	do {
+		mdelay(HDMI_LIVE_STATUS_DELAY_STEP);
+		current_state = intel_hdmi_live_status(connector);
+		if (current_state)
+			break;
+	} while (retry--);
+
+	/* Compare current status, and saved status in top half */
+	if (current_state != saved_state)
+		DRM_DEBUG_DRIVER("Warning: Saved HDMI status != current status");
+
+	/* Read EDID if live status or saved status is up, or we are forced */
+	if (current_state || saved_state || force) {
 
 		adapter = intel_gmbus_get_adapter(dev_priv,
 					intel_hdmi->ddc_bus);
@@ -1084,8 +1092,17 @@ struct edid *intel_hdmi_get_edid(struct drm_connector *connector, bool force)
 			return NULL;
 		}
 
+		/* Few monitors issue EDID after some delay, so give them
+		some chnaces, but within 30ms */
+		retry = 3;
+READ_EDID:
 		new_edid = drm_get_edid(connector, adapter);
 		if (!new_edid) {
+			if (retry--) {
+				mdelay(HDMI_LIVE_STATUS_DELAY_STEP);
+				goto READ_EDID;
+			}
+
 			DRM_ERROR("Get_hdmi cant read edid\n");
 			return NULL;
 		}
@@ -1146,9 +1163,9 @@ void intel_hdmi_hot_plug(struct intel_encoder *intel_encoder)
 	struct edid *old_edid = intel_hdmi->edid;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	bool need_event = false;
+	int pipe = 0;
 
 	connector = &intel_hdmi->attached_connector->base;
-
 	/* We are here, means there is a HDMI hot-plug
 	Lets try to get EDID */
 	edid = intel_hdmi_get_edid(connector, false);
@@ -1158,6 +1175,14 @@ void intel_hdmi_hot_plug(struct intel_encoder *intel_encoder)
 			need_event = true;
 	} else {
 		DRM_DEBUG_DRIVER("Hdmi: Monitor disconnected\n");
+		if (intel_encoder->type == INTEL_OUTPUT_HDMI &&
+				to_intel_crtc(encoder->crtc)) {
+			pipe = to_intel_crtc(encoder->crtc)->pipe;
+			if (dev_priv->gamma_enabled[pipe])
+				dev_priv->gamma_enabled[pipe] = false;
+			if (dev_priv->csc_enabled[pipe])
+				dev_priv->csc_enabled[pipe] = false;
+		}
 		if (connector->status == connector_status_disconnected)
 			need_event = true;
 	}
@@ -1195,6 +1220,9 @@ void intel_hdmi_hot_plug(struct intel_encoder *intel_encoder)
 	if (need_event) {
 		DRM_DEBUG_DRIVER("Sending self event");
 		intel_hdmi_send_uevent(dev, "HOTPLUG=1");
+	}
+	if (edid == NULL) {
+		switch_set_state(&intel_hdmi->sdev, 0);
 	}
 
 	/* Update EDID, kfree is NULL protected */
@@ -1355,6 +1383,9 @@ intel_hdmi_set_property(struct drm_connector *connector,
 	struct intel_digital_port *intel_dig_port =
 		hdmi_to_dig_port(intel_hdmi);
 	struct drm_i915_private *dev_priv = connector->dev->dev_private;
+	struct intel_connector *intel_connector = to_intel_connector(connector);
+	struct intel_encoder *encoder = intel_connector->encoder;
+	struct intel_crtc *intel_crtc = encoder->new_crtc;
 	int ret;
 
 	ret = drm_object_property_set_value(&connector->base, property, val);
@@ -1408,14 +1439,25 @@ intel_hdmi_set_property(struct drm_connector *connector,
 
 		goto done;
 	}
-
+	/* TODO: Panel fitter is not enabled for HDMI */
+#if ENABLE_PFIT_HDMI
 	if (property == dev_priv->force_pfit_property) {
-		if (val == intel_hdmi->pfit)
+		if (intel_connector->panel.fitting_mode == val)
 			return 0;
+		intel_connector->panel.fitting_mode = val;
 
-		DRM_DEBUG_DRIVER("val = %llu", val);
-		intel_hdmi->pfit = val;
-		goto done;
+		if (IS_VALLEYVIEW(dev_priv->dev)) {
+			intel_gmch_panel_fitting(intel_crtc, &intel_crtc->config,
+					intel_connector->panel.fitting_mode);
+			return 0;
+		} else
+			goto done;
+	}
+#endif
+	if (property == dev_priv->scaling_src_size_property) {
+		intel_crtc->scaling_src_size = val;
+		DRM_DEBUG_DRIVER("src size = %x", intel_crtc->scaling_src_size);
+		return 0;
 	}
 
 	return -EINVAL;
@@ -1425,6 +1467,99 @@ done:
 		intel_crtc_restore_mode(intel_dig_port->base.base.crtc);
 
 	return 0;
+}
+
+static void vlv_set_hdmi_level_shifter_settings(struct intel_encoder *encoder)
+{
+	struct drm_device *dev = encoder->base.dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct intel_crtc *crtc = to_intel_crtc(encoder->base.crtc);
+	struct drm_display_mode *adjusted_mode = &crtc->config.adjusted_mode;
+	struct intel_digital_port *dport = enc_to_dig_port(&encoder->base);
+	int port = vlv_dport_to_channel(dport);
+
+	u32 de_emp_reg_val = 0;
+	u32 transcale_reg_val = 0;
+	u32 pre_emp_reg_val = 0;
+	u32 clk_de_emp_reg_val = 0;
+
+
+	/*
+	 * FIXME: Need to get HDMI pre-emp, vswing settings from VBT.
+	 * definitions:
+	 * 0 = 1000MV_2DB
+	 * 1 = 1000MV_0DB
+	 * 2 = 800MV_0DB
+	 * 3 = 600MV_2DB
+	 * 4 = 600MV_0DB
+	 */
+	u8 pre_emp_vswing_setting = 0;
+
+
+	/*
+	 * As per EV requirement need to set 1000MV_0DB for pixel clock
+	 * < 74.250 Mhz
+	 */
+	if (adjusted_mode->clock < 74250)
+		pre_emp_vswing_setting = 1;	/* 1 = 1000MV_0DB */
+	else
+		/* Customize the below variable as per customer requirement */
+		pre_emp_vswing_setting = 0;	/* 0 = 1000MV_2DB */
+
+	/*FIXME: The Application notes doesn't have pcs_ctrl_reg_val for
+	 * settings 1V_0DB, 0.8V_0DB, 0.6V_0DB. The pcs_ctrl_reg_val value
+	 * for these is selected from higher demp_vswing settings for which
+	 * the data is given.
+	 */
+	switch (pre_emp_vswing_setting) {
+	case 0:
+		de_emp_reg_val = 0x2B245F5F;
+		transcale_reg_val = 0x5578B83A;
+		clk_de_emp_reg_val = 0x2B247878;
+		pre_emp_reg_val = 0x2000;
+		break;
+	case 1:
+		de_emp_reg_val = 0x2B405555;
+		transcale_reg_val = 0x5580A03A;
+		clk_de_emp_reg_val = 0x2B405555;
+		pre_emp_reg_val = 0x4000;
+		break;
+	case 2:
+		de_emp_reg_val = 0x2B245555;
+		transcale_reg_val = 0x5560B83A;
+		clk_de_emp_reg_val = 0x2B245555;
+		pre_emp_reg_val = 0x4000;
+		break;
+	case 3:
+		de_emp_reg_val = 0x2B406262;
+		transcale_reg_val = 0x5560B83A;
+		clk_de_emp_reg_val = 0x2B407878;
+		pre_emp_reg_val = 0x2000;
+		break;
+	case 4:
+		de_emp_reg_val = 0x2B404040;
+		transcale_reg_val = 0x5548B83A;
+		clk_de_emp_reg_val = 0x2B404040;
+		pre_emp_reg_val = 0x4000;
+		break;
+	default:
+		DRM_ERROR("Incorrect pre-emp vswing setting\n");
+		de_emp_reg_val = 0x2B245F5F;
+		transcale_reg_val = 0x5578B83A;
+		clk_de_emp_reg_val = 0x2B247878;
+		pre_emp_reg_val = 0x2000;
+		break;
+	}
+
+
+	vlv_dpio_write(dev_priv, DPIO_TX_OCALINIT(port), 0x00000000);
+	vlv_dpio_write(dev_priv, DPIO_TX_SWING_CTL4(port), de_emp_reg_val);
+	vlv_dpio_write(dev_priv, DPIO_TX_SWING_CTL2(port), transcale_reg_val);
+	vlv_dpio_write(dev_priv, DPIO_TX_SWING_CTL3(port), 0x0c782040);
+	vlv_dpio_write(dev_priv, DPIO_TX3_SWING_CTL4(port), clk_de_emp_reg_val);
+	vlv_dpio_write(dev_priv, DPIO_PCS_STAGGER0(port), 0x00030000);
+	vlv_dpio_write(dev_priv, DPIO_PCS_CTL_OVER1(port), pre_emp_reg_val);
+	vlv_dpio_write(dev_priv, DPIO_TX_OCALINIT(port), DPIO_TX_OCALINIT_EN);
 }
 
 static void intel_hdmi_pre_enable(struct intel_encoder *encoder)
@@ -1452,21 +1587,7 @@ static void intel_hdmi_pre_enable(struct intel_encoder *encoder)
 	val |= 0x001000c4;
 	vlv_dpio_write(dev_priv, DPIO_DATA_CHANNEL(port), val);
 
-	/* HDMI 1.0V-2dB */
-	vlv_dpio_write(dev_priv, DPIO_TX_OCALINIT(port), 0);
-	vlv_dpio_write(dev_priv, DPIO_TX_SWING_CTL4(port),
-			 0x2b245f5f);
-	vlv_dpio_write(dev_priv, DPIO_TX_SWING_CTL2(port),
-			 0x5578b83a);
-	vlv_dpio_write(dev_priv, DPIO_TX_SWING_CTL3(port),
-			 0x0c782040);
-	vlv_dpio_write(dev_priv, DPIO_TX3_SWING_CTL4(port),
-			 0x2b247878);
-	vlv_dpio_write(dev_priv, DPIO_PCS_STAGGER0(port), 0x00030000);
-	vlv_dpio_write(dev_priv, DPIO_PCS_CTL_OVER1(port),
-			 0x00002000);
-	vlv_dpio_write(dev_priv, DPIO_TX_OCALINIT(port),
-			 DPIO_TX_OCALINIT_EN);
+	vlv_set_hdmi_level_shifter_settings(encoder);
 
 	/* Program lane clock */
 	vlv_dpio_write(dev_priv, DPIO_PCS_CLOCKBUF0(port),
@@ -1557,6 +1678,7 @@ intel_hdmi_add_properties(struct intel_hdmi *intel_hdmi, struct drm_connector *c
 	intel_attach_force_audio_property(connector);
 	intel_attach_broadcast_rgb_property(connector);
 	intel_attach_force_pfit_property(connector);
+	intel_attach_scaling_src_size_property(connector);
 	intel_hdmi->color_range_auto = true;
 }
 
@@ -1576,7 +1698,6 @@ void intel_hdmi_init_connector(struct intel_digital_port *intel_dig_port,
 
 	connector->interlace_allowed = 0;
 	connector->doublescan_allowed = 0;
-	intel_hdmi->pfit = 0;
 
 	switch (port) {
 	case PORT_B:
@@ -1646,14 +1767,14 @@ void intel_hdmi_init_connector(struct intel_digital_port *intel_dig_port,
 	* not the hot_plug(). After init, we can detect plug-in/out in
 	* hot-plug functions
 	*/
-	/*
-	intel_hdmi->edid = intel_hdmi_get_edid(connector, true);
-	*/
 	/* the product doesn't have hdmi device,will cause i2c timeout to read the edid */
+	//intel_hdmi->edid = intel_hdmi_get_edid(connector, true);
 	intel_hdmi->edid = NULL;
 
 	/* Update the first status */
 	connector->status = intel_hdmi_detect(connector, false);
+
+	dev_priv->port_disabled_on_unplug = false;
 }
 
 /* Added for HDMI Audio */
@@ -1718,6 +1839,10 @@ void intel_hdmi_init(struct drm_device *dev, int hdmi_reg, enum port port)
 	intel_dig_port->dp.output_reg = 0;
 
 	intel_hdmi_init_connector(intel_dig_port, intel_connector);
+	intel_dig_port->hdmi.sdev.name = "hdmi";
+	if (switch_dev_register(&intel_dig_port->hdmi.sdev) < 0) {
+	    DRM_ERROR("Hdmi switch_dev registration failed\n");
+	}
 	/* Added for HDMI Audio */
 	/* HDMI private data */
 	INIT_WORK(&dev_priv->hdmi_audio_wq, i915_had_wq);
@@ -1731,4 +1856,5 @@ void intel_hdmi_init(struct drm_device *dev, int hdmi_reg, enum port port)
 		hdmi_priv->is_hdcp_supported = true;
 		i915_hdmi_audio_init(hdmi_priv);
 	}
+	intel_connector->panel.fitting_mode = 0;
 }

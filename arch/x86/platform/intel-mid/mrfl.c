@@ -24,6 +24,13 @@
 #define APIC_DIVISOR 16
 #define MRFL_I2_TERM_MA 120
 
+#define SMIP_SRAM_ADDRESS	0xFFFC5C00
+#define SMIP_EM_MISCFLAGS	0x071B
+#define BYPASSINVALID		(1 << 4)
+#define SMIP_FPO1_OFFSET	0x023E
+#define CHARGE_INVALID_BATTERY	(1 << 2)
+#define MOFD_VBAT_MIN		3450
+
 enum intel_mid_sim_type __intel_mid_sim_platform;
 EXPORT_SYMBOL_GPL(__intel_mid_sim_platform);
 
@@ -154,6 +161,99 @@ static void __init tangier_arch_setup(void)
 	x86_init.timers.timer_init = tangier_time_init;
 }
 
+static int set_safe_battery_param(void)
+{
+	pr_info("%s:\n", __func__);
+
+	battery_chrg_profile = kzalloc(
+			sizeof(*battery_chrg_profile), GFP_KERNEL);
+	if (!battery_chrg_profile) {
+		pr_err("%s(): Error in kzalloc\n", __func__);
+		return -ENOMEM;
+	}
+
+	/* Populate the safe charging parameters */
+	memcpy(battery_chrg_profile->batt_id, "I2", 2);
+	battery_chrg_profile->battery_type = 2;
+	battery_chrg_profile->capacity = 2100;
+	battery_chrg_profile->voltage_max = 4100;
+	battery_chrg_profile->chrg_term_ma = 150;
+	battery_chrg_profile->low_batt_mV = 3500;
+	battery_chrg_profile->disch_tmp_ul = 60;
+	battery_chrg_profile->disch_tmp_ll = 0;
+	battery_chrg_profile->temp_mon_ranges = 4;
+
+	battery_chrg_profile->temp_mon_range[0].temp_up_lim  = 60;
+	battery_chrg_profile->temp_mon_range[0].full_chrg_vol = 4100;
+	battery_chrg_profile->temp_mon_range[0].full_chrg_cur = 500;
+	battery_chrg_profile->temp_mon_range[0].maint_chrg_vol_ll = 4050;
+	battery_chrg_profile->temp_mon_range[0].maint_chrg_vol_ul = 4100;
+	battery_chrg_profile->temp_mon_range[0].maint_chrg_cur = 500;
+
+	battery_chrg_profile->temp_mon_range[1].temp_up_lim  = 45;
+	battery_chrg_profile->temp_mon_range[1].full_chrg_vol = 4100;
+	battery_chrg_profile->temp_mon_range[1].full_chrg_cur = 500;
+	battery_chrg_profile->temp_mon_range[1].maint_chrg_vol_ll = 4050;
+	battery_chrg_profile->temp_mon_range[1].maint_chrg_vol_ul = 4100;
+	battery_chrg_profile->temp_mon_range[1].maint_chrg_cur = 500;
+
+	battery_chrg_profile->temp_mon_range[2].temp_up_lim  = 28;
+	battery_chrg_profile->temp_mon_range[2].full_chrg_vol = 4100;
+	battery_chrg_profile->temp_mon_range[2].full_chrg_cur = 500;
+	battery_chrg_profile->temp_mon_range[2].maint_chrg_vol_ll = 4050;
+	battery_chrg_profile->temp_mon_range[2].maint_chrg_vol_ul = 4100;
+	battery_chrg_profile->temp_mon_range[2].maint_chrg_cur = 500;
+
+	battery_chrg_profile->temp_mon_range[3].temp_up_lim  = 10;
+	battery_chrg_profile->temp_mon_range[3].full_chrg_vol = 4100;
+	battery_chrg_profile->temp_mon_range[3].full_chrg_cur = 500;
+	battery_chrg_profile->temp_mon_range[3].maint_chrg_vol_ll = 4050;
+	battery_chrg_profile->temp_mon_range[3].maint_chrg_vol_ul = 4100;
+	battery_chrg_profile->temp_mon_range[3].maint_chrg_cur = 500;
+
+	battery_chrg_profile->temp_low_lim = 0;
+
+	ps_batt_chrg_profile = kzalloc(sizeof(*ps_batt_chrg_profile),
+					GFP_KERNEL);
+	if (!ps_batt_chrg_profile) {
+		pr_err("%s(): Error in kzalloc\n", __func__);
+		kfree(battery_chrg_profile);
+		return -ENOMEM;
+	}
+
+	ps_batt_chrg_profile->chrg_prof_type = PSE_MOD_CHRG_PROF;
+	ps_batt_chrg_profile->batt_prof = battery_chrg_profile;
+#ifdef CONFIG_POWER_SUPPLY_BATTID
+	battery_prop_changed(POWER_SUPPLY_BATTERY_INSERTED,
+						ps_batt_chrg_profile);
+#endif
+	return 1;
+}
+
+static int charge_invalid_battery(void)
+{
+	void __iomem *fpo1_iomap;
+	void __iomem *miscflg_iomap;
+	int fpo1, miscflg;
+
+	pr_info("%s:\n", __func__);
+
+	/* Check if invalid battery charging is allowed */
+	miscflg_iomap = ioremap_nocache(
+			(SMIP_SRAM_ADDRESS + SMIP_EM_MISCFLAGS), 4);
+	miscflg = ioread8(miscflg_iomap);
+
+	fpo1_iomap = ioremap_nocache(
+			(SMIP_SRAM_ADDRESS + SMIP_FPO1_OFFSET), 4);
+	fpo1 = ioread8(fpo1_iomap);
+
+	if ((fpo1 & CHARGE_INVALID_BATTERY) &&
+		(miscflg & BYPASSINVALID))
+		return set_safe_battery_param();
+	else
+		return 0;
+}
+
 static void set_batt_chrg_prof(struct ps_pse_mod_prof *batt_prof,
 				struct ps_pse_mod_prof *pentry)
 {
@@ -173,7 +273,11 @@ static void set_batt_chrg_prof(struct ps_pse_mod_prof *batt_prof,
 	else
 		batt_prof->chrg_term_ma = pentry->chrg_term_ma;
 
-	batt_prof->low_batt_mV = pentry->low_batt_mV;
+	if (INTEL_MID_BOARD(1, PHONE, MOFD) ||
+		INTEL_MID_BOARD(1, TABLET, MOFD))
+		batt_prof->low_batt_mV = MOFD_VBAT_MIN;
+	else
+		batt_prof->low_batt_mV = pentry->low_batt_mV;
 	batt_prof->disch_tmp_ul = pentry->disch_tmp_ul;
 	batt_prof->disch_tmp_ll = pentry->disch_tmp_ll;
 	batt_prof->temp_low_lim = pentry->temp_low_lim;
@@ -205,8 +309,13 @@ static int __init mrfl_platform_init(void)
 		 INTEL_MID_BOARD(1, TABLET, MOFD)))
 		return 0;
 
-	if (!table)
-		return 0;
+	if (!table) {
+		if ((INTEL_MID_BOARD(1, PHONE, MOFD) ||
+			INTEL_MID_BOARD(1, TABLET, MOFD)))
+			return charge_invalid_battery();
+		else
+			return 0;
+	}
 
 	sb = (struct sfi_table_simple *)table;
 	totentrs = SFI_GET_NUM_ENTRIES(sb, struct ps_pse_mod_prof);
@@ -251,13 +360,13 @@ static int __init mrfl_platform_init(void)
 }
 arch_initcall_sync(mrfl_platform_init);
 
-void *get_tangier_ops()
+void *get_tangier_ops(void)
 {
 	return &tangier_ops;
 }
 
 /* piggy back on anniedale ops right now */
-void *get_anniedale_ops()
+void *get_anniedale_ops(void)
 {
 	return &tangier_ops;
 }

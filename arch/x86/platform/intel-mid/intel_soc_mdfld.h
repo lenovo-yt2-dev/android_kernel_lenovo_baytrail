@@ -17,7 +17,7 @@
  *
  */
 
-/* #ifdef CONFIG_REMOVEME_INTEL_REMOVEME_ATOM_MDFLD_POWER */
+#ifdef CONFIG_REMOVEME_INTEL_REMOVEME_ATOM_MDFLD_POWER
 
 #define   PM_SUPPORT				0x21
 
@@ -350,4 +350,4 @@ extern void s0ix_complete(void);
 extern int mdfld_clv_nc_set_power_state(int, int, int, int *);
 
 
-/* #endif */
+#endif

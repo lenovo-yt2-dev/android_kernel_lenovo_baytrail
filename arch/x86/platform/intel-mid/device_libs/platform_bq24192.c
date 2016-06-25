@@ -61,7 +61,9 @@ char *bq24192_supplied_to[] = {
 	"max17047_battery",
 	"bq27x00_battery",
 	"bq27541_battery",
-	"bq27000_battery",
+	"bq27500_battery",
+	"intel_fuel_gauge",
+
 };
 
 static int const bptherm_curve_data[BPTHERM_CURVE_MAX_SAMPLES]
@@ -192,8 +194,7 @@ static void dump_batt_chrg_profile(struct ps_pse_mod_prof *bcprof,
 
 static void platform_get_sfi_batt_table(void *table, bool fpo_override_bit)
 {
-	struct sfi_table_simple *sb =
-			 (struct sfi_table_simple *)get_oem0_table();
+	struct sfi_table_simple *sb = NULL;
 	struct platform_batt_profile *batt_prof;
 	u8 *bprof_ptr;
 
@@ -201,6 +202,9 @@ static void platform_get_sfi_batt_table(void *table, bool fpo_override_bit)
 
 	pr_debug("%s\n", __func__);
 
+#ifdef CONFIG_SFI
+	sb = (struct sfi_table_simple *)get_oem0_table();
+#endif
 	if (sb == NULL) {
 		pr_debug("Invalid Battery detected\n");
 		return;
@@ -619,8 +623,8 @@ read_adc_exit:
 /**************************************************/
 #ifdef CONFIG_POWER_SUPPLY_CHARGER
 #define BYTCR_CHRG_CUR_NOLIMIT		1500
-#define BYTCR_CHRG_CUR_MEDIUM		1400
-#define BYTCR_CHRG_CUR_LOW		1000
+#define BYTCR_CHRG_CUR_MEDIUM		1000
+#define BYTCR_CHRG_CUR_LOW		500
 
 static struct ps_batt_chg_prof byt_ps_batt_chrg_prof;
 static struct ps_pse_mod_prof byt_batt_chg_profile;
@@ -719,7 +723,6 @@ static void *platform_byt_get_batt_charge_profile(void)
 #endif	
 
 
-
 	byt_ps_batt_chrg_prof.batt_prof = &byt_batt_chg_profile;
 	battery_prop_changed(POWER_SUPPLY_BATTERY_INSERTED,
 					&byt_ps_batt_chrg_prof);
@@ -799,10 +802,8 @@ void *bq24192_platform_data(void *info)
 
 	pr_debug("%s:\n", __func__);
 
-	if (INTEL_MID_BOARD(3, TABLET, BYT, BLK, PRO, CRV2) ||
-			INTEL_MID_BOARD(3, TABLET, BYT, BLK, ENG, CRV2) ||
-			INTEL_MID_BOARD(3, TABLET, BYT, BLK, PRO, 8PR1) ||
-			INTEL_MID_BOARD(3, TABLET, BYT, BLK, ENG, 8PR1)) {
+	if (1) {
+		printk("yxf %s   called  \n",__func__);
 		platform_byt_init_chrg_params(&platform_data);
 	} else {
 		platform_clvp_init_chrg_params(&platform_data);

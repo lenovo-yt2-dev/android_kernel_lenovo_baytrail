@@ -18,8 +18,12 @@ struct bcm_bt_lpm_platform_data {
 	int gpio_wake;		/* CPU -> BCM wakeup gpio */
 	int gpio_host_wake;	/* BCM -> CPU wakeup gpio */
 	int int_host_wake;	/* BCM -> CPU wakeup irq */
+#ifdef CONFIG_PF450CL
+	int gpio_reset;         /* GPIO reset pin of BT/FM */
+	int gpio_reg_on;	/* GPIO regular on pin of BT/FM */
+#else
 	int gpio_enable;	/* GPIO enable/disable BT/FM */
-
+#endif
 	int port;		/* UART port to use with BT/FM */
 };
 

@@ -26,8 +26,12 @@
  */
 #define PN544_SET_PWR	_IOW(PN544_MAGIC, 0x01, unsigned int)
 
+/* NFC controller (PN54x) GPIOs */
+#define NFC_HOST_INT_GPIO               "NFC-intr"
+#define NFC_ENABLE_GPIO                 "NFC-enable"
+#define NFC_FW_RESET_GPIO               "NFC-reset"
+
 struct pn544_i2c_platform_data {
-	int (*request_resources) (struct i2c_client *client);
 	unsigned int irq_gpio;
 	unsigned int ven_gpio;
 	unsigned int firm_gpio;

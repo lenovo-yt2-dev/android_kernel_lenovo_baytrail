@@ -28,4 +28,5 @@ struct bq27x00_platform_data {
 	int (*translate_temp)(int temperature);
 };
 
+
 #endif

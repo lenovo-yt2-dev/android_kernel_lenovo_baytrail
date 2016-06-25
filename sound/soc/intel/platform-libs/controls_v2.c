@@ -74,7 +74,7 @@ unsigned int sst_soc_read(struct snd_soc_platform *platform,
 {
 	struct sst_data *sst = snd_soc_platform_get_drvdata(platform);
 
-	pr_debug("%s for reg %d val=%d\n", __func__, reg, sst->widget[reg]);
+	pr_debug("%s: reg[%d] = %#x\n", __func__, reg, sst->widget[reg]);
 	BUG_ON(reg > (SST_NUM_WIDGETS - 1));
 	return sst->widget[reg];
 }
@@ -84,7 +84,7 @@ int sst_soc_write(struct snd_soc_platform *platform,
 {
 	struct sst_data *sst = snd_soc_platform_get_drvdata(platform);
 
-	pr_debug("%s for reg %d val %d\n", __func__, reg, val);
+	pr_debug("%s: reg[%d] = %#x\n", __func__, reg, val);
 	BUG_ON(reg > (SST_NUM_WIDGETS - 1));
 	sst->widget[reg] = val;
 	return 0;
@@ -123,7 +123,7 @@ int sst_mix_put(struct snd_kcontrol *kcontrol,
 	int connect;
 	struct snd_soc_dapm_update update;
 
-	pr_debug("%s called set %ld for %s\n", __func__,
+	pr_debug("%s called set %#lx for %s\n", __func__,
 			ucontrol->value.integer.value[0], widget->name);
 	val = sst_reg_write(sst, mc->reg, mc->shift, mc->max, ucontrol->value.integer.value[0]);
 	connect = !!val;
@@ -132,7 +132,7 @@ int sst_mix_put(struct snd_kcontrol *kcontrol,
 	update.kcontrol = kcontrol;
 	update.widget = widget;
 	update.reg = mc->reg;
-	update.mask = mask;
+	update.mask = mask << mc->shift;
 	update.val = val;
 
 	widget->dapm->update = &update;
@@ -150,7 +150,6 @@ int sst_mix_get(struct snd_kcontrol *kcontrol,
 		(struct soc_mixer_control *)kcontrol->private_value;
 	struct sst_data *sst = snd_soc_platform_get_drvdata(w->platform);
 
-	pr_debug("%s called for %s\n", __func__, w->name);
 	ucontrol->value.integer.value[0] = !!sst_reg_read(sst, mc->reg, mc->shift, mc->max);
 	return 0;
 }
@@ -1669,32 +1668,6 @@ static int sst_compr_vol_set(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-static int sst_vtsv_enroll_set(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_platform *platform = snd_kcontrol_chip(kcontrol);
-	struct sst_data *sst = snd_soc_platform_get_drvdata(platform);
-	int ret = 0;
-
-	sst->vtsv_enroll = ucontrol->value.integer.value[0];
-	mutex_lock(&sst->lock);
-	if (sst->vtsv_enroll)
-		ret = sst_dsp->ops->set_generic_params(SST_SET_VTSV_INFO,
-					(void *)&sst->vtsv_enroll);
-	mutex_unlock(&sst->lock);
-	return ret;
-}
-
-static int sst_vtsv_enroll_get(struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_platform *platform = snd_kcontrol_chip(kcontrol);
-	struct sst_data *sst = snd_soc_platform_get_drvdata(platform);
-
-	ucontrol->value.integer.value[0] = sst->vtsv_enroll;
-	return 0;
-}
-
 /* This value corresponds to two's complement value of -10 or -1dB */
 #define SST_COMPR_VOL_MAX_INTEG_GAIN 0xFFF6
 #define SST_COMPR_VOL_MUTE 0xFA60 /* 2's complement of -1440 or -144dB*/
@@ -1710,8 +1683,6 @@ static const struct snd_kcontrol_new sst_mrfld_controls[] = {
 		sst_compr_vol_get, sst_compr_vol_set,
 		SST_ALGO_VOLUME_CONTROL, PIPE_MEDIA0_IN, 0,
 		SST_COMPR_VOL_MUTE),
-	SOC_SINGLE_BOOL_EXT("SST VTSV Enroll", 0, sst_vtsv_enroll_get,
-		       sst_vtsv_enroll_set),
 };
 
 static DEVICE_ULONG_ATTR(low_latency_threshold, 0644, ll_threshold);

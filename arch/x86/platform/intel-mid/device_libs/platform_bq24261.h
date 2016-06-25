@@ -19,7 +19,7 @@
 #define BQ24261_CHRG_CUR_LOW		100	/* 100mA */
 #define BQ24261_CHRG_CUR_MEDIUM		500	/* 500mA */
 #define BQ24261_CHRG_CUR_HIGH		900	/* 900mA */
-#define BQ24261_CHRG_CUR_NOLIMIT	1500	/* 1500mA */
+#define BQ24261_CHRG_CUR_NOLIMIT	2500	/* 2500mA */
 
 extern void __init *bq24261_platform_data(
 			void *info) __attribute__((weak));

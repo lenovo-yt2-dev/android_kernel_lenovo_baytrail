@@ -39,6 +39,11 @@
 #include "sep_power.h"
 #include "crypto_ctx_mgr.h"
 #include "crypto_api.h"
+#include "sepapp.h"
+#include "sep_applets.h"
+#include "dx_sepapp_kapi.h"
+
+#include <linux/sched.h>
 
 #define CRYPTO_API_QID 0
 /* Priority assigned to our algorithms implementation */
@@ -50,17 +55,8 @@
 #define SYMCIPHER_ALG_NAME_ALG_OFFSET 4
 #define SYMCIPHER_ALG_NAME_ALG_SIZE 3
 
-/**
- * struct async_req_ctx - Context for async. request (__ctx of request)
- * @op_ctx:		SeP operation context
- * @initiating_req:	The initiating crypto request
- * @comp_work:		Completion work handler
- */
-struct async_req_ctx {
-	struct sep_op_ctx op_ctx;
-	struct crypto_async_request *initiating_req;
-	struct work_struct comp_work;
-};
+#define CMD_DO_CRYPTO 7
+#define DISK_ENC_APP_UUID "INTEL DISK ENC01"
 
 /**
  * struct async_digest_req_ctx - Context for async. digest algorithms requests
@@ -127,6 +123,17 @@ static struct crypto_alg blkcipher_algs_base = {
 
 /* Block cipher specific attributes */
 static struct crypto_alg dx_ablkcipher_algs[] = {
+	{			/* xxx(aes) */
+	 .cra_name = "xxx(aes)",
+	 .cra_driver_name = MODULE_NAME "-aes-xxx",
+	 .cra_blocksize = SEP_AES_BLOCK_SIZE,
+	 .cra_u = {
+		   .ablkcipher = {
+				  .min_keysize = SEP_AES_128_BIT_KEY_SIZE,
+				  .max_keysize = SEP_AES_256_BIT_KEY_SIZE,
+				  .ivsize = SEP_AES_IV_SIZE}
+		   }
+	 },
 #ifdef USE_SEP54_AES
 	{			/* ecb(aes) */
 	 .cra_name = "ecb(aes)",
@@ -224,6 +231,7 @@ static struct crypto_alg dx_ablkcipher_algs[] = {
 	(sizeof(dx_ablkcipher_algs) / sizeof(struct crypto_alg))
 
 static const enum dxdi_sym_cipher_type dx_algs_cipher_types[] = {
+	DXDI_SYMCIPHER_AES_XXX,
 #ifdef USE_SEP54_AES
 	DXDI_SYMCIPHER_AES_ECB,
 	DXDI_SYMCIPHER_AES_CBC,
@@ -409,6 +417,14 @@ static void crypto_ctx_cleanup(struct crypto_tfm *tfm)
 		pr_err("Failed mapping context @%p (rc=%d)\n",
 			    host_ctx_p, rc);
 		return;
+	}
+
+	/* New TEE method */
+	if (!memcmp(crypto_tfm_alg_name(tfm), "xxx(aes)", 8)) {
+		if (dx_sepapp_session_close(host_ctx_p->sctx,
+						host_ctx_p->sess_id))
+			BUG(); /* TODO */
+		dx_sepapp_context_free(host_ctx_p->sctx);
 	}
 
 	ctxmgr_set_ctx_state(ctx_info, CTX_STATE_UNINITIALIZED);
@@ -637,6 +653,26 @@ static int symcipher_ctx_init(struct crypto_tfm *tfm)
 		ctxmgr_set_ctx_state(ctx_info, CTX_STATE_PARTIAL_INIT);
 	}
 	ctxmgr_unmap_kernel_ctx(ctx_info);
+
+	/* New TEE method */
+	if (!memcmp(crypto_tfm_alg_name(tfm), "xxx(aes)", 8)) {
+		u8 uuid[16] = DISK_ENC_APP_UUID;
+		enum dxdi_sep_module ret_origin;
+
+		host_ctx_p->sctx = dx_sepapp_context_alloc();
+		if (unlikely(!host_ctx_p->sctx)) {
+			rc = -ENOMEM;
+			goto init_end;
+		}
+
+		rc = dx_sepapp_session_open(host_ctx_p->sctx,
+				uuid, 0, NULL, NULL, &host_ctx_p->sess_id,
+				&ret_origin);
+		if (unlikely(rc != 0))
+			dx_sepapp_context_free(host_ctx_p->sctx);
+	}
+
+init_end:
 #ifdef SEP_RUNTIME_PM
 	dx_sep_pm_runtime_put();
 #endif
@@ -837,42 +873,95 @@ static int symcipher_process(struct ablkcipher_request *req,
 
 	/* Initialize async. req. context */
 	areq_ctx->initiating_req = &req->base;
-	INIT_WORK(&areq_ctx->comp_work, dx_crypto_api_handle_op_completion);
-	op_ctx_init(op_ctx, &crypto_api_ctx);
-	op_ctx->op_type = SEP_OP_CRYPTO_PROC;
-	op_ctx->comp_work = &areq_ctx->comp_work;
 
-	rc = prepare_symcipher_ctx_for_processing(op_ctx, host_ctx_p, req->info,
-						  direction);
-	if (unlikely(rc != 0)) {
-		op_ctx_fini(op_ctx);
-		return rc;
-	}
-	rc = prepare_data_for_sep(op_ctx, NULL, req->src, NULL, req->dst,
-				  req->nbytes, CRYPTO_DATA_TEXT);
-	if (unlikely(rc != 0)) {
-		pr_err(
-			    "Failed preparing DMA buffers (rc=%d, err_info=0x%08X\n)\n",
-			    rc, op_ctx->error_info);
-		if (op_ctx->error_info == DXDI_ERROR_INVAL_DATA_SIZE) {
-			pr_err("Invalid data unit size %u\n", req->nbytes);
-			req->base.flags |= CRYPTO_TFM_RES_BAD_BLOCK_LEN;
+	/* Old method */
+	if (memcmp(crypto_tfm_alg_name(crypto_ablkcipher_tfm(tfm)),
+			"xxx(aes)", 8)) {
+		INIT_WORK(&areq_ctx->comp_work,
+				dx_crypto_api_handle_op_completion);
+		op_ctx_init(op_ctx, &crypto_api_ctx);
+		op_ctx->op_type = SEP_OP_CRYPTO_PROC;
+		op_ctx->comp_work = &areq_ctx->comp_work;
+
+		rc = prepare_symcipher_ctx_for_processing(op_ctx,
+				host_ctx_p, req->info,
+				direction);
+		if (unlikely(rc != 0)) {
+			op_ctx_fini(op_ctx);
+			return rc;
 		}
-	} else {		/* Initiate processing */
-		/* Async. block cipher op. cannot reuse cache entry bacause
-		   the IV is set on every operation. Invalidate before releasing
-		   the sequencer (that's "async" invalidation) */
-		rc = dispatch_crypto_op(op_ctx,
+
+		rc = prepare_data_for_sep(op_ctx, NULL, req->src,
+					  NULL, req->dst,
+					  req->nbytes, CRYPTO_DATA_TEXT);
+		if (unlikely(rc != 0)) {
+			SEP_LOG_ERR(
+				    "Failed preparing DMA buffers (rc=%d, err_info=0x%08X\n)\n",
+				    rc, op_ctx->error_info);
+			if (op_ctx->error_info == DXDI_ERROR_INVAL_DATA_SIZE) {
+				SEP_LOG_ERR("Invalid data unit size %u\n",
+						req->nbytes);
+				req->base.flags |=
+						CRYPTO_TFM_RES_BAD_BLOCK_LEN;
+			}
+		} else {		/* Initiate processing */
+			/* Async. block cipher op. cannot reuse cache entry
+			   bacause the IV is set on every operation. Invalidate
+			   before releasing the sequencer (that's "async"
+			   invalidation) */
+			rc = dispatch_crypto_op(op_ctx,
 					req->base.
 					flags & CRYPTO_TFM_REQ_MAY_BACKLOG,
 					true /*init. */ , SEP_PROC_MODE_PROC_T,
 					false /*cache */);
+		}
+		if (unlikely(IS_DESCQ_ENQUEUE_ERR(rc))) { /* Dispatch failure */
+			crypto_op_completion_cleanup(op_ctx);
+			release_symcipher_ctx(op_ctx, req->info);
+			op_ctx_fini(op_ctx);
+		}
+	} else {
+		/* New method vith TEE api */
+		struct dxdi_sepapp_kparams *cmd_params =
+			kzalloc(sizeof(struct dxdi_sepapp_kparams), GFP_KERNEL);
+		enum dxdi_sep_module ret_origin;
+		struct scatterlist sg_iv;
+		u8 iv[SEP_AES_IV_SIZE];
+
+		if (cmd_params == NULL)
+			return -ENOMEM;
+
+		memcpy(iv, req->info, SEP_AES_IV_SIZE);
+		sg_init_one(&sg_iv, iv, SEP_AES_IV_SIZE);
+
+		cmd_params->params_types[0] = DXDI_SEPAPP_PARAM_VAL;
+		cmd_params->params[0].val.data[0] = direction;
+		cmd_params->params[0].val.data[1] = 0;
+		cmd_params->params[0].val.copy_dir = DXDI_DATA_TO_DEVICE;
+
+		cmd_params->params_types[1] = DXDI_SEPAPP_PARAM_MEMREF;
+		cmd_params->params[1].kmemref.dma_direction =
+					DXDI_DATA_TO_DEVICE;
+		cmd_params->params[1].kmemref.sgl = &sg_iv;
+		cmd_params->params[1].kmemref.nbytes = SEP_AES_IV_SIZE;
+
+		cmd_params->params_types[2] = DXDI_SEPAPP_PARAM_MEMREF;
+		cmd_params->params[2].kmemref.dma_direction =
+					DXDI_DATA_TO_DEVICE;
+		cmd_params->params[2].kmemref.sgl = req->src;
+		cmd_params->params[2].kmemref.nbytes = req->nbytes;
+
+		cmd_params->params_types[3] = DXDI_SEPAPP_PARAM_MEMREF;
+		cmd_params->params[3].kmemref.dma_direction =
+					DXDI_DATA_FROM_DEVICE;
+		cmd_params->params[3].kmemref.sgl = req->dst;
+		cmd_params->params[3].kmemref.nbytes = req->nbytes;
+
+		rc = async_sepapp_command_invoke(host_ctx_p->sctx,
+					host_ctx_p->sess_id, CMD_DO_CRYPTO,
+					cmd_params, &ret_origin, areq_ctx);
 	}
-	if (unlikely(IS_DESCQ_ENQUEUE_ERR(rc))) {	/* Dispatch failure */
-		crypto_op_completion_cleanup(op_ctx);
-		release_symcipher_ctx(op_ctx, req->info);
-		op_ctx_fini(op_ctx);
-	}
+
 	return rc;
 }
 

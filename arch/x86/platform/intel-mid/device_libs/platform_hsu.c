@@ -28,8 +28,10 @@
 
 #define VLV_HSU_CLOCK	0x0800
 #define VLV_HSU_RESET	0x0804
+#define VLV_HSU_OVF_IRQ	0x0820	/* Overflow interrupt related */
 
 static unsigned int clock;
+static int hsu_device_cfg = config_base;
 static struct hsu_port_pin_cfg *hsu_port_gpio_mux;
 static struct hsu_port_cfg *platform_hsu_info;
 
@@ -260,6 +262,44 @@ hsu_port_pin_cfg hsu_port_pin_cfgs[][hsu_pid_max][hsu_port_max] = {
 			},
 		},
 	},
+	[hsu_ann_lnp] = {
+		[hsu_pid_def] = {
+			[hsu_port0] = {
+				.id = 0,
+				.name = HSU_BT_PORT,
+				.rx_gpio = 126,
+				.rx_alt = 1,
+				.tx_gpio = 127,
+				.tx_alt = 1,
+				.cts_gpio = 124,
+				.cts_alt = 1,
+				.rts_gpio = 125,
+				.rts_alt = 1,
+			},
+			[hsu_port1] = {
+				.id = 1,
+				.name = HSU_GPS_PORT,
+				.wake_gpio = 128,
+				.rx_gpio = 130,
+				.rx_alt = 1,
+				.cts_gpio = 128,
+				.cts_alt = 1,
+				.rts_gpio = 129,
+				.rts_alt = 1,
+			},
+			[hsu_port2] = {
+				.id = 2,
+				.name = HSU_DEBUG_PORT,
+				.wake_gpio = 134,
+				.rx_gpio = 134,
+				.rx_alt = 1,
+				.cts_gpio = 132,
+				.cts_alt = 1,
+				.rts_gpio = 133,
+				.rts_alt = 1,
+			},
+		},
+	},
 	[hsu_vlv2] = {
 		[hsu_pid_def] = {
 			[hsu_port0] = {
@@ -275,6 +315,26 @@ hsu_port_pin_cfg hsu_port_pin_cfgs[][hsu_pid_max][hsu_port_max] = {
 				.rx_gpio = 74,
 				.rx_alt = 1,
 				.rts_gpio = 76,
+				.rts_alt = 1,
+			},
+		},
+	},
+	[hsu_chv] = {
+		[hsu_pid_def] = {
+			[hsu_port0] = {
+				.id = 0,
+				.name = HSU_BT_PORT,
+				.rts_gpio = 0,
+				.rts_alt = 1,
+			},
+			[hsu_port1] = {
+				.id = 1,
+				.name = HSU_GPS_PORT,
+				.wake_gpio = 0,
+				.wake_src = hsu_rxd,
+				.rx_gpio = 0,
+				.rx_alt = 1,
+				.rts_gpio = 0,
 				.rts_alt = 1,
 			},
 		},
@@ -318,7 +378,7 @@ static struct hsu_port_cfg hsu_port_cfgs[][hsu_port_max] = {
 			.hw_ip = hsu_intel,
 			.index = 2,
 			.name = HSU_GPS_PORT,
-			.idle = 30,
+			.idle = 40,
 			.preamble = 1,
 			.hw_init = intel_mid_hsu_init,
 			.hw_set_alt = intel_mid_hsu_switch,
@@ -391,7 +451,7 @@ static struct hsu_port_cfg hsu_port_cfgs[][hsu_port_max] = {
 			.hw_ip = hsu_intel,
 			.index = 3,
 			.name = HSU_GPS_PORT,
-			.idle = 30,
+			.idle = 40,
 			.preamble = 1,
 			.hw_init = intel_mid_hsu_init,
 			.hw_set_alt = intel_mid_hsu_switch,
@@ -412,6 +472,53 @@ static struct hsu_port_cfg hsu_port_cfgs[][hsu_port_max] = {
 			.index = 0,
 			.name = HSU_BT_PORT,
 			.idle = 20,
+			.hw_ctrl_cts = 1,
+			.hw_init = intel_mid_hsu_init,
+			.hw_set_alt = intel_mid_hsu_switch,
+			.hw_set_rts = intel_mid_hsu_rts,
+			.hw_suspend = intel_mid_hsu_suspend,
+			.hw_resume = intel_mid_hsu_resume,
+			.hw_get_clk = intel_mid_hsu_get_clk,
+			.hw_context_save = 1,
+		},
+		[hsu_port1] = {
+			.type = gps_port,
+			.hw_ip = hsu_intel,
+			.index = 1,
+			.name = HSU_GPS_PORT,
+			.idle = 40,
+			.preamble = 1,
+			.hw_init = intel_mid_hsu_init,
+			.hw_set_alt = intel_mid_hsu_switch,
+			.hw_set_rts = intel_mid_hsu_rts,
+			.hw_suspend = intel_mid_hsu_suspend,
+			.hw_suspend_post = intel_mid_hsu_suspend_post,
+			.hw_resume = intel_mid_hsu_resume,
+			.hw_get_clk = intel_mid_hsu_get_clk,
+			.hw_context_save = 1,
+		},
+		[hsu_port2] = {
+			.type = modem_port,
+			.hw_ip = hsu_intel,
+			.index = 2,
+			.name = HSU_MODEM_PORT,
+			.idle = 2000,
+			.hw_init = intel_mid_hsu_init,
+			.hw_set_alt = intel_mid_hsu_switch,
+			.hw_suspend = intel_mid_hsu_suspend,
+			.hw_resume = intel_mid_hsu_resume,
+			.hw_get_clk = intel_mid_hsu_get_clk,
+			.hw_context_save = 1,
+		},
+	},
+	[hsu_ann_lnp] = {
+		[hsu_port0] = {
+			.type = bt_port,
+			.hw_ip = hsu_intel,
+			.index = 0,
+			.name = HSU_BT_PORT,
+			.idle = 20,
+			.hw_ctrl_cts = 1,
 			.hw_init = intel_mid_hsu_init,
 			.hw_set_alt = intel_mid_hsu_switch,
 			.hw_set_rts = intel_mid_hsu_rts,
@@ -426,12 +533,11 @@ static struct hsu_port_cfg hsu_port_cfgs[][hsu_port_max] = {
 			.index = 1,
 			.name = HSU_GPS_PORT,
 			.idle = 30,
-			.preamble = 1,
+			.hw_ctrl_cts = 1,
 			.hw_init = intel_mid_hsu_init,
 			.hw_set_alt = intel_mid_hsu_switch,
 			.hw_set_rts = intel_mid_hsu_rts,
 			.hw_suspend = intel_mid_hsu_suspend,
-			.hw_suspend_post = intel_mid_hsu_suspend_post,
 			.hw_resume = intel_mid_hsu_resume,
 			.hw_get_clk = intel_mid_hsu_get_clk,
 			.hw_context_save = 1,
@@ -473,7 +579,45 @@ static struct hsu_port_cfg hsu_port_cfgs[][hsu_port_max] = {
 			.hw_ip = hsu_dw,
 			.index = 1,
 			.name = HSU_GPS_PORT,
-			.idle = 30,
+			.idle = 40,
+			.preamble = 1,
+			.hw_reset = intel_mid_hsu_reset,
+			.set_clk = intel_mid_hsu_set_clk,
+			.hw_ctrl_cts = 1,
+			.hw_init = intel_mid_hsu_init,
+			/* Trust FW has set it correctly */
+			.hw_set_alt = NULL,
+			.hw_set_rts = intel_mid_hsu_rts,
+			.hw_suspend = intel_mid_hsu_suspend,
+			.hw_suspend_post = intel_mid_hsu_suspend_post,
+			.hw_resume = intel_mid_hsu_resume,
+			.hw_context_save = 1,
+		},
+	},
+	[hsu_chv] = {
+		[hsu_port0] = {
+			.type = bt_port,
+			.hw_ip = hsu_dw,
+			.index = 0,
+			.name = HSU_BT_PORT,
+			.idle = 100,
+			.hw_reset = intel_mid_hsu_reset,
+			.set_clk = intel_mid_hsu_set_clk,
+			.hw_ctrl_cts = 1,
+			.hw_init = intel_mid_hsu_init,
+			/* Trust FW has set it correctly */
+			.hw_set_alt = NULL,
+			.hw_set_rts = intel_mid_hsu_rts,
+			.hw_suspend = intel_mid_hsu_suspend,
+			.hw_resume = intel_mid_hsu_resume,
+			.hw_context_save = 1,
+		},
+		[hsu_port1] = {
+			.type = gps_port,
+			.hw_ip = hsu_dw,
+			.index = 1,
+			.name = HSU_GPS_PORT,
+			.idle = 40,
 			.preamble = 1,
 			.hw_reset = intel_mid_hsu_reset,
 			.set_clk = intel_mid_hsu_set_clk,
@@ -703,18 +847,38 @@ void intel_mid_hsu_set_clk(unsigned int m, unsigned int n,
 {
 	unsigned int param, update_bit;
 
-	update_bit = 1 << 31;
-	param = (m << 1) | (n << 16) | 0x1;
+	switch (boot_cpu_data.x86_model) {
+	/* valleyview*/
+	case 0x37:
+	/* cherryview */
+	case 0x4C:
+		update_bit = 1 << 31;
+		param = (m << 1) | (n << 16) | 0x1;
 
-	writel(param, addr + VLV_HSU_CLOCK);
-	writel((param | update_bit), addr + VLV_HSU_CLOCK);
-	writel(param, addr + VLV_HSU_CLOCK);
+		writel(param, addr + VLV_HSU_CLOCK);
+		writel((param | update_bit), addr + VLV_HSU_CLOCK);
+		writel(param, addr + VLV_HSU_CLOCK);
+		break;
+	default:
+		break;
+	}
 }
 
 void intel_mid_hsu_reset(void __iomem *addr)
 {
-	writel(0, addr + VLV_HSU_RESET);
-	writel(3, addr + VLV_HSU_RESET);
+	switch (boot_cpu_data.x86_model) {
+	/* valleyview*/
+	case 0x37:
+	/* cherryview */
+	case 0x4C:
+		writel(0, addr + VLV_HSU_RESET);
+		writel(3, addr + VLV_HSU_RESET);
+		/* Disable the tx overflow IRQ */
+		writel(2, addr + VLV_HSU_OVF_IRQ);
+		break;
+	default:
+		break;
+	}
 }
 
 unsigned int intel_mid_hsu_get_clk(void)
@@ -727,22 +891,33 @@ int intel_mid_hsu_func_to_port(unsigned int func)
 	int i;
 	struct hsu_func2port *tbl = NULL;
 
-	switch (intel_mid_identify_cpu()) {
-	case INTEL_MID_CPU_CHIP_CLOVERVIEW:
-		tbl = &hsu_port_func_id_tlb[hsu_clv][0];
-		break;
-	case INTEL_MID_CPU_CHIP_TANGIER:
-	case INTEL_MID_CPU_CHIP_ANNIEDALE:
-		tbl = &hsu_port_func_id_tlb[hsu_tng][0];
-		break;
-	case INTEL_MID_CPU_CHIP_PENWELL:
+	switch (boot_cpu_data.x86_model) {
+	/* penwell */
+	case 0x27:
 		tbl = &hsu_port_func_id_tlb[hsu_pnw][0];
 		break;
-	default:
-		/* FIXME: VALLEYVIEW2? */
-		/* 1e.3 and 1e.4 */
+	/* cloverview */
+	case 0x35:
+		tbl = &hsu_port_func_id_tlb[hsu_clv][0];
+		break;
+	/* tangier */
+	case 0x3C:
+	case 0x4A:
+		tbl = &hsu_port_func_id_tlb[hsu_tng][0];
+		break;
+	/* valleyview*/
+	case 0x37:
 		tbl = &hsu_port_func_id_tlb[hsu_vlv2][0];
 		break;
+	/* anniedale */
+	case 0x5A:
+		/* anniedale same config as tangier */
+		tbl = &hsu_port_func_id_tlb[hsu_tng][0];
+		break;
+	/* cherryview */
+	case 0x4C:
+	default:
+		return -1;
 	}
 
 	for (i = 0; i < hsu_port_func_max; i++) {
@@ -779,14 +954,23 @@ int intel_mid_hsu_init(struct device *dev, int port)
 	return 1;
 }
 
-static void hsu_platform_clk(enum intel_mid_cpu_type cpu_type)
+static void hsu_platform_clk(enum intel_mid_cpu_type cpu_type, ulong plat)
 {
 	void __iomem *clkctl, *clksc;
 	u32 clk_src, clk_div;
 
-	switch (cpu_type) {
-	case INTEL_MID_CPU_CHIP_TANGIER:
-	case INTEL_MID_CPU_CHIP_ANNIEDALE:
+	switch (boot_cpu_data.x86_model) {
+	/* penwell */
+	case 0x27:
+	/* cloverview */
+	case 0x35:
+		clock = 50000;
+		break;
+	/* tangier */
+	case 0x3C:
+	case 0x4A:
+	/* anniedale */
+	case 0x5A:
 		clock = 100000;
 		clkctl = ioremap_nocache(TNG_CLOCK_CTL, 4);
 		if (!clkctl) {
@@ -819,13 +1003,11 @@ static void hsu_platform_clk(enum intel_mid_cpu_type cpu_type)
 		iounmap(clkctl);
 		iounmap(clksc);
 		break;
-
-	case INTEL_MID_CPU_CHIP_PENWELL:
-	case INTEL_MID_CPU_CHIP_CLOVERVIEW:
-		clock = 50000;
-		break;
+	/* valleyview*/
+	case 0x37:
+	/* cherryview */
+	case 0x4C:
 	default:
-		/* FIXME: VALLEYVIEW2? */
 		clock = 100000;
 		break;
 	}
@@ -833,10 +1015,74 @@ static void hsu_platform_clk(enum intel_mid_cpu_type cpu_type)
 	pr_info("hsu core clock %u M\n", clock / 1000);
 }
 
+int intel_mid_hsu_plat_init(int port, ulong plat, struct device *dev)
+{
+#ifdef CONFIG_ACPI
+	struct acpi_gpio_info info;
+	struct hsu_port_pin_cfg *pin_cfg = NULL;
+	int gpio = -1;
+
+	switch (plat) {
+	case hsu_chv:
+		pin_cfg = &hsu_port_pin_cfgs[plat][hsu_pid_def][port];
+
+		if (!pin_cfg->rx_gpio) {
+			gpio = acpi_get_gpio_by_index(dev, rxd_acpi_idx, &info);
+			if (gpio >= 0)
+				pin_cfg->rx_gpio = gpio;
+		}
+
+		if (!pin_cfg->tx_gpio) {
+			gpio = acpi_get_gpio_by_index(dev, txd_acpi_idx, &info);
+			if (gpio >= 0)
+				pin_cfg->tx_gpio = gpio;
+		}
+
+		if (!pin_cfg->rts_gpio) {
+			gpio = acpi_get_gpio_by_index(dev, rts_acpi_idx, &info);
+			if (gpio >= 0)
+				pin_cfg->rts_gpio = gpio;
+		}
+
+		if (!pin_cfg->cts_gpio) {
+			gpio = acpi_get_gpio_by_index(dev, cts_acpi_idx, &info);
+			if (gpio >= 0)
+				pin_cfg->cts_gpio = gpio;
+		}
+		break;
+	default:
+		return 0;
+	}
+
+	if (pin_cfg) {
+		switch (pin_cfg->wake_src) {
+		case hsu_rxd:
+			pin_cfg->wake_gpio = pin_cfg->rx_gpio;
+			break;
+		default:
+			break;
+		}
+	}
+#endif
+	return 0;
+}
+
+/* must be called from the device_handler provided in board.c */
+void intel_mid_hsu_force_cfg(enum hsu_cfg config)
+{
+	hsu_device_cfg = config;
+}
+
 static __init int hsu_dev_platform_data(void)
 {
-	switch (intel_mid_identify_cpu()) {
-	case INTEL_MID_CPU_CHIP_CLOVERVIEW:
+	switch (boot_cpu_data.x86_model) {
+	/* penwell */
+	case 0x27:
+		platform_hsu_info = &hsu_port_cfgs[hsu_pnw][0];
+		hsu_port_gpio_mux = &hsu_port_pin_cfgs[hsu_pnw][hsu_pid_def][0];
+		break;
+	/* cloverview */
+	case 0x35:
 		platform_hsu_info = &hsu_port_cfgs[hsu_clv][0];
 		if (INTEL_MID_BOARD(2, PHONE, CLVTP, VB, PRO))
 			hsu_port_gpio_mux =
@@ -848,23 +1094,41 @@ static __init int hsu_dev_platform_data(void)
 			hsu_port_gpio_mux =
 				&hsu_port_pin_cfgs[hsu_clv][hsu_pid_rhb][0];
 		break;
-
-	case INTEL_MID_CPU_CHIP_TANGIER:
-	case INTEL_MID_CPU_CHIP_ANNIEDALE:
+	/* tangier */
+	case 0x3C:
+	case 0x4A:
 		platform_hsu_info = &hsu_port_cfgs[hsu_tng][0];
 		hsu_port_gpio_mux = &hsu_port_pin_cfgs[hsu_tng][hsu_pid_def][0];
 		break;
-
-	case INTEL_MID_CPU_CHIP_PENWELL:
-		platform_hsu_info = &hsu_port_cfgs[hsu_pnw][0];
-		hsu_port_gpio_mux = &hsu_port_pin_cfgs[hsu_pnw][hsu_pid_def][0];
-		break;
-	default:
-		/* FIXME: VALLEYVIEW2? */
+	/* valleyview*/
+	case 0x37:
 		platform_hsu_info = &hsu_port_cfgs[hsu_vlv2][0];
 		hsu_port_gpio_mux =
 			&hsu_port_pin_cfgs[hsu_vlv2][hsu_pid_def][0];
 		break;
+	/* anniedale */
+	case 0x5A:
+		/* anniedale same config as tangier */
+
+		/* if LnP device, need alternative hsu configuration for GNSS.*/
+		if (hsu_device_cfg == config_alternative) {
+			pr_info("HSU: alternative config set for anniedale\n");
+			platform_hsu_info = &hsu_port_cfgs[hsu_ann_lnp][0];
+			hsu_port_gpio_mux = &hsu_port_pin_cfgs[hsu_ann_lnp][hsu_pid_def][0];
+		} else {
+			platform_hsu_info = &hsu_port_cfgs[hsu_tng][0];
+			hsu_port_gpio_mux = &hsu_port_pin_cfgs[hsu_tng][hsu_pid_def][0];
+		}
+		break;
+	/* cherryview */
+	case 0x4C:
+		platform_hsu_info = &hsu_port_cfgs[hsu_chv][0];
+		hsu_port_gpio_mux =
+			&hsu_port_pin_cfgs[hsu_chv][hsu_pid_def][0];
+		break;
+	default:
+		pr_err("HSU: cpu%x no platform config!\n", boot_cpu_data.x86_model);
+		return -ENODEV;
 	}
 
 	if (platform_hsu_info == NULL)
@@ -874,7 +1138,7 @@ static __init int hsu_dev_platform_data(void)
 		return -ENODEV;
 
 	hsu_register_board_info(platform_hsu_info);
-	hsu_platform_clk(intel_mid_identify_cpu());
+	hsu_platform_clk(intel_mid_identify_cpu(), 0);
 
 	return 0;
 }

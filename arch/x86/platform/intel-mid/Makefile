@@ -26,5 +26,8 @@ obj-$(CONFIG_REMOVEME_INTEL_ATOM_MDFLD_POWER) += intel_soc_mdfld.o intel_soc_mdf
 obj-$(CONFIG_REMOVEME_INTEL_ATOM_CLV_POWER) += intel_soc_clv.o intel_soc_mdfld_clv_common.o
 obj-$(CONFIG_REMOVEME_INTEL_ATOM_MRFLD_POWER) += intel_soc_mrfld.o
 
+# pci acpi quirk driver
+obj-$(CONFIG_INTEL_SOC_PMC) += intel_soc_pci_acpi_quirk.o
+
 # Debug features driver
 obj-$(CONFIG_INTEL_DEBUG_FEATURE) += intel_soc_debug.o

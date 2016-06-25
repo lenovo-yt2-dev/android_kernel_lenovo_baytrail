@@ -42,6 +42,7 @@
 #include "dx_cc_regs.h"
 #include "sep_power.h"
 #include "desc_mgr.h"
+#include "dx_init_cc_abi.h"
 
 /* Queue buffer log(size in bytes) */
 #define SEP_SW_DESC_Q_MEM_SIZE_LOG 12	/*4KB */
@@ -139,6 +140,51 @@ struct desc_q {
 	unsigned long long *enqueue_time;
 };
 
+static uintptr_t cookies[SEP_DESC_Q_ENTRIES_NUM];
+DEFINE_MUTEX(cookie_lock);
+
+u32 add_cookie(uintptr_t op_ctx)
+{
+	u32 i;
+
+	mutex_lock(&cookie_lock);
+	for (i = 0; i < SEP_DESC_Q_ENTRIES_NUM; i++) {
+		if (cookies[i] == 0) {
+			cookies[i] = op_ctx;
+			break;
+		}
+	}
+	mutex_unlock(&cookie_lock);
+
+	return i;
+}
+
+void delete_cookie(u32 index)
+{
+	mutex_lock(&cookie_lock);
+	cookies[index] = 0;
+	mutex_unlock(&cookie_lock);
+}
+
+void delete_context(uintptr_t op_ctx)
+{
+	u32 i;
+
+	mutex_lock(&cookie_lock);
+	for (i = 0; i < 128; i++) {
+		if (cookies[i] == op_ctx) {
+			cookies[i] = 0;
+			break;
+		}
+	}
+	mutex_unlock(&cookie_lock);
+}
+
+uintptr_t get_cookie(u32 index)
+{
+	return cookies[index];
+}
+
 #ifdef DEBUG
 static void dump_desc(const struct sep_sw_desc *desc_p);
 #else
@@ -152,10 +198,11 @@ static void backlog_q_process(struct work_struct *work);
  * desc_q_create() - Create descriptors queue object
  * @qid:	 The queue ID (index)
  * @drvdata:	 The associated queue driver data
+ * @state: Current state of sep
  *
  * Returns Allocated queue object handle (DESC_Q_INVALID_HANDLE for failure)
  */
-void *desc_q_create(int qid, struct queue_drvdata *drvdata)
+void *desc_q_create(int qid, struct queue_drvdata *drvdata, int state)
 {
 	struct device *dev = drvdata->sep_data->dev;
 	void __iomem *cc_regs_base = drvdata->sep_data->cc_base;
@@ -203,7 +250,8 @@ void *desc_q_create(int qid, struct queue_drvdata *drvdata)
 	/* Initialize respective GPR before SeP would be initialized.
 	   Required because the GPR may be non-zero as a result of CC-init
 	   sequence leftovers */
-	WRITE_REGISTER(new_q_p->gpr_to_sep, new_q_p->sent_cntr);
+	if (state != DX_SEP_STATE_DONE_FW_INIT)
+		WRITE_REGISTER(new_q_p->gpr_to_sep, new_q_p->sent_cntr);
 
 	new_q_p->qstate = DESC_Q_ACTIVE;
 	return (void *)new_q_p;
@@ -315,6 +363,21 @@ bool desc_q_is_idle(void *q_h, unsigned long *idle_jiffies_p)
 	return ((q_p->qstate == DESC_Q_ACTIVE) &&
 		(GET_Q_PENDING_DESCS(q_p) == 0) &&
 		(q_p->backlog_q.cur_q_len == 0));
+}
+
+/**
+ * desc_q_cntr_set() - set counters of the queue
+ * @q_h:	The queue object handle
+ */
+int desc_q_cntr_set(void *q_h)
+{
+	struct desc_q *q_p = (struct desc_q *)q_h;
+	uint32_t val = READ_REGISTER(q_p->gpr_from_sep);
+
+	q_p->sent_cntr = val;
+	q_p->completed_cntr = val;
+
+	return 0;
 }
 
 /**
@@ -592,6 +655,9 @@ int desc_q_enqueue(void *q_h, struct sep_sw_desc *desc_p, bool may_backlog)
 	int rc;
 
 	mutex_lock(&q_p->qlock);
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_get();
+#endif
 
 	if (IS_Q_FULL(q_p) ||	/* Queue is full */
 	    (q_p->backlog_q.cur_q_len > 0) ||	/* or already have pending d. */
@@ -626,6 +692,9 @@ int desc_q_enqueue(void *q_h, struct sep_sw_desc *desc_p, bool may_backlog)
 		rc = -EINPROGRESS;
 	}
 
+#ifdef SEP_RUNTIME_PM
+	dx_sep_pm_runtime_put();
+#endif
 	mutex_unlock(&q_p->qlock);
 
 	return rc;		/* Enqueued to desc. queue */
@@ -1026,10 +1095,10 @@ const char *crypto_proc_mode_to_str(enum sep_proc_mode proc_mode)
 static void dump_crypto_op_desc(const struct sep_sw_desc *desc_p)
 {
 	pr_debug("CRYPTO_OP::%s (type=%lu,cookie=0x%08lX)\n",
-		 crypto_proc_mode_to_str(SEP_SW_DESC_GET4TYPE
-					 (desc_p, CRYPTO_OP, PROC_MODE)),
-		 SEP_SW_DESC_GET(desc_p, TYPE),
-		 SEP_SW_DESC_GET_COOKIE(desc_p));
+		crypto_proc_mode_to_str(SEP_SW_DESC_GET4TYPE
+				(desc_p, CRYPTO_OP, PROC_MODE)),
+				SEP_SW_DESC_GET(desc_p, TYPE),
+				(uintptr_t)SEP_SW_DESC_GET_COOKIE(desc_p));
 
 	pr_debug("HCB=0x%08lX @ FwIdx=%lu %s%s\n",
 		 SEP_SW_DESC_GET4TYPE(desc_p, CRYPTO_OP, HCB_ADDR),
@@ -1061,8 +1130,8 @@ static void dump_load_op_desc(const struct sep_sw_desc *desc_p)
 	int idx;
 
 	pr_debug("LOAD_OP (type=%lu,cookie=0x%08lX)\n",
-		 SEP_SW_DESC_GET(desc_p, TYPE),
-		 SEP_SW_DESC_GET_COOKIE(desc_p));
+		SEP_SW_DESC_GET(desc_p, TYPE),
+		(uintptr_t)SEP_SW_DESC_GET_COOKIE(desc_p));
 
 	for (idx = 0; idx < SEP_MAX_COMBINED_ENGINES; idx++) {
 		cache_idx =
@@ -1093,10 +1162,10 @@ static void dump_load_op_desc(const struct sep_sw_desc *desc_p)
 static void dump_combined_op_desc(const struct sep_sw_desc *desc_p)
 {
 	pr_debug("COMBINED_OP::%s (type=%lu,cookie=0x%08lX)\n",
-		 crypto_proc_mode_to_str(SEP_SW_DESC_GET4TYPE
-					 (desc_p, COMBINED_OP, PROC_MODE)),
-		 SEP_SW_DESC_GET(desc_p, TYPE),
-		 SEP_SW_DESC_GET_COOKIE(desc_p));
+		crypto_proc_mode_to_str(SEP_SW_DESC_GET4TYPE
+				(desc_p, COMBINED_OP, PROC_MODE)),
+				SEP_SW_DESC_GET(desc_p, TYPE),
+				(uintptr_t)SEP_SW_DESC_GET_COOKIE(desc_p));
 
 	pr_debug("SCHEME=0x%08lX %s%s\n",
 		 SEP_SW_DESC_GET4TYPE(desc_p, COMBINED_OP, CONFIG_SCHEME),

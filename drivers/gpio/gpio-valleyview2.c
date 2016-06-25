@@ -393,6 +393,7 @@ static void vlv_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 	void __iomem *reg;
 	u32 base;
 	u32 pending;
+	const char *label;
 
 	spin_lock_irqsave(&vg->lock, flags);
 	for (base = 0; base < vg->chip.ngpio; base += 32) {
@@ -406,18 +407,20 @@ static void vlv_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 		offs = vg->gpio_to_pad[i] * 16;
 		conf0 = vlv_readl(vg->reg_base + offs + VV_CONF0_REG);
 		val = vlv_readl(vg->reg_base + offs + VV_VAL_REG);
+		label = gpiochip_is_requested(chip, i);
 
 		seq_printf(s, " gpio-%-3d %s %s %s pad-%-3d offset:0x%03x "
-				"mux:%d %s %s %s\n",
+				"mux:%d %s %s %s label:%s\n",
 			   i,
 			   val & VV_INPUT_EN ? "  " : "in",
 			   val & VV_OUTPUT_EN ? "   " : "out",
 			   val & VV_LEVEL ? "hi" : "lo",
 			   vg->gpio_to_pad[i], offs,
 			   conf0 & 0x7,
-			   conf0 & VV_TRIG_NEG ? "fall" : "",
-			   conf0 & VV_TRIG_POS ? "rise" : "",
-			   conf0 & VV_TRIG_LVL ? "lvl " : "");
+			   conf0 & VV_TRIG_NEG ? "fall" : "    ",
+			   conf0 & VV_TRIG_POS ? "rise" : "    ",
+			   conf0 & VV_TRIG_LVL ? "lvl" : "   ",
+			   label ? label : " ");
 
 	}
 	spin_unlock_irqrestore(&vg->lock, flags);
@@ -759,6 +762,7 @@ static int vlv_get_register_msg(char **buf, unsigned long *size)
 	return 0;
 }
 
+// lxh:add; 20150203; 
 void lnw_gpio_set_pininfo(unsigned int gpio, unsigned int type, const char *info)
 {
     struct gpio_bank_pnp *bank;
@@ -794,6 +798,7 @@ void lnw_gpio_set_pininfo(unsigned int gpio, unsigned int type, const char *info
     
 }
 EXPORT_SYMBOL_GPL(lnw_gpio_set_pininfo);
+
 
 static struct gpio_debug_ops vlv_gpio_debug_ops = {
 	.get_conf_reg = vlv_get_conf_reg,
@@ -934,7 +939,6 @@ vlv_gpio_pnp_probe(struct pnp_dev *pdev, const struct pnp_device_id *id)
 
 	return 0;
 err:
-	kfree(vg);
 	return ret;
 }
 

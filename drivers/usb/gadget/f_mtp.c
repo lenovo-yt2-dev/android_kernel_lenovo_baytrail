@@ -46,10 +46,11 @@
 
 /* values for mtp_dev.state */
 #define STATE_OFFLINE               0   /* initial state, disconnected */
-#define STATE_READY                 1   /* ready for userspace calls */
-#define STATE_BUSY                  2   /* processing userspace calls */
-#define STATE_CANCELED              3   /* transaction canceled by host */
-#define STATE_ERROR                 4   /* error from completion routine */
+#define STATE_ONLINE                1   /* connected and configured */
+#define STATE_READY                 2   /* ready for userspace calls */
+#define STATE_BUSY                  3   /* processing userspace calls */
+#define STATE_CANCELED              4   /* transaction canceled by host */
+#define STATE_ERROR                 5   /* error from completion routine */
 
 /* number of tx and rx requests to allocate */
 #define TX_REQ_MAX 4
@@ -550,8 +551,8 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 	if (count > MTP_BULK_RX_BUFFER_SIZE)
 		return -EINVAL;
 
-	if (dev->state == STATE_OFFLINE) {
-		DBG(cdev, "mtp_read: state offline, return\n");
+	if (dev->state == STATE_OFFLINE || dev->state == STATE_ONLINE) {
+		DBG(cdev, "mtp_read: state offline or has reconnected, return\n");
 		return -EIO;
 	}
 
@@ -602,7 +603,7 @@ done:
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
 		r = -ECANCELED;
-	else if (dev->state != STATE_OFFLINE)
+	else if (dev->state != STATE_OFFLINE && dev->state != STATE_ONLINE)
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
 
@@ -629,7 +630,7 @@ static ssize_t mtp_write(struct file *fp, const char __user *buf,
 		spin_unlock_irq(&dev->lock);
 		return -ECANCELED;
 	}
-	if (dev->state == STATE_OFFLINE) {
+	if (dev->state == STATE_OFFLINE || dev->state == STATE_ONLINE) {
 		spin_unlock_irq(&dev->lock);
 		return -ENODEV;
 	}
@@ -693,7 +694,7 @@ static ssize_t mtp_write(struct file *fp, const char __user *buf,
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
 		r = -ECANCELED;
-	else if (dev->state != STATE_OFFLINE)
+	else if (dev->state != STATE_OFFLINE && dev->state != STATE_ONLINE)
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
 
@@ -921,6 +922,9 @@ static int mtp_send_event(struct mtp_dev *dev, struct mtp_event *event)
 	if (dev->state == STATE_OFFLINE)
 		return -ENODEV;
 
+	if (dev->state == STATE_ONLINE)
+		return -EIO;
+
 	ret = wait_event_interruptible_timeout(dev->intr_wq,
 			(req = mtp_req_get(dev, &dev->intr_idle)),
 			msecs_to_jiffies(1000));
@@ -967,6 +971,11 @@ static long mtp_ioctl(struct file *fp, unsigned code, unsigned long value)
 		if (dev->state == STATE_OFFLINE) {
 			spin_unlock_irq(&dev->lock);
 			ret = -ENODEV;
+			goto out;
+		}
+		if (dev->state == STATE_ONLINE) {
+			spin_unlock_irq(&dev->lock);
+			ret = -EIO;
 			goto out;
 		}
 		dev->state = STATE_BUSY;
@@ -1033,7 +1042,7 @@ fail:
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED)
 		ret = -ECANCELED;
-	else if (dev->state != STATE_OFFLINE)
+	else if (dev->state != STATE_OFFLINE && dev->state != STATE_ONLINE)
 		dev->state = STATE_READY;
 	spin_unlock_irq(&dev->lock);
 out:
@@ -1418,7 +1427,7 @@ static int mtp_function_set_alt(struct usb_function *f,
 		usb_ep_disable(dev->ep_in);
 		return ret;
 	}
-	dev->state = STATE_READY;
+	dev->state = STATE_ONLINE;
 
 	/* readers may be blocked waiting for us to go online */
 	wake_up(&dev->read_wq);
