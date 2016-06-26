@@ -29,7 +29,11 @@
 #include "mdfld_dsi_pkg_sender.h"
 #include "mdfld_dsi_dbi_dsr.h"
 
+#ifdef CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY
+#define MDFLD_ESD_SLEEP_MSECS	5000
+#else
 #define MDFLD_ESD_SLEEP_MSECS	3500
+#endif
 /**
  * esd detection
  */
@@ -75,8 +79,106 @@ static int __esd_thread(void *data)
 	if (!dsi_config)
 		return -EINVAL;
 
+	struct mdfld_dsi_pkg_sender *sender
+		= mdfld_dsi_get_pkg_sender(dsi_config);
+
+	if (!sender) {
+		DRM_ERROR("Failed to get DSI packet sender\n");
+		return -EINVAL;
+	}
+
 	set_freezable();
 
+#ifdef CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY
+	while (!kthread_should_stop()) {
+
+		wait_event_freezable(err_detector->esd_thread_wq,
+				(((dsi_config->dsi_hw_context.panel_on) && (panel_turn_on == DDS_PHONE) && (esd_thread_enable)) ||
+				kthread_should_stop()));
+
+
+		sender->status = MDFLD_DSI_PKG_SENDER_FREE;
+
+		if (!(drm_psb_use_cases_control & PSB_ESD_ENABLE) ||
+			!dsi_config->dsi_hw_context.panel_on ||
+			!esd_thread_enable) {
+			schedule_timeout_interruptible(
+				msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
+			continue;
+		}
+
+		mdfld_dsi_send_gen_short_lp(sender, 0x11, 0x00, 1, 0);
+		msleep(5);
+
+		if (!(drm_psb_use_cases_control & PSB_ESD_ENABLE) ||
+			!dsi_config->dsi_hw_context.panel_on ||
+			!esd_thread_enable) {
+			schedule_timeout_interruptible(
+				msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
+			continue;
+		}
+
+		mdfld_dsi_send_gen_short_lp(sender, 0x29, 0x00, 1, 0);
+		msleep(5);
+
+		if (!(drm_psb_use_cases_control & PSB_ESD_ENABLE) ||
+			!dsi_config->dsi_hw_context.panel_on ||
+			!esd_thread_enable) {
+			schedule_timeout_interruptible(
+				msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
+			continue;
+		}
+
+		mdfld_dsi_send_gen_short_lp(sender, 0x20, 0x00, 1, 0);
+		msleep(5);
+
+		if (!(drm_psb_use_cases_control & PSB_ESD_ENABLE) ||
+			!dsi_config->dsi_hw_context.panel_on ||
+			!esd_thread_enable) {
+			schedule_timeout_interruptible(
+				msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
+			continue;
+		}
+
+		mdfld_dsi_send_gen_short_lp(sender, 0x36, 0x00, 2, 0);
+		msleep(5);
+
+		if (!(drm_psb_use_cases_control & PSB_ESD_ENABLE) ||
+			!dsi_config->dsi_hw_context.panel_on ||
+			!esd_thread_enable) {
+			schedule_timeout_interruptible(
+				msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
+			continue;
+		}
+
+		mdfld_dsi_send_gen_short_lp(sender, 0x13, 0x00, 1, 0);
+		msleep(5);
+
+		if (!(drm_psb_use_cases_control & PSB_ESD_ENABLE) ||
+			!dsi_config->dsi_hw_context.panel_on ||
+			!esd_thread_enable) {
+			schedule_timeout_interruptible(
+				msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
+			continue;
+		}
+
+		mdfld_dsi_send_gen_short_lp(sender, 0x38, 0x00, 1, 0);
+		msleep(5);
+
+		if (!(drm_psb_use_cases_control & PSB_ESD_ENABLE) ||
+			!dsi_config->dsi_hw_context.panel_on ||
+			!esd_thread_enable) {
+			schedule_timeout_interruptible(
+				msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
+			continue;
+		}
+
+		mdfld_dsi_send_gen_short_lp(sender, 0x55, 0x00, 2, 0);
+
+		schedule_timeout_interruptible(
+			msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
+	}
+#else
 	while (!kthread_should_stop()) {
 		wait_event_freezable(err_detector->esd_thread_wq,
 			(dsi_config->dsi_hw_context.panel_on ||
@@ -109,6 +211,7 @@ esd_exit:
 		schedule_timeout_interruptible(
 			msecs_to_jiffies(MDFLD_ESD_SLEEP_MSECS));
 	}
+#endif
 
 	DRM_INFO("%s: ESD exited\n", __func__);
 	return 0;

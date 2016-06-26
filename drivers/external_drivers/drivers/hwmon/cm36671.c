@@ -42,6 +42,19 @@
 #define PS_DBG(format,...) do{ 
 			}while(0)
 #endif
+
+//add by yhj 20150207
+#define I2C_BOARDINFO_IN_DRIVER
+#define I2C_STATIC_BUS_NUM			5
+
+#ifdef I2C_BOARDINFO_IN_DRIVER
+static struct i2c_board_info cm36671_i2c_boardinfo = {
+	I2C_BOARD_INFO(CM36671_I2C_NAME, CM36671_slave_add),
+};
+#endif
+//add end
+
+
 #define I2C_RETRY_COUNT 10
 
 #define NEAR_DELAY_TIME ((100 * HZ) / 1000)
@@ -1062,6 +1075,7 @@ static struct cm36671_platform_data cm36671_pdata = {
         .ps_conf3_val = CM36671_PS_MS_NORMAL | CM36671_PS_PROL_255 | CM36671_PS_SMART_PERS_ENABLE,      
 };
 //wqf add end
+/*
 static int __init cm36671_init(void)
 {
 	//wqf add start--register cm36671 i2c device
@@ -1089,6 +1103,58 @@ static int __init cm36671_init(void)
 	//wqf add end
 	return i2c_add_driver(&cm36671_driver);
 }
+*/
+//add by yhj 20150207
+#ifdef I2C_BOARDINFO_IN_DRIVER 
+static int i2c_static_add_device(struct i2c_board_info *info)
+{
+	struct i2c_adapter *adapter;
+	struct i2c_client *client;
+
+	adapter = i2c_get_adapter(I2C_STATIC_BUS_NUM);
+	if (!adapter) {
+		//printk(KERN_ERR "%s: can't get i2c adapter\n", __FUNCTION__);
+		return -ENODEV;
+	}
+
+	client = i2c_new_device(adapter, info);
+	if (!client) {
+		//printk(KERN_ERR "%s:  can't add i2c device at 0x%x\n",
+			//__FUNCTION__, (unsigned int)info->addr);
+		return -ENODEV;
+	}
+
+	i2c_put_adapter(adapter);
+
+	return 0;
+}
+#endif
+static int __init cm36671_init(void)
+{
+#ifdef I2C_BOARDINFO_IN_DRIVER
+	printk("%s:liumiao.\n",__func__);
+	int  ret = 0;
+	int i2c_busnum = 5;
+       struct i2c_board_info i2c_info;
+   
+    	PS_DBG("enter %s\n",__func__);
+
+    	memset(&i2c_info, 0, sizeof(i2c_info));
+    	strlcpy(i2c_info.type, CM36671_I2C_NAME, sizeof(CM36671_I2C_NAME));
+
+    	i2c_info.addr = CM36671_slave_add;
+	i2c_info.platform_data=&cm36671_pdata;
+	
+	ret = i2c_static_add_device(&i2c_info);
+	if (ret < 0) {
+		printk(KERN_ERR "%s: add i2c device error %d\n", __FUNCTION__, ret);
+		return ret;
+	}
+#endif 
+	return i2c_add_driver(&cm36671_driver);
+}
+
+//add end
 
 static void __exit cm36671_exit(void)
 {

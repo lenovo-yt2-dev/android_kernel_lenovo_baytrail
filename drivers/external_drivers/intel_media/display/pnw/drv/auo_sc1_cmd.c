@@ -157,7 +157,7 @@ static int __mdfld_auo_dsi_power_on(struct mdfld_dsi_config *dsi_config)
 	cmd = write_ctrl_cabc;
 	err = mdfld_dsi_send_mcs_short_hs(sender,
 			cmd,
-			MOVING_IMAGE,
+			CABC_MODE_MOVING_IMAGE,
 			1,
 			MDFLD_DSI_SEND_PACKAGE);
 	if (err) {

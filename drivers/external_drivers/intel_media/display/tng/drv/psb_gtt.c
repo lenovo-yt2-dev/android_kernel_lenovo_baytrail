@@ -50,166 +50,6 @@ struct psb_gtt *psb_gtt_alloc(struct drm_device *dev)
 	return tmp;
 }
 
-void mofd_gtt_takedown(struct psb_gtt *pg, int free)
-{
-	if (!pg)
-		return;
-
-	if (pg->gtt_map) {
-		iounmap(pg->gtt_map);
-		pg->gtt_map = NULL;
-	}
-	if (free)
-		kfree(pg);
-}
-
-int mofd_gtt_init(struct psb_gtt *pg, int resume)
-{
-	struct drm_device *dev = pg->dev;
-	struct drm_psb_private *dev_priv = dev->dev_private;
-	unsigned gtt_pages;
-	unsigned long stolen_size, vram_stolen_size, ci_stolen_size;
-	unsigned long rar_stolen_size;
-	unsigned i, num_pages;
-	unsigned pfn_base;
-	uint32_t ci_pages, vram_pages;
-	uint32_t tt_pages;
-	uint32_t *ttm_gtt_map;
-
-	int ret = 0;
-	uint32_t pte;
-
-	pg->initialized = 1;
-
-	pg->gatt_start = pci_resource_start(dev->pdev, PSB_GATT_RESOURCE);
-	/* fix me: video mmu has hw bug to access 0x0D0000000,
-	 * then make gatt start at 0x0e000,0000 */
-	pg->mmu_gatt_start = PSB_MEM_TT_START;
-	pg->gatt_pages = pci_resource_len(dev->pdev, PSB_GATT_RESOURCE)
-	    >> PAGE_SHIFT;
-
-	pci_read_config_dword(dev->pdev, MRFLD_BGSM, &pg->pge_ctl);
-	pg->gtt_phys_start = pg->pge_ctl & PAGE_MASK;
-
-	pci_read_config_dword(dev->pdev, MRFLD_MSAC, &gtt_pages);
-	printk(KERN_INFO "01 gtt_pages = 0x%x \n", gtt_pages);
-	gtt_pages &= _APERTURE_SIZE_MASK;
-	gtt_pages >>= _APERTURE_SIZE_POS;
-
-	printk(KERN_INFO "02 gtt_pages = 0x%x \n", gtt_pages);
-	switch (gtt_pages) {
-	case _1G_APERTURE:
-		gtt_pages = _1G_APERTURE_SIZE >> PAGE_SHIFT;
-		break;
-	case _512M_APERTURE:
-		gtt_pages = _512M_APERTURE_SIZE >> PAGE_SHIFT;
-		break;
-	case _256M_APERTURE:
-		gtt_pages = _256M_APERTURE_SIZE >> PAGE_SHIFT;
-		break;
-	default:
-		DRM_ERROR("%s, invalded aperture size.\n", __func__);
-		gtt_pages = _1G_APERTURE_SIZE >> PAGE_SHIFT;
-	}
-
-	gtt_pages >>= PAGE_SHIFT;
-	gtt_pages *= 4;
-
-	printk(KERN_INFO "03 gtt_pages = 0x%x \n", gtt_pages);
-	/* HW removed the PSB_BSM, SW/FW needs it. */
-	pci_read_config_dword(dev->pdev, PSB_BSM, &pg->stolen_base);
-	vram_stolen_size = pg->gtt_phys_start - pg->stolen_base - PAGE_SIZE;
-
-	/* CI is not included in the stolen size since the TOPAZ MMU bug */
-	ci_stolen_size = dev_priv->ci_region_size;
-	/* Don't add CI & RAR share buffer space
-	 * managed by TTM to stolen_size */
-	stolen_size = vram_stolen_size;
-
-	rar_stolen_size = dev_priv->rar_region_size;
-
-	printk(KERN_INFO "GMMADR(region 0) start: 0x%08x (%dM).\n",
-	       pg->gatt_start, pg->gatt_pages / 256);
-	printk(KERN_INFO "GTT (can map %dM RAM), and actual RAM base 0x%08x.\n",
-	       gtt_pages * 4, pg->gtt_phys_start);
-	printk(KERN_INFO "Stole memory information \n");
-	printk(KERN_INFO "      base in RAM: 0x%x \n", pg->stolen_base);
-	printk(KERN_INFO
-	       "      size: %luK, calculated by (GTT RAM base) - (Stolen base).\n",
-	       vram_stolen_size / 1024);
-
-	if (ci_stolen_size > 0)
-		printk(KERN_INFO
-		       "CI Stole memory: RAM base = 0x%08x, size = %lu M \n",
-		       dev_priv->ci_region_start, ci_stolen_size / 1024 / 1024);
-	if (rar_stolen_size > 0)
-		printk(KERN_INFO
-		       "RAR Stole memory: RAM base = 0x%08x, size = %lu M \n",
-		       dev_priv->rar_region_start,
-		       rar_stolen_size / 1024 / 1024);
-
-	if (resume && (gtt_pages != pg->gtt_pages) &&
-	    (stolen_size != pg->stolen_size)) {
-		DRM_ERROR("GTT resume error.\n");
-		ret = -EINVAL;
-		goto out_err;
-	}
-
-	pg->gtt_pages = gtt_pages;
-	pg->stolen_size = stolen_size;
-	pg->vram_stolen_size = vram_stolen_size;
-	pg->ci_stolen_size = ci_stolen_size;
-	pg->rar_stolen_size = rar_stolen_size;
-	pg->gtt_map =
-	    ioremap_nocache(pg->gtt_phys_start, gtt_pages << PAGE_SHIFT);
-	if (!pg->gtt_map) {
-		DRM_ERROR("Failure to map gtt.\n");
-		ret = -ENOMEM;
-		goto out_err;
-	}
-
-	pg->vram_addr = ioremap_wc(pg->stolen_base, stolen_size);
-	if (!pg->vram_addr) {
-		DRM_ERROR("Failure to map stolen base.\n");
-		ret = -ENOMEM;
-		goto out_err;
-	}
-
-	DRM_INFO("%s: vram kernel virtual address %p\n", __FUNCTION__,
-		 pg->vram_addr);
-
-	tt_pages = (pg->gatt_pages < PSB_TT_PRIV0_PLIMIT) ?
-	    (pg->gatt_pages) : PSB_TT_PRIV0_PLIMIT;
-
-	/*
-	 * insert vram stolen pages.
-	 */
-
-	pfn_base = pg->stolen_base >> PAGE_SHIFT;
-	vram_pages = num_pages = vram_stolen_size >> PAGE_SHIFT;
-	printk(KERN_INFO
-	       "Set up %d stolen pages starting at 0x%08x, GTT offset %dK\n",
-	       num_pages, pfn_base, 0);
-	for (i = 0; i < num_pages; ++i) {
-		pte = psb_gtt_mask_pte(pfn_base + i, 0);
-		iowrite32(pte, pg->gtt_map + i);
-	}
-
-	/*
-	 * Init rest of gtt managed by IMG.
-	 */
-	pfn_base = page_to_pfn(dev_priv->scratch_page);
-	pte = psb_gtt_mask_pte(pfn_base, 0);
-	for (; i < tt_pages; ++i)
-		iowrite32(pte, pg->gtt_map + i);
-	(void)ioread32(pg->gtt_map + i - 1);
-
-	return 0;
-out_err:
-	mofd_gtt_takedown(pg, 0);
-	return ret;
-}
-
 void mrfld_gtt_takedown(struct psb_gtt *pg, int free)
 {
 	if (!pg)
@@ -228,11 +68,10 @@ int mrfld_gtt_init(struct psb_gtt *pg, int resume)
 	struct drm_device *dev = pg->dev;
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	unsigned gtt_pages;
-	unsigned long stolen_size, vram_stolen_size, ci_stolen_size;
-	unsigned long rar_stolen_size;
+	unsigned long stolen_size, vram_stolen_size;
 	unsigned i, num_pages;
 	unsigned pfn_base;
-	uint32_t ci_pages, vram_pages;
+	uint32_t vram_pages;
 	uint32_t tt_pages;
 	uint32_t *ttm_gtt_map;
 
@@ -280,13 +119,9 @@ int mrfld_gtt_init(struct psb_gtt *pg, int resume)
 	pci_read_config_dword(dev->pdev, PSB_BSM, &pg->stolen_base);
 	vram_stolen_size = pg->gtt_phys_start - pg->stolen_base - PAGE_SIZE;
 
-	/* CI is not included in the stolen size since the TOPAZ MMU bug */
-	ci_stolen_size = dev_priv->ci_region_size;
 	/* Don't add CI & RAR share buffer space
 	 * managed by TTM to stolen_size */
 	stolen_size = vram_stolen_size;
-
-	rar_stolen_size = dev_priv->rar_region_size;
 
 	printk(KERN_INFO "GMMADR(region 0) start: 0x%08x (%dM).\n",
 	       pg->gatt_start, pg->gatt_pages / 256);
@@ -298,16 +133,6 @@ int mrfld_gtt_init(struct psb_gtt *pg, int resume)
 	       "      size: %luK, calculated by (GTT RAM base) - (Stolen base).\n",
 	       vram_stolen_size / 1024);
 
-	if (ci_stolen_size > 0)
-		printk(KERN_INFO
-		       "CI Stole memory: RAM base = 0x%08x, size = %lu M \n",
-		       dev_priv->ci_region_start, ci_stolen_size / 1024 / 1024);
-	if (rar_stolen_size > 0)
-		printk(KERN_INFO
-		       "RAR Stole memory: RAM base = 0x%08x, size = %lu M \n",
-		       dev_priv->rar_region_start,
-		       rar_stolen_size / 1024 / 1024);
-
 	if (resume && (gtt_pages != pg->gtt_pages) &&
 	    (stolen_size != pg->stolen_size)) {
 		DRM_ERROR("GTT resume error.\n");
@@ -318,8 +143,6 @@ int mrfld_gtt_init(struct psb_gtt *pg, int resume)
 	pg->gtt_pages = gtt_pages;
 	pg->stolen_size = stolen_size;
 	pg->vram_stolen_size = vram_stolen_size;
-	pg->ci_stolen_size = ci_stolen_size;
-	pg->rar_stolen_size = rar_stolen_size;
 	pg->gtt_map =
 	    ioremap_nocache(pg->gtt_phys_start, gtt_pages << PAGE_SHIFT);
 	if (!pg->gtt_map) {
@@ -416,11 +239,10 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	struct drm_device *dev = pg->dev;
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	unsigned gtt_pages;
-	unsigned long stolen_size, vram_stolen_size, ci_stolen_size;
-	unsigned long rar_stolen_size;
+	unsigned long stolen_size, vram_stolen_size;
 	unsigned i, num_pages;
 	unsigned pfn_base;
-	uint32_t ci_pages, vram_pages;
+	uint32_t vram_pages;
 	uint32_t tt_pages;
 	uint32_t *ttm_gtt_map;
 	uint32_t dvmt_mode = 0;
@@ -452,13 +274,10 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	pci_read_config_dword(dev->pdev, PSB_BSM, &pg->stolen_base);
 	vram_stolen_size = pg->gtt_phys_start - pg->stolen_base - PAGE_SIZE;
 
-	/* CI is not included in the stolen size since the TOPAZ MMU bug */
-	ci_stolen_size = dev_priv->ci_region_size;
 	/* Don't add CI & RAR share buffer space
 	 * managed by TTM to stolen_size */
 	stolen_size = vram_stolen_size;
 
-	rar_stolen_size = dev_priv->rar_region_size;
 
 	printk(KERN_INFO "GMMADR(region 0) start: 0x%08x (%dM).\n",
 	       pg->gatt_start, pg->gatt_pages / 256);
@@ -475,16 +294,6 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	       "      the correct size should be: %dM(dvmt mode=%d) \n",
 	       (dvmt_mode == 1) ? 1 : (2 << (dvmt_mode - 1)), dvmt_mode);
 
-	if (ci_stolen_size > 0)
-		printk(KERN_INFO
-		       "CI Stole memory: RAM base = 0x%08x, size = %lu M \n",
-		       dev_priv->ci_region_start, ci_stolen_size / 1024 / 1024);
-	if (rar_stolen_size > 0)
-		printk(KERN_INFO
-		       "RAR Stole memory: RAM base = 0x%08x, size = %lu M \n",
-		       dev_priv->rar_region_start,
-		       rar_stolen_size / 1024 / 1024);
-
 	if (resume && (gtt_pages != pg->gtt_pages) &&
 	    (stolen_size != pg->stolen_size)) {
 		DRM_ERROR("GTT resume error.\n");
@@ -495,8 +304,6 @@ int psb_gtt_init(struct psb_gtt *pg, int resume)
 	pg->gtt_pages = gtt_pages;
 	pg->stolen_size = stolen_size;
 	pg->vram_stolen_size = vram_stolen_size;
-	pg->ci_stolen_size = ci_stolen_size;
-	pg->rar_stolen_size = rar_stolen_size;
 	pg->gtt_map =
 	    ioremap_nocache(pg->gtt_phys_start, gtt_pages << PAGE_SHIFT);
 	if (!pg->gtt_map) {
@@ -743,9 +550,13 @@ int psb_gtt_mm_init(struct psb_gtt *pg)
 
 	mm = &gtt_mm->base;
 
-	if (!IS_ANN_A0(pg->dev))
-		/*will use tt_start ~ 128M for IMG TT buffers */
-		tt_size /= 2;
+	if (IS_MOFD(pg->dev)) {
+		pg->reserved_gtt_start = tt_start << PAGE_SHIFT;
+		/*reserve 1M for HW W/A*/ /* reserved region doesn't include TTM heap */
+		tt_start += MOFD_HW_WA_GTT_PAGES;
+	}
+
+	tt_size /= 2;
 
 	drm_mm_init(mm, tt_start, (tt_size - tt_start));
 
@@ -757,8 +568,6 @@ int psb_gtt_mm_init(struct psb_gtt *pg)
 		 (unsigned long)tt_start,
 		 (unsigned long)(tt_size - tt_start));
 	return 0;
- err_mm_init:
-	drm_ht_remove(ht);
 
  err_free:
 	kfree(gtt_mm);
@@ -810,7 +619,7 @@ static int psb_gtt_mm_insert_ht_locked(struct psb_gtt_mm *mm,
 	}
 
 	item = &hentry->item;
-	item->key = tgid;
+	item->key = (unsigned long)tgid;
 
 	/**
 	 * NOTE: drm_ht_insert_item will perform such a check
@@ -917,7 +726,7 @@ static int psb_gtt_mm_remove_free_ht_locked(struct psb_gtt_mm *mm, u32 tgid)
 
 static int
 psb_gtt_mm_get_mem_mapping_locked(struct drm_open_hash *ht,
-				  u32 key, struct psb_gtt_mem_mapping **hentry)
+				  unsigned long key, struct psb_gtt_mem_mapping **hentry)
 {
 	struct drm_hash_item *entry;
 	struct psb_gtt_mem_mapping *mapping;
@@ -925,7 +734,7 @@ psb_gtt_mm_get_mem_mapping_locked(struct drm_open_hash *ht,
 
 	ret = drm_ht_find_item(ht, key, &entry);
 	if (ret) {
-		DRM_DEBUG("Cannot find key %d\n", key);
+		DRM_DEBUG("Cannot find key %lu\n", key);
 		return ret;
 	}
 
@@ -941,7 +750,7 @@ psb_gtt_mm_get_mem_mapping_locked(struct drm_open_hash *ht,
 
 static int
 psb_gtt_mm_insert_mem_mapping_locked(struct drm_open_hash *ht,
-				     u32 key,
+				     unsigned long key,
 				     struct psb_gtt_mem_mapping *hentry)
 {
 	struct drm_hash_item *item;
@@ -972,7 +781,7 @@ psb_gtt_mm_insert_mem_mapping_locked(struct drm_open_hash *ht,
 static int
 psb_gtt_mm_alloc_insert_mem_mapping(struct psb_gtt_mm *mm,
 				    struct drm_open_hash *ht,
-				    u32 key,
+				    unsigned long key,
 				    struct drm_mm_node *node,
 				    struct psb_gtt_mem_mapping **entry)
 {
@@ -988,15 +797,21 @@ psb_gtt_mm_alloc_insert_mem_mapping(struct psb_gtt_mm *mm,
 	spin_lock(&mm->lock);
 	ret = psb_gtt_mm_get_mem_mapping_locked(ht, key, &mapping);
 	if (!ret) {
-		DRM_DEBUG("mapping entry for key %d exists, entry %p\n",
+		DRM_INFO("mapping entry for key %lu exists, entry %p\n",
 			  key, mapping);
+		/*
+		 * FIXME: Normally we shouldn't fall into this,
+		 * If the entry exists, the allocated `node` will
+		 * not connect to this entry, A gtt space leak happens!!
+		 */
+		mapping->ref++;
 		*entry = mapping;
 		spin_unlock(&mm->lock);
 		return 0;
 	}
 	spin_unlock(&mm->lock);
 
-	DRM_DEBUG("Mapping entry for key %d doesn't exist, will create it\n",
+	DRM_DEBUG("Mapping entry for key %lu doesn't exist, will create it\n",
 		  key);
 
 	mapping = kzalloc(sizeof(struct psb_gtt_mem_mapping), GFP_KERNEL);
@@ -1006,6 +821,7 @@ psb_gtt_mm_alloc_insert_mem_mapping(struct psb_gtt_mm *mm,
 	}
 
 	mapping->node = node;
+	mapping->ref = 1;
 
 	spin_lock(&mm->lock);
 	ret = psb_gtt_mm_insert_mem_mapping_locked(ht, key, mapping);
@@ -1020,7 +836,7 @@ psb_gtt_mm_alloc_insert_mem_mapping(struct psb_gtt_mm *mm,
 static struct psb_gtt_mem_mapping *psb_gtt_mm_remove_mem_mapping_locked(struct
 									drm_open_hash
 									*ht,
-									u32 key)
+									unsigned long key)
 {
 	struct psb_gtt_mem_mapping *tmp;
 	struct psb_gtt_hash_entry *entry;
@@ -1033,8 +849,12 @@ static struct psb_gtt_mem_mapping *psb_gtt_mm_remove_mem_mapping_locked(struct
 
 	ret = psb_gtt_mm_get_mem_mapping_locked(ht, key, &tmp);
 	if (ret) {
-		DRM_DEBUG("Cannot find key %d\n", key);
+		DRM_DEBUG("Cannot find key %lu\n", key);
 		return NULL;
+	}
+
+	if (--tmp->ref != 0) {
+		return tmp;
 	}
 
 	drm_ht_remove_item(ht, &tmp->item);
@@ -1047,7 +867,7 @@ static struct psb_gtt_mem_mapping *psb_gtt_mm_remove_mem_mapping_locked(struct
 }
 
 static int psb_gtt_mm_remove_free_mem_mapping_locked(struct drm_open_hash *ht,
-						     u32 key,
+						     unsigned long key,
 						     struct drm_mm_node **node)
 {
 	struct psb_gtt_mem_mapping *entry;
@@ -1056,6 +876,10 @@ static int psb_gtt_mm_remove_free_mem_mapping_locked(struct drm_open_hash *ht,
 	if (!entry) {
 		DRM_DEBUG("entry is NULL\n");
 		return -EINVAL;
+	}
+	if (entry->ref) {
+		DRM_DEBUG("mapping is still being used\n");
+		return -EBUSY;
 	}
 
 	*node = entry->node;
@@ -1066,7 +890,7 @@ static int psb_gtt_mm_remove_free_mem_mapping_locked(struct drm_open_hash *ht,
 
 static int psb_gtt_add_node(struct psb_gtt_mm *mm,
 			    u32 tgid,
-			    u32 key,
+			    unsigned long key,
 			    struct drm_mm_node *node,
 			    struct psb_gtt_mem_mapping **entry)
 {
@@ -1094,7 +918,7 @@ static int psb_gtt_add_node(struct psb_gtt_mm *mm,
 }
 
 static int psb_gtt_remove_node(struct psb_gtt_mm *mm,
-			       u32 tgid, u32 key, struct drm_mm_node **node)
+			       u32 tgid, unsigned long key, struct drm_mm_node **node)
 {
 	struct psb_gtt_hash_entry *hentry;
 	struct drm_mm_node *tmp;
@@ -1107,10 +931,8 @@ static int psb_gtt_remove_node(struct psb_gtt_mm *mm,
 		spin_unlock(&mm->lock);
 		return ret;
 	}
-	spin_unlock(&mm->lock);
 
 	/*remove mapping entry */
-	spin_lock(&mm->lock);
 	ret = psb_gtt_mm_remove_free_mem_mapping_locked(&hentry->ht, key, &tmp);
 	if (ret) {
 		DRM_DEBUG("remove_free failed\n");
@@ -1137,6 +959,11 @@ static int psb_gtt_mm_alloc_mem(struct psb_gtt_mm *mm,
 {
 	struct drm_mm_node *tmp_node;
 	int ret;
+
+	if (IS_ANN(dev)) {
+		if (align < 32)
+			align = 32;
+	}
 
 	do {
 		ret = drm_mm_pre_get(&mm->base);
@@ -1182,6 +1009,144 @@ static u32 gtt_get_tgid(void)
 	return task_tgid_nr(current);
 }
 
+static int
+psb_gtt_mm_get_mem_mapping_anyused_locked(struct drm_open_hash *ht,
+				  struct psb_gtt_mem_mapping **hentry)
+{
+	struct drm_hash_item *entry;
+	struct psb_gtt_mem_mapping *mapping;
+	int ret;
+
+	ret = drm_ht_find_item_anyused(ht, &entry);
+	if (ret) {
+		DRM_DEBUG("Cannot find\n");
+		return ret;
+	}
+
+	mapping =  container_of(entry, struct psb_gtt_mem_mapping, item);
+	if (!mapping) {
+		DRM_DEBUG("Invalid entry\n");
+		return -EINVAL;
+	}
+
+	*hentry = mapping;
+	return 0;
+}
+
+static struct psb_gtt_mem_mapping *
+psb_gtt_mm_remove_mem_mapping_anyused_locked(struct drm_open_hash *ht) {
+	struct psb_gtt_mem_mapping *tmp;
+	struct psb_gtt_hash_entry *entry;
+	int ret;
+
+	if (!ht) {
+		DRM_DEBUG("hash table is NULL\n");
+		return NULL;
+	}
+
+	ret = psb_gtt_mm_get_mem_mapping_anyused_locked(ht, &tmp);
+	if (ret) {
+		DRM_DEBUG("Cannot find any used\n");
+		return NULL;
+	}
+
+	drm_ht_remove_item(ht, &tmp->item);
+
+	entry = container_of(ht, struct psb_gtt_hash_entry, ht);
+	if (entry)
+		entry->count--;
+
+	return tmp;
+}
+
+static int psb_gtt_mm_remove_free_mem_mapping_anyused_locked
+	(struct drm_open_hash *ht,
+	struct drm_mm_node **node)
+{
+	struct psb_gtt_mem_mapping *entry;
+
+	entry = psb_gtt_mm_remove_mem_mapping_anyused_locked(ht);
+	if (!entry) {
+		DRM_DEBUG("entry is NULL\n");
+		return -EINVAL;
+	}
+
+	*node = entry->node;
+
+	kfree(entry);
+	return 0;
+}
+
+static int psb_gtt_remove_node_anyused(struct psb_gtt_mm *mm,
+			       u32 tgid,
+			       struct drm_mm_node **node)
+{
+	struct psb_gtt_hash_entry *hentry;
+	struct drm_mm_node *tmp;
+	int ret;
+
+	spin_lock(&mm->lock);
+	ret = psb_gtt_mm_get_ht_by_pid_locked(mm, tgid, &hentry);
+	if (ret) {
+		spin_unlock(&mm->lock);
+		return ret;
+	}
+
+	/*remove mapping entry*/
+	ret = psb_gtt_mm_remove_free_mem_mapping_anyused_locked(&hentry->ht,
+			&tmp);
+	if (ret) {
+		DRM_DEBUG("remove_free failed\n");
+		spin_unlock(&mm->lock);
+		return ret;
+	}
+
+	*node = tmp;
+
+	/*check the count of mapping entry*/
+	if (!hentry->count) {
+		DRM_DEBUG("count of mapping entry is zero, tgid=%d\n", tgid);
+		psb_gtt_mm_remove_free_ht_locked(mm, tgid);
+	}
+
+	spin_unlock(&mm->lock);
+
+	return 0;
+}
+
+static int psb_gtt_unmap_anyused(struct drm_device *dev,
+			unsigned int ui32TaskId)
+{
+	struct drm_psb_private *dev_priv
+	= (struct drm_psb_private *)dev->dev_private;
+	struct psb_gtt_mm *mm = dev_priv->gtt_mm;
+	struct psb_gtt *pg = dev_priv->pg;
+	uint32_t pages, offset_pages;
+	struct drm_mm_node *node;
+	int ret;
+
+	ret = psb_gtt_remove_node_anyused(mm,
+				  (u32)ui32TaskId,
+				  &node);
+	if (ret) {
+		DRM_DEBUG("remove node failed\n");
+		return ret;
+	}
+
+	/*remove gtt entries*/
+	offset_pages = node->start;
+	pages = node->size;
+
+	psb_gtt_remove_pages(pg, offset_pages, pages, 0, 0, 1);
+
+
+	/*free tt node*/
+
+	psb_gtt_mm_free_mem(mm, node);
+	return 0;
+
+}
+
 int psb_gtt_map_meminfo(struct drm_device *dev,
 			void *hKernelMemInfo,
 			uint32_t page_align, uint32_t * offset)
@@ -1222,7 +1187,7 @@ int psb_gtt_map_meminfo(struct drm_device *dev,
 
 	if ((ret = psb_gtt_add_node(mm,
 				    (u32) gtt_get_tgid(),
-				    (u32) hKernelMemInfo,
+				    ((unsigned long)hKernelMemInfo),
 				    node, &mapping)) != 0) {
 		DRM_DEBUG("add_node failed");
 
@@ -1253,7 +1218,7 @@ int psb_gtt_map_meminfo(struct drm_device *dev,
 	} else {
 		psb_gtt_remove_node(mm,
 				    (u32) gtt_get_tgid(),
-				    (u32) hKernelMemInfo, &node);
+				    (unsigned long) hKernelMemInfo, &node);
 		psb_gtt_mm_free_mem(mm, node);
 
 		return ret;
@@ -1275,7 +1240,7 @@ int psb_gtt_unmap_meminfo(struct drm_device *dev, void *hKernelMemInfo)
 
 	ret = psb_gtt_remove_node(mm,
 				  (u32) gtt_get_tgid(),
-				  (u32) hKernelMemInfo, &node);
+				  (unsigned long) hKernelMemInfo, &node);
 	if (ret) {
 		DRM_DEBUG("remove node failed\n");
 		return ret;
@@ -1295,7 +1260,7 @@ int psb_gtt_unmap_meminfo(struct drm_device *dev, void *hKernelMemInfo)
 
 static int psb_gtt_unmap_common(struct drm_device *dev,
 			unsigned int ui32TaskId,
-			unsigned int hHandle)
+			unsigned long hHandle)
 {
 	struct drm_psb_private *dev_priv
 	= (struct drm_psb_private *)dev->dev_private;
@@ -1307,9 +1272,13 @@ static int psb_gtt_unmap_common(struct drm_device *dev,
 
 	ret = psb_gtt_remove_node(mm,
 				  (u32)ui32TaskId,
-				  (u32)hHandle,
+				  hHandle,
 				  &node);
 	if (ret) {
+		/* we are not the last user */
+		if (ret == -EBUSY) {
+			ret = 0;
+		}
 		DRM_DEBUG("remove node failed\n");
 		return ret;
 	}
@@ -1320,7 +1289,6 @@ static int psb_gtt_unmap_common(struct drm_device *dev,
 
 	psb_gtt_remove_pages(pg, offset_pages, pages, 0, 0, 1);
 
-
 	/*free tt node*/
 
 	psb_gtt_mm_free_mem(mm, node);
@@ -1328,7 +1296,7 @@ static int psb_gtt_unmap_common(struct drm_device *dev,
 
 }
 
-static int psb_get_vaddr_pages(u32 vaddr, u32 size,
+static int psb_get_vaddr_pages(unsigned long vaddr, u32 size,
 				unsigned long **pfn_list, int *page_count)
 {
 	u32 num_pages;
@@ -1381,7 +1349,7 @@ static int psb_get_vaddr_pages(u32 vaddr, u32 size,
 			}
 
 			ret = follow_pfn(vma,
-				(unsigned long)(vaddr + i * PAGE_SIZE),
+				vaddr + i * PAGE_SIZE,
 				&pfns[i]);
 			if (ret) {
 				DRM_ERROR("failed to follow pfn\n");
@@ -1413,7 +1381,7 @@ get_page_err:
 }
 
 int psb_gtt_map_vaddr(struct drm_device *dev,
-			uint32_t vaddr,
+			unsigned long vaddr,
 			uint32_t size,
 			uint32_t page_align,
 			uint32_t *offset)
@@ -1428,6 +1396,11 @@ int psb_gtt_map_vaddr(struct drm_device *dev,
 	struct psb_gtt_mem_mapping *mapping = NULL;
 	int ret;
 
+	if (DCCBgetGttMapping(dev, gtt_get_tgid(), vaddr, &mapping) == 0) {
+		/* gtt mapping exists */
+		offset_pages = mapping->node->start;
+		goto get_mapping;
+	}
 	/*get pages*/
 	ret = psb_get_vaddr_pages(vaddr, size, &pfn_list, &pages);
 	if (ret) {
@@ -1472,6 +1445,7 @@ int psb_gtt_map_vaddr(struct drm_device *dev,
 	/*free pfn_list if allocated*/
 	kfree(pfn_list);
 
+get_mapping:
 	*offset = offset_pages;
 	return 0;
 
@@ -1483,7 +1457,7 @@ failed_pages_alloc:
 }
 
 int psb_gtt_unmap_vaddr(struct drm_device *dev,
-			uint32_t vaddr,
+			unsigned long vaddr,
 			uint32_t size)
 {
 	return psb_gtt_unmap_common(dev, gtt_get_tgid(), vaddr);
@@ -1497,7 +1471,7 @@ int psb_gtt_map_meminfo_ioctl(struct drm_device *dev, void *data,
 	= (struct psb_gtt_mapping_arg *)data;
 	uint32_t *offset_pages = &arg->offset_pages;
 	uint32_t page_align = arg->page_align;
-	uint32_t vaddr = arg->vaddr;
+	unsigned long vaddr = arg->vaddr;
 	uint32_t size = arg->size;
 	uint32_t type = arg->type;
 
@@ -1527,7 +1501,7 @@ int psb_gtt_unmap_meminfo_ioctl(struct drm_device *dev, void *data,
 
 	struct psb_gtt_mapping_arg *arg
 		= (struct psb_gtt_mapping_arg *)data;
-	uint32_t vaddr = arg->vaddr;
+	unsigned long vaddr = arg->vaddr;
 	uint32_t size = arg->size;
 	uint32_t type = arg->type;
 
@@ -1545,7 +1519,7 @@ int psb_gtt_unmap_meminfo_ioctl(struct drm_device *dev, void *data,
 }
 
 int DCCBgttMapMemory(struct drm_device *dev,
-		     unsigned int hHandle,
+		     unsigned long hHandle,
 		     unsigned int ui32TaskId,
 		     IMG_SYS_PHYADDR *pPages,
 		     unsigned int ui32PagesNum, unsigned int *ui32Offset)
@@ -1572,7 +1546,7 @@ int DCCBgttMapMemory(struct drm_device *dev,
 
 	/*update psb_gtt_mm */
 	ret = psb_gtt_add_node(mm,
-			       (u32) ui32TaskId, (u32) hHandle, node, &mapping);
+			       (u32) ui32TaskId, hHandle, node, &mapping);
 	if (ret) {
 		DRM_DEBUG("add_node failed");
 		goto failed_add_node;
@@ -1597,7 +1571,7 @@ int DCCBgttMapMemory(struct drm_device *dev,
 	return ret;
 }
 
-int DCCBgttUnmapMemory(struct drm_device *dev, unsigned int hHandle,
+int DCCBgttUnmapMemory(struct drm_device *dev, unsigned long hHandle,
 		       unsigned int ui32TaskId)
 {
 	struct drm_psb_private *dev_priv =
@@ -1608,7 +1582,7 @@ int DCCBgttUnmapMemory(struct drm_device *dev, unsigned int hHandle,
 	struct drm_mm_node *node;
 	int ret;
 
-	ret = psb_gtt_remove_node(mm, (u32) ui32TaskId, (u32) hHandle, &node);
+	ret = psb_gtt_remove_node(mm, (u32) ui32TaskId, hHandle, &node);
 	if (ret) {
 		printk(KERN_ERR "remove node failed\n");
 		return ret;
@@ -1623,4 +1597,53 @@ int DCCBgttUnmapMemory(struct drm_device *dev, unsigned int hHandle,
 	/*free tt node */
 	psb_gtt_mm_free_mem(mm, node);
 	return 0;
+}
+
+int DCCBgttCleanupMemoryOnTask(struct drm_device *dev, unsigned int ui32TaskId)
+{
+	/* unmap all gtt for tgid */
+	while (!psb_gtt_unmap_anyused(dev, ui32TaskId))
+		;
+
+	return 0;
+}
+
+int DCCBgetGttMapping(struct drm_device *dev, unsigned int tgid, unsigned long key,
+		      struct psb_gtt_mem_mapping **map)
+{
+	struct drm_psb_private *dev_priv = psb_priv(dev);
+	struct psb_gtt_mm *mm = dev_priv->gtt_mm;
+	struct psb_gtt_hash_entry *hentry;
+	struct psb_gtt_mem_mapping *mapping;
+	int ret = 0;
+
+	spin_lock(&mm->lock);
+
+	// get entry according to the thread id
+	ret = psb_gtt_mm_get_ht_by_pid_locked(mm, tgid, &hentry);
+	if (ret) {
+		DRM_DEBUG("Cannot find entry for pid %d\n", tgid);
+		goto unlock_exit;
+	}
+
+	// find the gtt mapping
+	ret = psb_gtt_mm_get_mem_mapping_locked(&hentry->ht, key, &mapping);
+	if (ret) {
+		DRM_DEBUG("Cannot find key %lu\n", key);
+		goto unlock_exit;
+	}
+
+	mapping->ref++;
+	if (map) {
+		*map = mapping;
+	}
+
+unlock_exit:
+	spin_unlock(&mm->lock);
+	return ret;
+}
+
+int DCCBputGttMapping(struct drm_device *dev, unsigned int tgid, unsigned long key)
+{
+	return psb_gtt_unmap_common(dev, tgid, key);
 }

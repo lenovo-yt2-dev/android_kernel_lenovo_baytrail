@@ -19,11 +19,16 @@
  *
  */
 
-#ifndef _SH_CSS_PARAMS_SHADING_H_
-#define _SH_CSS_PARAMS_SHADING_H_
+#ifndef __SH_CSS_PARAMS_SHADING_H
+#define __SH_CSS_PARAMS_SHADING_H
 
 #include <ia_css_types.h>
 #include <ia_css_binary.h>
+
+void
+sh_css_params_shading_id_table_generate(
+	struct ia_css_shading_table **target_table,
+	const struct ia_css_binary *binary);
 
 void
 prepare_shading_table(const struct ia_css_shading_table *in_table,
@@ -31,11 +36,5 @@ prepare_shading_table(const struct ia_css_shading_table *in_table,
 		      struct ia_css_shading_table **target_table,
 		      const struct ia_css_binary *binary);
 
-struct ia_css_shading_table *
-ia_css_shading_table_alloc(unsigned int width, unsigned int height);
-
-void
-ia_css_shading_table_free(struct ia_css_shading_table *table);
-
-#endif /* _SH_CSS_PARAMS_SHADING_H_ */
+#endif /* __SH_CSS_PARAMS_SHADING_H */
 

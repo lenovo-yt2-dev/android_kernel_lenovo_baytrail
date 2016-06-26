@@ -1763,12 +1763,21 @@ static int mdfld_crtc_dsi_mode_set(struct drm_crtc *crtc,
 	* is 608x1024(64 bits align), then the information between android
 	* and Linux frame buffer is not consistent.
 	*/
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+	if (0)
+		ctx->dspsize = (800 - 1) | ((1280 - 1) << 16);
+	else
+		ctx->dspsize = (480 - 1) | ((854 - 1) << 16);
+#else
 	if (is_tmd_6x10_panel(dev, 0))
 		ctx->dspsize = ((mode->crtc_vdisplay - 1) << 16) |
 			(mode->crtc_hdisplay - 200  - 1);
 	else
 		ctx->dspsize = ((mode->crtc_vdisplay - 1) << 16) |
 			(mode->crtc_hdisplay - 1);
+#endif
+//ASUS_BSP: [DDS] ---
 
 	ctx->dspstride = fb_pitch;
 	ctx->dspsurf = mode_dev->bo_offset(dev, mdfld_fb);
@@ -1828,6 +1837,15 @@ static int mdfld_crtc_dsi_mode_set(struct drm_crtc *crtc,
 		DRM_ERROR("Do not support such panel setting yet\n");
 		hdelay = 4; /* Use the max hdelay instead*/
 	}
+
+	/*
+	* Overlay issues DMA to load register buffer between vblank start
+	* and frame start. If this can't be finished before frame start,
+	* overlay will crash.
+	* Maxmizing frame start delay to 4 scan lines to minimize overlay
+	* crash.
+	*/
+	hdelay = 4;
 
 	ctx->pipeconf |= ((hdelay - 1) << 27);
 

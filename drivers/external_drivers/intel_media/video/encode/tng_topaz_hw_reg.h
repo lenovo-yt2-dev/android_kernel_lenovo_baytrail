@@ -980,11 +980,15 @@ struct IMG_WRITEBACK_MSG {
 #define BIAS_MM_WRITE32(base, offset, value)  \
 	TNG_WRITE32(base, offset, value)
 
+#ifndef MM_WRITE32
 #define MM_WRITE32(base, offset, value)  \
 	TNG_WRITE32(base, offset, value)
+#endif
 
+#ifndef MM_READ32
 #define MM_READ32(base, offset, pointer) \
 	TNG_READ32(base, offset, pointer)
+#endif
 
 #else
 #define BIAS_MM_WRITE32(base, offset, value)  \
@@ -1934,6 +1938,11 @@ do {				       \
 
 #define MAX_TOPAZ_CMD_COUNT	(0x1000) /* max syncStatus value used*/
 
+#define ALIGN_64(X) (((X)+63) & ~63)
+#define IMG_BEST_MULTIPASS_MB_TYPE_SHIFT (24)
+#define IMG_BEST_MULTIPASS_MB_TYPE_MASK (0x03 << IMG_BEST_MULTIPASS_MB_TYPE_SHIFT)
+#define ESF_MP_BEST_MOTION_VECTOR_STATS 4
+#define IMG_BEST_MULTIPASS_SAD_MASK (0xFFFFFF)
 
 #define MTX_WRITEBACK_DATASIZE_ROUND 4
 
@@ -1975,7 +1984,6 @@ do {				       \
 			ret = 0; \
 		*pointer = free_space; \
 	} while (0)
-
 
 /* **************** DMAC define **************** */
 enum  DMAC_eBSwap {
@@ -2034,7 +2042,10 @@ enum drm_tng_topaz_cmd {
 	MTX_CMDID_SW_LEAVE_LOWPOWER = 0x7c,
 	MTX_CMDID_SW_ENTER_LOWPOWER = 0x7e,
 	MTX_CMDID_SW_NEW_CODEC = 0x7f,
-	MTX_CMDID_SW_SETUP_CIR = 0x81
+	MTX_CMDID_SW_FILL_INPUT_CTRL = 0x81,
+	MTX_CMDID_SW_UPDATE_AIR_SEND = 0x82,
+	MTX_CMDID_SW_AIR_BUF_CLEAR = 0x83,
+	MTX_CMDID_SW_UPDATE_AIR_CALC = 0x84
 };
 
 /* codecs topaz supports,shared with user space driver */
@@ -2083,9 +2094,64 @@ enum MTX_eWriteBackData {
 	MTX_WRITEBACK_DATASIZE
 };
 
+typedef struct
+{
+	uint32_t ui32SAD_Intra_MBInfo;		//!< SATD/SAD for best Intra candidate (24-bit unsigned value) plus 8 bit field containing MB info
+	uint32_t ui32SAD_Inter_MBInfo;		//!< SATD/SAD for best Inter candidate (24-bit unsigned value) plus 8 bit field containing MB info
+	uint32_t ui32SAD_Direct_MBInfo;	//!< SATD/SAD for best Direct candidate (24-bit unsigned value) plus 8 bit field containing MB info
+	uint32_t ui32Reserved;
+} IMG_BEST_MULTIPASS_MB_PARAMS, *P_IMG_BEST_MULTIPASS_MB_PARAMS;
+
+typedef struct
+{
+	uint16_t ui16MV4_0_X;       //!< MV4_0_X (this is also MV8_0_X if block size is 8x8, or MV16_X if block size is 16x16)
+	uint16_t ui16MV4_0_Y;       //!< MV4_0_Y (this is also MV8_0_Y if block size is 8x8, or MV16_Y if block size is 16x16)
+	uint16_t ui16MV4_1_X;       //!< MV4_1_X
+	uint16_t ui16MV4_1_Y;       //!< MV4_1_Y
+	uint16_t ui16MV4_2_X;       //!< MV4_2_X
+	uint16_t ui16MV4_2_Y;       //!< MV4_2_Y
+	uint16_t ui16MV4_3_X;       //!< MV4_3_X
+	uint16_t ui16MV4_3_Y;       //!< MV4_3_Y
+
+	uint16_t ui16MV4_4_X;       //!< MV4_4_X (this is also MV8_1_X if block size is 8x8, or 2nd MV if block size is 8x16)
+	uint16_t ui16MV4_4_Y;       //!< MV4_4_Y (this is also MV8_1_Y if block size is 8x8, or 2nd MV if block size is 8x16)
+	uint16_t ui16MV4_5_X;       //!< MV4_5_X
+	uint16_t ui16MV4_5_Y;       //!< MV4_5_Y
+	uint16_t ui16MV4_6_X;       //!< MV4_6_X
+	uint16_t ui16MV4_6_Y;       //!< MV4_6_Y
+	uint16_t ui16MV4_7_X;       //!< MV4_7_X
+	uint16_t ui16MV4_7_Y;       //!< MV4_7_Y
+
+	uint16_t ui16MV4_8_X;       //!< MV4_8_X (this is also MV8_2_X if block size is 8x8, or 2nd MV if block size is 16x8)
+	uint16_t ui16MV4_8_Y;       //!< MV4_8_Y (this is also MV8_2_Y if block size is 8x8, or 2nd MV if block size is 16x8)
+	uint16_t ui16MV4_9_X;       //!< MV4_9_X
+	uint16_t ui16MV4_9_Y;       //!< MV4_9_Y
+	uint16_t ui16MV4_10_X;     //!< MV4_10_X
+	uint16_t ui16MV4_10_Y;     //!< MV4_10_Y
+	uint16_t ui16MV4_11_X;     //!< MV4_11_X
+	uint16_t ui16MV4_11_Y;     //!< MV4_11_Y
+
+	uint16_t ui16MV4_12_X;       //!< MV4_12_X (this is also MV8_3_X if block size is 8x8)
+	uint16_t ui16MV4_12_Y;       //!< MV4_12_Y (this is also MV8_3_Y if block size is 8x8)
+	uint16_t ui16MV4_13_X;       //!< MV4_13_X
+	uint16_t ui16MV4_13_Y;       //!< MV4_13_Y
+	uint16_t ui16MV4_14_X;       //!< MV4_14_X
+	uint16_t ui16MV4_14_Y;       //!< MV4_14_Y
+	uint16_t ui16MV4_15_X;       //!< MV4_15_X
+	uint16_t ui16MV4_15_Y;       //!< MV4_15_Y
+} IMG_BEST_MULTIPASS_MB_PARAMS_IPMV, *P_IMG_BEST_MULTIPASS_MB_PARAMS_IPMV;
+
+typedef struct _IMG_FIRST_STAGE_MB_PARAMS {
+	uint16_t ui16Ipe0Sad;        //!< Final SAD value for best candidate calculated by IPE 0
+	uint16_t ui16Ipe1Sad;        //!< Final SAD value for best candidate calculated by IPE 1
+	uint8_t ui8Ipe0Blks;        //!< Block dimentions for IPE 0 for this Macro-Block
+	uint8_t ui8Ipe1Blks;        //!< Block dimentions for IPE 1 for this Macro-Block
+	uint8_t ui8CARCCmplxVal;    //!< CARC complexity value for this macroblock
+	uint8_t ui8dummy;           //!< Reserved (added for alignment).
+} IMG_FIRST_STAGE_MB_PARAMS, *P_IMG_FIRST_STAGE_MB_PARAMS;
+
 int tng_topaz_reset(struct drm_psb_private *dev_priv);
 int tng_topaz_init_fw(struct drm_device *dev);
-int tng_topaz_init_fw_chaabi(struct drm_device *dev);
 
 int tng_topaz_init_board(
 	struct drm_device *dev,
@@ -2106,7 +2172,7 @@ int tng_topaz_wait_for_register(
 	struct drm_psb_private *dev_priv,
 	uint32_t checkfunc,
 	uint32_t addr, uint32_t value,
-	uint32_t enable);
+	uint32_t enable, bool is_atomic);
 void tng_topaz_mmu_flushcache(struct drm_psb_private *dev_priv);
 
 uint32_t psb_get_default_pd_addr(struct psb_mmu_driver *driver);
@@ -2169,8 +2235,10 @@ static inline char *cmd_to_string(int cmd_id)
 		return "MTX_CMDID_PROVIDE_CODED_BUFFER";
 	case MTX_CMDID_NULL:
 		return "MTX_CMDID_NULL";
-	case MTX_CMDID_SW_SETUP_CIR:
-		return "MTX_CMDID_SW_SETUP_CIR";
+	case MTX_CMDID_SW_FILL_INPUT_CTRL:
+		return "MTX_CMDID_SW_FILL_INPUT_CTRL";
+	case MTX_CMDID_SW_UPDATE_AIR_SEND:
+		return "MTX_CMDID_SW_UPDATE_AIR_SEND";
 	default:
 		DRM_ERROR("Command ID: %08x\n", cmd_id);
 		return "Undefined command";
@@ -2314,7 +2382,7 @@ int tng_topaz_power_up(
 
 int tng_topaz_power_off(struct drm_device *dev);
 
-int Is_Secure_Fw();
+int Is_Secure_Fw(void);
 
 #define SHIFT_WB_PRODUCER       (0)
 #define MASK_WB_PRODUCER	\

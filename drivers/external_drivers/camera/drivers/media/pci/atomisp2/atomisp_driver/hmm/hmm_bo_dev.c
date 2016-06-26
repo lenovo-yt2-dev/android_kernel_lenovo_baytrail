@@ -182,11 +182,13 @@ struct hmm_buffer_object *hmm_bo_device_search_in_range(struct hmm_bo_device
 	struct list_head *pos;
 	struct hmm_buffer_object *bo;
 	unsigned long flags;
+	int cnt = 0;
 
 	check_bodev_null_return(bdev, NULL);
 
 	spin_lock_irqsave(&bdev->list_lock, flags);
 	list_for_each(pos, &bdev->active_bo_list) {
+		cnt++;
 		bo = list_to_hmm_bo(pos);
 		/* pass bo which has no vm_node allocated */
 		if (!hmm_bo_vm_allocated(bo))
@@ -197,6 +199,8 @@ struct hmm_buffer_object *hmm_bo_device_search_in_range(struct hmm_bo_device
 	spin_unlock_irqrestore(&bdev->list_lock, flags);
 	return NULL;
 found:
+	if (cnt > HMM_BO_CACHE_SIZE)
+		list_move(pos, &bdev->active_bo_list);
 	spin_unlock_irqrestore(&bdev->list_lock, flags);
 	return bo;
 }

@@ -87,6 +87,11 @@
 /* Include file for sending uevents */
 #include "psb_umevents.h"
 
+#ifdef CONFIG_DRM_INTEL_HANDSET
+/* Include dc_maxfifo.h for disabling s0i1 display */
+#include "dc_maxfifo.h"
+#endif
+
 /* External state dependency */
 extern int hdmi_state;
 
@@ -183,20 +188,6 @@ static unsigned char default_edid[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8B
 };
 
-#define HDMI_HOTPLUG_DELAY (2*HZ)
-
-static void hdmi_hotplug_delay_wq_func(struct work_struct *work)
-{
-
-	struct android_hdmi_priv *hdmi_priv =
-		container_of(work, struct android_hdmi_priv, hdmi_delayed_wq.work);
-	struct drm_device *dev = hdmi_priv->dev;
-
-	struct delayed_work *delayed_work = to_delayed_work(work);
-	if (!delayed_work_pending(delayed_work))
-		ospm_runtime_pm_allow(dev);
-}
-
 static struct edid *drm_get_edid_retry(struct drm_connector *connector,
 				struct i2c_adapter *adapter, void *context)
 {
@@ -239,9 +230,14 @@ static irqreturn_t __hdmi_irq_handler_bottomhalf(void *data)
 {
 	struct android_hdmi_priv *hdmi_priv = data;
 	static int processed_hdmi_status = -1;
+	struct drm_device *dev;
+	struct drm_psb_private *dev_priv;
 
 	if (hdmi_priv == NULL || !hdmi_priv->dev)
 		return IRQ_HANDLED;
+
+	dev = hdmi_priv->dev;
+	dev_priv = dev->dev_private;
 
 	if (!ospm_power_using_hw_begin(OSPM_DISPLAY_ISLAND,
 			OSPM_UHB_FORCE_POWER_ON)) {
@@ -326,23 +322,27 @@ exit:
 		/* Notify user space */
 		pr_debug("%s: HDMI hot plug state  = %d\n", __func__, hdmi_status);
 
+#ifdef CONFIG_DRM_INTEL_HANDSET
+		/* Turn off maxfifo/S0i1 display*/
+		if (is_panel_vid_or_cmd(dev) == MDFLD_DSI_ENCODER_DPI)
+			exit_maxfifo_mode(dev);
+#endif
+
 		if (hdmi_status) {
 			/* hdmi_state indicates that hotplug event happens */
 			hdmi_state = 1;
 			uevent_string = "HOTPLUG_IN=1";
 			psb_sysfs_uevent(hdmi_priv->dev, uevent_string);
-			/* Delay ospm activity till hotplug has propogated
-			 * through the system
-			 */
-			pr_debug("%s: Delaying any OSPM activity\n", __func__);
-			ospm_runtime_pm_forbid(hdmi_priv->dev);
-			schedule_delayed_work(&hdmi_priv->hdmi_delayed_wq, HDMI_HOTPLUG_DELAY);
 		} else {
 			otm_hdmi_power_rails_off();
 			hdmi_state = 0;
 			edid_ready_in_hpd = 0;
 			uevent_string = "HOTPLUG_OUT=1";
 			psb_sysfs_uevent(hdmi_priv->dev, uevent_string);
+
+			switch_set_state(&hdmi_priv->sdev, 0);
+			pr_info("%s: hdmi state switched to %d\n", __func__,
+				hdmi_priv->sdev.state);
 		}
 
 		drm_helper_hpd_irq_event(hdmi_priv->dev);
@@ -465,6 +465,13 @@ void android_hdmi_driver_setup(struct drm_device *dev)
 
 	dev_priv->hdmi_priv = (void *)hdmi_priv;
 
+	/* Register hdmi switch_dev */
+	hdmi_priv->sdev.name = "hdmi";
+	if (switch_dev_register(&hdmi_priv->sdev) < 0) {
+		pr_err("%s: Hdmi switch registration failed\n", __func__);
+		goto free;
+	}
+
 	/* Register callback to be used with Hotplug interrupts */
 	ret = otm_hdmi_hpd_callback_register(hdmi_priv->context,
 					     &android_hdmi_irq_callback,
@@ -474,8 +481,6 @@ void android_hdmi_driver_setup(struct drm_device *dev)
 		goto free;
 	}
 
-	/* Initialize the hotplug delay workqueue */
-	INIT_DELAYED_WORK(&hdmi_priv->hdmi_delayed_wq, (void *)hdmi_hotplug_delay_wq_func);
 	pr_info("%s: Done with driver setup\n", __func__);
 	pr_info("Exit %s\n", __func__);
 	return;
@@ -907,9 +912,7 @@ static int android_hdmi_add_cea_edid_modes(void *context,
 						mode_entry->flags |= DRM_MODE_FLAG_PAR16_9;
 					break;
 			}
-
-			/* restore flag */
-			newmode->flags = saved_flags;
+			drm_mode_destroy(connector->dev, newmode);
 		}
 	}
 
@@ -1017,8 +1020,12 @@ int android_hdmi_get_modes(struct drm_connector *connector)
 	struct edid *edid = NULL;
 	/* Edid address in HDMI context */
 	struct edid *ctx_edid = NULL;
-	struct drm_display_mode *mode, *t, *dup_mode, *user_mode;
-	int i = 0, j = 0, ret = 0, mode_present = 0;
+	struct drm_display_mode *mode, *t;
+	int i = 0, j = 0, ret = 0;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0))
+	struct drm_display_mode *dup_mode, *user_mode;
+	int mode_present = 0;
+#endif
 	int refresh_rate = 0;
 	bool pref_mode_found = false;
 	struct i2c_adapter *adapter = NULL;
@@ -1628,7 +1635,7 @@ void android_hdmi_suspend_display(struct drm_device *dev)
 	otm_hdmi_save_display_registers(hdmi_priv->context,
 					is_connected);
 
-	otm_disable_hdmi(hdmi_priv->context);
+	otm_disable_hdmi(hdmi_priv->context, is_connected);
 
 	/* power island is turnned off by IRQ handler if device is disconnected */
 	if (is_connected && !hdmi_priv->hdmi_suspended) {
@@ -2420,7 +2427,9 @@ void android_hdmi_connector_destroy(struct drm_connector *connector)
 void android_hdmi_connector_dpms(struct drm_connector *connector, int mode)
 {
 	struct drm_device *dev = connector->dev;
+#if (defined CONFIG_PM_RUNTIME) && (!defined MERRIFIELD)
 	struct drm_psb_private *dev_priv = dev->dev_private;
+#endif
 	bool hdmi_audio_busy = false;
 	u32 dspcntr_val;
 
@@ -2562,8 +2571,12 @@ void android_hdmi_encoder_dpms(struct drm_encoder *encoder, int mode)
 		otm_hdmi_vblank_control(dev, true);
 		REG_WRITE(hdmi_priv->hdmib_reg, hdmib | HDMIB_PORT_EN);
 
-		if (is_monitor_hdmi && (hdmip_enabled == 0))
+		if (is_monitor_hdmi && (hdmip_enabled == 0)) {
 			mid_hdmi_audio_signal_event(dev, HAD_EVENT_HOT_PLUG);
+			switch_set_state(&hdmi_priv->sdev, 1);
+			pr_info("%s: hdmi state switched to %d\n", __func__,
+				hdmi_priv->sdev.state);
+        }
 
 		if (hdmi_priv->current_mode)
 			__android_hdmi_drm_mode_to_otm_timing(&otm_mode,

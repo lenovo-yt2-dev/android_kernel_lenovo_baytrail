@@ -27,6 +27,11 @@
 #include "ia_css_types.h"
 #include "ia_css_acc_types.h"
 
+/** @file
+ * This file contains prototypes for functions that need to be provided to the
+ * CSS-API host-code by the environment in which the CSS-API code runs.
+ */
+
 /** Memory allocation attributes, for use in ia_css_css_mem_env. */
 enum ia_css_mem_attr {
 	IA_CSS_MEM_ATTR_CACHED = 1 << 0,
@@ -41,12 +46,14 @@ enum ia_css_mem_attr {
  *  This is never expected to allocate more than one page of memory (4K bytes).
  */
 struct ia_css_cpu_mem_env {
-	void *(*alloc)(size_t bytes, bool zero_mem);
+	void * (*alloc)(size_t bytes, bool zero_mem);
 	/**< Allocation function with boolean argument to indicate whether
 	     the allocated memory should be zeroed out or not, true (or 1)
 	     meaning the memory given to CSS must be zeroed */
-	void (*free)(void *ptr); /**< Corresponding free function. */
-	void (*flush) (struct ia_css_acc_fw *fw);
+	void (*free)(void *ptr);
+	/**< Corresponding free function. The function must also accept
+	     a NULL argument, similar to C89 free(). */
+	void (*flush)(struct ia_css_acc_fw *fw);
 	/**< Flush function to flush the cache for given accelerator. */
 };
 
@@ -60,19 +67,20 @@ struct ia_css_cpu_mem_env {
  *  Attributes can be a combination (OR'ed) of ia_css_mem_attr values.
  */
 struct ia_css_css_mem_env {
-	ia_css_ptr (*alloc)(size_t bytes, uint32_t attributes);
+	ia_css_ptr(*alloc)(size_t bytes, uint32_t attributes);
 	/**< Allocate memory, cached or uncached, zeroed out or not. */
-	void     (*free)(ia_css_ptr ptr);
-	/**< Free ISP shared memory. */
-	int      (*load)(ia_css_ptr ptr, void *data, size_t bytes);
+	void (*free)(ia_css_ptr ptr);
+	/**< Free ISP shared memory. The function must also accept
+	     a NULL argument, similar to C89 free(). */
+	int (*load)(ia_css_ptr ptr, void *data, size_t bytes);
 	/**< Load from ISP shared memory. This function is necessary because
 	     the IA MMU does not share page tables with the ISP MMU. This means
 	     that the IA needs to do the virtual-to-physical address
 	     translation in software. This function performs this translation.*/
-	int      (*store)(ia_css_ptr ptr, const void *data, size_t bytes);
+	int (*store)(ia_css_ptr ptr, const void *data, size_t bytes);
 	/**< Same as the above load function but then to write data into ISP
 	     shared memory. */
-	int      (*set)(ia_css_ptr ptr, int c, size_t bytes);
+	int (*set)(ia_css_ptr ptr, int c, size_t bytes);
 	/**< Set an ISP shared memory region to a particular value. Each byte
 	     in this region will be set to this value. In most cases this is
 	     used to zero-out memory sections in which case the argument c
@@ -86,13 +94,13 @@ struct ia_css_css_mem_env {
  *  registers and local memories.
  */
 struct ia_css_hw_access_env {
-	void     (*store_8)(hrt_address addr, uint8_t data);
+	void (*store_8)(hrt_address addr, uint8_t data);
 	/**< Store an 8 bit value into an address in the CSS HW address space.
 	     The address must be an 8 bit aligned address. */
-	void     (*store_16)(hrt_address addr, uint16_t data);
+	void (*store_16)(hrt_address addr, uint16_t data);
 	/**< Store a 16 bit value into an address in the CSS HW address space.
 	     The address must be a 16 bit aligned address. */
-	void     (*store_32)(hrt_address addr, uint32_t data);
+	void (*store_32)(hrt_address addr, uint32_t data);
 	/**< Store a 32 bit value into an address in the CSS HW address space.
 	     The address must be a 32 bit aligned address. */
 	uint8_t (*load_8)(hrt_address addr);
@@ -104,9 +112,9 @@ struct ia_css_hw_access_env {
 	uint32_t (*load_32)(hrt_address addr);
 	/**< Load a 32 bit value from an address in the CSS HW address
 	     space. The address must be a 32 bit aligned address. */
-	void     (*store)(hrt_address addr, const void *data, uint32_t bytes);
+	void (*store)(hrt_address addr, const void *data, uint32_t bytes);
 	/**< Store a number of bytes into a byte-aligned address in the CSS HW address space. */
-	void     (*load)(hrt_address addr, void *data, uint32_t bytes);
+	void (*load)(hrt_address addr, void *data, uint32_t bytes);
 	/**< Load a number of bytes from a byte-aligned address in the CSS HW address space. */
 };
 

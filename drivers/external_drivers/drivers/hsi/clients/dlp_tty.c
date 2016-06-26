@@ -219,7 +219,7 @@ static void _dlp_forward_tty(struct tty_struct *tty,
 			/* Get the size & address */
 			ptr++;
 			more_packets = (*ptr) & DLP_HDR_MORE_DESC;
-			data_size = DLP_HDR_DATA_SIZE((*ptr)) ;
+			data_size = DLP_HDR_DATA_SIZE((*ptr));
 			data_addr = start_addr + offset;
 
 			/* Copy the data to the TTY buffer */
@@ -443,15 +443,19 @@ static void dlp_tty_complete_rx(struct hsi_msg *pdu)
 	dlp_hsi_controller_pop(xfer_ctx);
 	write_unlock_irqrestore(&xfer_ctx->lock, flags);
 
+	if (pdu->status != HSI_STATUS_ERROR)
+		dlp_fifo_wait_push(xfer_ctx, pdu);
+	else {
+		pr_debug(DRVNAME ": TTY: CH%d RX PDU ignored\n",
+						xfer_ctx->channel->ch_id);
+		goto recycle;
+	}
 #ifdef CONFIG_HSI_DLP_TTY_STATS
 	xfer_ctx->tty_stats.data_sz += pdu->actual_len;
 	xfer_ctx->tty_stats.pdus_cnt++;
 	if (!xfer_ctx->ctrl_len)
 		xfer_ctx->tty_stats.overflow_cnt++;
 #endif
-
-	dlp_fifo_wait_push(xfer_ctx, pdu);
-
 	queue_work(dlp_drv.rx_wq, &tty_ctx->do_tty_forward);
 	return;
 
@@ -837,11 +841,25 @@ static void dlp_tty_wait_until_sent(struct tty_struct *tty, int timeout)
  */
 static void dlp_tty_close(struct tty_struct *tty, struct file *filp)
 {
-	struct dlp_channel *ch_ctx = (struct dlp_channel *)tty->driver_data;
-	int need_cleanup = (tty->count == 1);
+	struct dlp_channel *ch_ctx = NULL;
+	int need_cleanup = 0;
+	if (tty) {
+		need_cleanup = (tty->count == 1);
 
-	pr_debug(DRVNAME ": TTY device close request (%s, %d)\n",
-			current->comm, current->tgid);
+		pr_debug(DRVNAME ": TTY device close request (%s, %d)\n",
+				current->comm, current->tgid);
+
+		/* Set TTY as closed to prevent RX/TX transactions */
+		if (need_cleanup)
+			tty->flow_stopped = 1;
+
+		ch_ctx = (struct dlp_channel *)tty->driver_data;
+		if (filp && ch_ctx) {
+			struct dlp_tty_context *tty_ctx = ch_ctx->ch_data;
+			if (&tty_ctx->tty_prt)
+				tty_port_close(&tty_ctx->tty_prt, tty, filp);
+		}
+	}
 
 	if (unlikely(atomic_read(&dlp_drv.drv_remove_ongoing))) {
 		pr_err(DRVNAME ": %s: Driver is currently removed by the system",
@@ -849,19 +867,10 @@ static void dlp_tty_close(struct tty_struct *tty, struct file *filp)
 		return;
 	}
 
-	/* Set TTY as closed to prevent RX/TX transactions */
-	if (need_cleanup) {
+	if (need_cleanup)
 		dlp_tty_set_link_valid(1, dlp_drv.tx_timeout);
-		tty->flow_stopped = 1 ;
-	}
-
-	if (filp && ch_ctx) {
-		struct dlp_tty_context *tty_ctx = ch_ctx->ch_data;
-		tty_port_close(&tty_ctx->tty_prt, tty, filp);
-	}
 
 	/* Flush everything & Release the HSI port */
-
 	if (likely(!atomic_read(&dlp_drv.drv_remove_ongoing)) && need_cleanup) {
 		pr_debug(DRVNAME": Flushing the HSI controller\n");
 		hsi_flush(dlp_drv.client);
@@ -1382,7 +1391,6 @@ static int dlp_tty_ctx_cleanup(struct dlp_channel *ch_ctx)
 		hsi_flush(dlp_drv.client);
 
 		tty_vhangup(tty);
-		tty->port = NULL;
 		tty_kref_put(tty);
 	}
 

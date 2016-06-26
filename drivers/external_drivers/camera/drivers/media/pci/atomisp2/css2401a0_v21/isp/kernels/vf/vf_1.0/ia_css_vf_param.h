@@ -24,7 +24,8 @@
 
 #include "type_support.h"
 #include "dma.h"
-#include "gc/gc_1.0/ia_css_gc_param.h"
+#include "gc/gc_1.0/ia_css_gc_param.h" /* GAMMA_OUTPUT_BITS */
+#include "ia_css_frame_comm.h" /* ia_css_frame_sp_info */
 #include "ia_css_vf_types.h"
 
 #define VFDEC_BITS_PER_PIXEL	GAMMA_OUTPUT_BITS
@@ -32,6 +33,8 @@
 /** Viewfinder decimation */
 struct sh_css_isp_vf_isp_config {
 	uint32_t vf_downscale_bits; /**< Log VF downscale value */
+	uint32_t enable;
+	struct ia_css_frame_sp_info info;
 	struct {
 		uint32_t width_a_over_b;
 		struct dma_port_config port_b;

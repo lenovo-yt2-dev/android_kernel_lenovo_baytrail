@@ -523,7 +523,7 @@ otm_hdmi_ret_t otm_hdmi_get_eld(void *ctx, otm_hdmi_eld_t *eld)
 		WARN_ON(edid_int->short_audio_descriptor_count >
 						sizeof(eld->mn_sand_sads));
 		memcpy(eld->mn_sand_sads, edid_int->short_audio_descriptor_data,
-		       min_t(int, sizeof(eld->mn_sand_sads),
+		       min_t(int, MAX_DATA_BLOCK_SIZE,
 			     3 * edid_int->short_audio_descriptor_count));
 	}
 
@@ -875,12 +875,11 @@ bool otm_hdmi_power_rails_off(void)
 }
 
 /* turn HDMI power islands on */
-bool otm_hdmi_power_islands_on()
+bool otm_hdmi_power_islands_on(void)
 {
 	hdmi_context_t *ctx = g_context;
-	
 
-	if (ctx->islands_powered_on == false) {
+	if (ctx && ctx->islands_powered_on == false) {
 		ctx->islands_powered_on = true;
 		return ps_hdmi_power_islands_on();
 	}
@@ -888,11 +887,11 @@ bool otm_hdmi_power_islands_on()
 }
 
 /* turn HDMI power islands off */
-void otm_hdmi_power_islands_off()
+void otm_hdmi_power_islands_off(void)
 {
 	hdmi_context_t *ctx = g_context;
 
-	if (ctx->islands_powered_on == true) {
+	if (ctx && ctx->islands_powered_on == true) {
 		ctx->islands_powered_on = false;
 		ps_hdmi_power_islands_off();
 	}
@@ -1296,8 +1295,8 @@ static otm_hdmi_ret_t __pd_attr_declare(otm_hdmi_attribute_t *table,
 
 	switch (type) {
 	case OTM_HDMI_ATTR_TYPE_UINT:
-		table[id].content._uint.value         = (unsigned int) value;
-		table[id].content._uint.value_default = (unsigned int) value;
+		table[id].content._uint.value         = (unsigned int) ((uint64_t)value);
+		table[id].content._uint.value_default = (unsigned int) ((uint64_t)value);
 		table[id].content._uint.value_min     = min;
 		table[id].content._uint.value_max     = max;
 		break;
@@ -1644,8 +1643,12 @@ otm_hdmi_ret_t otm_hdmi_crtc_mode_set(void *context, otm_hdmi_timing_t *mode,
 
 	/* program hdmi mode timing registers */
 	rc = ipil_hdmi_crtc_mode_set_program_pipeconf(&ctx->dev);
-	if (rc != OTM_HDMI_SUCCESS)
+	if (rc != OTM_HDMI_SUCCESS) {
 		pr_debug("\nfailed to program pipeconf\n");
+	} else {
+		/* destroy saved HDMI data after mode set */
+		ipil_hdmi_destroy_saved_data(&ctx->dev);
+	}
 
 	pr_debug("Exit%s\n", __func__);
 
@@ -1781,9 +1784,12 @@ void otm_hdmi_update_security_hdmi_hdcp_status(bool hdcp, bool cable)
  * Returns:	none
  * disable HDMI display
  */
-void otm_disable_hdmi(void *context)
+void otm_disable_hdmi(void *context, bool is_connected)
 {
 	pr_debug("Entered %s\n", __func__);
+	if (! is_connected)
+		return;
+
 	if (NULL != context) {
 #ifdef OTM_HDMI_HDCP_ENABLE
 		/* inform HDCP about suspend */

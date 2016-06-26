@@ -201,7 +201,7 @@ static int mrfl_pwr_cmd_gfx(u32 gfx_mask, int new_state)
 				apply_TNG_A0_workarounds(OSPM_GRAPHICS_ISLAND, 1);
 
 			/* ANN A0 workarounds */
-			if (IS_ANN_A0(dev))
+			if (IS_ANN(dev))
 				apply_ANN_A0_workarounds(OSPM_GRAPHICS_ISLAND, 1);
 		}
 
@@ -229,7 +229,7 @@ static int pm_cmd_freq_wait(u32 reg_freq, u32 *freq_code_rlzd)
 		freq_val = intel_mid_msgbus_read32(PUNIT_PORT, reg_freq);
 		if ((freq_val & IP_FREQ_VALID) == 0)
 			break;
-		if (tcount > 500) {
+		if (tcount > 1500) {
 			WARN(1, "%s: P-Unit freq request wait timeout",
 				__func__);
 			return -EBUSY;
@@ -382,6 +382,17 @@ void gpu_freq_set_resume_func(int (*resume_func)(void))
 	PSB_DEBUG_PM("OSPM: Resume \n");
 }
 EXPORT_SYMBOL(gpu_freq_set_resume_func);
+
+int gpu_freq_get_max_fuse_setting(void)
+{
+	u32 reg_value;
+
+	/* Fuse value stored in offset 0x10F */
+	reg_value = intel_mid_msgbus_read32(PUNIT_PORT, 0x10F);
+
+	return (reg_value & 0xF);
+}
+EXPORT_SYMBOL(gpu_freq_get_max_fuse_setting);
 
 /***********************************************************
  * All Graphics Island
@@ -596,6 +607,52 @@ void ospm_sidekick_init(struct drm_device *dev,
 	p_island->p_dependency = get_island_ptr(NC_PM_SSS_GFX_SLC);
 }
 
+#if 0
+static void ospm_check_registers(struct drm_device *dev)
+{
+	uint32_t reg, data;
+
+	PSB_DEBUG_PM("start\n");
+	reg = 0x160008 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x GFX_CONTROL(0x160008)\n", data);
+	reg = 0x160020 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x GCILP_CONTROL(0x160020)\n", data);
+	reg = 0x160028 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x GCILP_ARB_CONTROL(0x160028)\n", data);
+
+	return ;
+}
+#endif
+
+
+static void ospm_pnp_settings(struct drm_device *dev)
+{
+	uint32_t reg, data;
+
+	reg = 0x160008 - GFX_WRAPPER_OFFSET;
+	data = 0x0;
+	WRAPPER_REG_WRITE(reg, data);
+
+	reg = 0x160028 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	/*
+	GCILP_ARB_CONTROL[3:0] = SLCRD_WEIGHT = 3
+	GCILP_ARB_CONTROL[7:4] = SLCWR_WEIGHT = 3
+	GCILP_ARB_CONTROL[11:8] = VED_WEIGHT = 3
+	GCILP_ARB_CONTROL[15:12] = VEC_WEIGHT = 3
+	GCILP_ARB_CONTROL[19:16] = VSP_WEIGHT = 3
+	GCILP_ARB_CONTROL[23:20] = FIRST_ARB_WEIGHT = 3
+	GCILP_ARB_CONTROL[31] = ARB_MODE = 0
+	*/
+	data |= 0x333333;
+	WRAPPER_REG_WRITE(reg, data);
+
+	return ;
+}
+
 /**
  * ospm_slc_power_up
  *
@@ -613,12 +670,16 @@ static bool ospm_slc_power_up(struct drm_device *dev,
 
 	ret = GFX_POWER_UP(PMU_SLC);
 
-	if (!ret && IS_ANN_A0(dev))
+	if (!ret && IS_ANN(dev))
 		apply_ANN_A0_workarounds(OSPM_GRAPHICS_ISLAND, 1);
+
+	ospm_pnp_settings(dev);
 
 	PSB_DEBUG_PM("Post-power-up status = 0x%08x\n",
 		intel_mid_msgbus_read32(PUNIT_PORT, NC_PM_SSS));
 
+	return !ret;
+#if 0
 	if (!ret) {
 		uint32_t reg, data;
 
@@ -630,6 +691,7 @@ static bool ospm_slc_power_up(struct drm_device *dev,
 	}
 
 	return !ret;
+#endif
 }
 
 /**

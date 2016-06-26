@@ -40,7 +40,7 @@
 int PVRCore_Init(void);
 void PVRCore_Cleanup(void);
 int PVRSRVOpen(struct drm_device *dev, struct drm_file *pFile);
-void PVRSRVRelease(void *pvPrivData);
+void PVRSRVRelease(void **pvPrivData);
 
 #if defined(PVR_DRI_DRM_PLATFORM_DEV)
 void PVRSRVDriverShutdown(LDM_DEV *pDevice);

@@ -439,6 +439,11 @@ ErrorExit:
 	OSFreeMem(PVRSRV_OS_PAGEABLE_HEAP, sizeof(PVRSRV_DISPLAYCLASS_INFO), psDCInfo, IMG_NULL);
 	/*not nulling pointer, out of scope*/
 
+	if(psDeviceNode)
+	{
+		OSFreeMem(PVRSRV_OS_NON_PAGEABLE_HEAP, sizeof(PVRSRV_DEVICE_NODE), psDeviceNode, IMG_NULL);
+	}
+
 	return PVRSRV_ERROR_OUT_OF_MEMORY;
 }
 
@@ -627,12 +632,17 @@ ErrorExit:
 
 	if(psBCInfo->psFuncTable)
 	{
-		OSFreeMem(PVRSRV_OS_PAGEABLE_HEAP, sizeof(PPVRSRV_BC_SRV2BUFFER_KMJTABLE), psBCInfo->psFuncTable, IMG_NULL);
+		OSFreeMem(PVRSRV_OS_PAGEABLE_HEAP, sizeof(PVRSRV_BC_SRV2BUFFER_KMJTABLE), psBCInfo->psFuncTable, IMG_NULL);
 		psBCInfo->psFuncTable = IMG_NULL;
 	}
 
 	OSFreeMem(PVRSRV_OS_PAGEABLE_HEAP, sizeof(PVRSRV_BUFFERCLASS_INFO), psBCInfo, IMG_NULL);
 	/*not nulling shared pointer, wasn't allocated to this point*/
+
+	if(psDeviceNode)
+	{
+		OSFreeMem(PVRSRV_OS_NON_PAGEABLE_HEAP, sizeof(PVRSRV_DEVICE_NODE), psDeviceNode, IMG_NULL);
+	}
 
 	return PVRSRV_ERROR_OUT_OF_MEMORY;
 }
@@ -1252,6 +1262,12 @@ static PVRSRV_ERROR PVRSRVCreateDCSwapChainRefKM(PVRSRV_PER_PROCESS_DATA	*psPerP
 												  psSwapChainRef,
 												  0,
 												  &DestroyDCSwapChainRefCallBack);
+	if (psSwapChainRef->hResItem == IMG_NULL)
+	{
+			PVR_DPF ((PVR_DBG_ERROR, "PVRSRVCreateDCSwapChainRefKM: ResManRegisterRes failed"));
+			OSFreeMem(PVRSRV_OS_PAGEABLE_HEAP, sizeof(PVRSRV_DC_SWAPCHAIN_REF), psSwapChainRef, IMG_NULL);
+			return PVRSRV_ERROR_INVALID_PARAMS;
+	}
 	*ppsSwapChainRef = psSwapChainRef;
 
 	return PVRSRV_OK;
@@ -1777,8 +1793,12 @@ static IMG_VOID FreePrivateData(IMG_HANDLE hCallbackData)
 {
 	CALLBACK_DATA *psCallbackData = hCallbackData;
 
-	OSFreeMem(PVRSRV_OS_PAGEABLE_HEAP, psCallbackData->ui32PrivDataLength,
-			  psCallbackData->pvPrivData, IMG_NULL);
+	if(psCallbackData->ui32PrivDataLength)
+	{
+		OSFreeMem(PVRSRV_OS_PAGEABLE_HEAP, psCallbackData->ui32PrivDataLength,
+				  psCallbackData->pvPrivData, IMG_NULL);
+	}
+
 	OSFreeMem(PVRSRV_OS_PAGEABLE_HEAP,
 			  sizeof(IMG_VOID *) * psCallbackData->ui32NumMemInfos,
 			  psCallbackData->ppvMemInfos, IMG_NULL);

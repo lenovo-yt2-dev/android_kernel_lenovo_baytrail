@@ -34,12 +34,19 @@ static void ctc_gradient(
 	int frc_bits = max(IA_CSS_CTC_COEF_SHIFT, 16);
 	int dy = y1 - y0;
 	int dx = x1 - x0;
-	int dydx_int = dy / dx;
-	int dydx_frc = ((dy - dydx_int * dx) << frc_bits) / dx;
+	int dydx_int;
+	int dydx_frc;
 	int sft;
-
 	/* max_dydx = the maxinum gradient = the maximum y (gain) */
 	int max_dydx = (1 << IA_CSS_CTC_COEF_SHIFT) - 1;
+
+	if (dx == 0) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE_PRIVATE, "ctc_gradient() error, illegal division operation\n");
+		return;
+	} else {
+		dydx_int = dy / dx;
+		dydx_frc = ((dy - dydx_int * dx) << frc_bits) / dx;
+	}
 
 	assert(y0 >= 0 && y0 <= max_dydx);
 	assert(y1 >= 0 && y1 <= max_dydx);
@@ -70,8 +77,10 @@ static void ctc_gradient(
 void
 ia_css_ctc_encode(
 	struct sh_css_isp_ctc_params *to,
-	const struct ia_css_ctc_config *from)
+	const struct ia_css_ctc_config *from,
+	unsigned size)
 {
+	(void)size;
 	to->y0 = from->y0;
 	to->y1 = from->y1;
 	to->y2 = from->y2;

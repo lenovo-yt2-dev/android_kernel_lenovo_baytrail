@@ -194,9 +194,11 @@ extern "C" {
 	Flags for PVRSRVModifySyncOps
 	WO_INC		-	Used to increment "WriteOpsPending/complete of sync info"
 	RO_INC		-	Used to increment "ReadOpsPending/complete of sync info"
+	RO2_INC		-	Used to increment "ReadOps2Pending/complete of sync info"
 */
-#define PVRSRV_MODIFYSYNCOPS_FLAGS_WO_INC			0x00000001
-#define PVRSRV_MODIFYSYNCOPS_FLAGS_RO_INC			0x00000002
+#define PVRSRV_MODIFYSYNCOPS_FLAGS_WO_INC				(1U<<0)
+#define PVRSRV_MODIFYSYNCOPS_FLAGS_RO_INC				(1U<<1)
+#define PVRSRV_MODIFYSYNCOPS_FLAGS_RO2_INC				(1U<<2)
 
 /*
 	Flags for Services connection.

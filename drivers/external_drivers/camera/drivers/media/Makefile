@@ -4,4 +4,3 @@
 
 obj-y += pci/
 obj-y += i2c/
-

@@ -36,8 +36,6 @@
 #define PMU_ENC			0x1
 #define PMU_DEC			0x1
 
-static bool  need_set_ved_freq = true;
-
 void ospm_vsp_init(struct drm_device *dev,
 			struct ospm_power_island *p_island);
 

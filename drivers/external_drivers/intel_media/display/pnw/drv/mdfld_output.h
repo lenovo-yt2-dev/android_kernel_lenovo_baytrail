@@ -97,6 +97,11 @@ struct panel_funcs {
 	int (*power_off)(struct mdfld_dsi_config *dsi_config);
 	int (*set_brightness)(struct mdfld_dsi_config *dsi_config, int level);
 	int (*drv_ic_init)(struct mdfld_dsi_config *dsi_config);
+//ASUS_BSP: Louis +++
+#if defined(CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY)
+	int (*gpio_power_off)(struct mdfld_dsi_config *dsi_config);
+#endif
+//ASUS_BSP: Louis ---
 };
 
 void mdfld_output_init(struct drm_device *dev);

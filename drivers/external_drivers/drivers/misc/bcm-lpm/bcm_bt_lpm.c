@@ -46,35 +46,44 @@ enum {
 	host_wake_acpi_idx
 };
 #endif
+#define LPM_ON
 
 static struct rfkill *bt_rfkill;
 static bool bt_enabled;
+
+#ifdef LPM_ON
 static bool host_wake_uart_enabled;
 static bool wake_uart_enabled;
 static bool int_handler_enabled;
+#endif
 
-#define LPM_ON
 
 static void activate_irq_handler(void);
 
 struct bcm_bt_lpm {
+#ifdef LPM_ON
 	unsigned int gpio_wake;
 	unsigned int gpio_host_wake;
 	unsigned int int_host_wake;
+#endif
+#ifdef CONFIG_PF450CL
+	unsigned int gpio_reg_on;
+    unsigned int gpio_reset;
+#else
 	unsigned int gpio_enable_bt;
-        unsigned int gpio_bt_rst;
+    unsigned int gpio_bt_rst;
 
 	int wake;
 	int host_wake;
-
+#endif
 	struct hrtimer enter_lpm_timer;
 	ktime_t enter_lpm_delay;
 
 	struct device *tty_dev;
-
+#ifdef LPM_ON
 	struct wake_lock wake_lock;
 	char wake_lock_name[100];
-
+#endif
 	int port;
 } bt_lpm;
 
@@ -165,26 +174,33 @@ static int bcm43xx_bt_rfkill_set_power(void *data, bool blocked)
 	/* rfkill_ops callback. Turn transmitter on when blocked is false */
 
 	if (!blocked) {
+#ifdef LPM_ON
 		gpio_set_value(bt_lpm.gpio_wake, 1);
 		/*
 		* Delay advice by BRCM is min 2.5ns,
 		* setting it between 10 and 50us for more confort
 		*/
 		usleep_range(10, 50);
-
+#endif
+#ifdef CONFIG_PF450CL
+		gpio_set_value(bt_lpm.gpio_reg_on, 1);
+		gpio_set_value(bt_lpm.gpio_reset, 1);
+#else
 		gpio_set_value(bt_lpm.gpio_enable_bt, 1);
-                
-                usleep_range(10, 50);
-
-                gpio_set_value(bt_lpm.gpio_bt_rst, 1);
-		pr_debug("%s: turn BT on\n", __func__);
+        usleep_range(10, 50);
+        gpio_set_value(bt_lpm.gpio_bt_rst, 1);
+#endif
+		pr_err("%s: turn BT on\n", __func__);
 	} else {
+#ifdef CONFIG_PF450CL
+		gpio_set_value(bt_lpm.gpio_reg_on, 0);
+		gpio_set_value(bt_lpm.gpio_reset, 0);
+#else
 		gpio_set_value(bt_lpm.gpio_enable_bt, 0);
-
-                usleep_range(10, 50);
-
-                gpio_set_value(bt_lpm.gpio_bt_rst, 0);
-	        pr_debug("%s: turn BT off\n", __func__);
+		usleep_range(10, 50);
+        gpio_set_value(bt_lpm.gpio_bt_rst, 0);
+#endif
+		pr_err("%s: turn BT off\n", __func__);
 	}
 
 	bt_enabled = !blocked;
@@ -374,10 +390,12 @@ static int bcm43xx_bluetooth_pdata_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
+#ifndef CONFIG_PF450CL
 	if (!gpio_is_valid(pdata->gpio_enable)) {
 		pr_err("%s: gpio not valid\n", __func__);
 		return -EINVAL;
 	}
+#endif
 
 #ifdef LPM_ON
 	if (!gpio_is_valid(pdata->gpio_wake) ||
@@ -387,11 +405,26 @@ static int bcm43xx_bluetooth_pdata_probe(struct platform_device *pdev)
 	}
 #endif
 
+#ifdef CONFIG_PF450CL
+	if (!gpio_is_valid(pdata->gpio_reg_on) ||
+	    !gpio_is_valid(pdata->gpio_reset)) {
+	    pr_err("%s: gpio not valid\n", __func__);
+            return -EINVAL;
+	}
+#endif
+
+#ifdef LPM_ON
 	bt_lpm.gpio_wake = pdata->gpio_wake;
 	bt_lpm.gpio_host_wake = pdata->gpio_host_wake;
 	bt_lpm.int_host_wake = pdata->int_host_wake;
+#endif
+#ifndef CONFIG_PF450CL
 	bt_lpm.gpio_enable_bt = pdata->gpio_enable;
-
+#endif
+#ifdef CONFIG_PF450CL
+	bt_lpm.gpio_reg_on = pdata->gpio_reg_on;
+	bt_lpm.gpio_reset = pdata->gpio_reset;
+#endif
 	bt_lpm.port = pdata->port;
 
 	return 0;
@@ -402,9 +435,9 @@ static int bcm43xx_bluetooth_probe(struct platform_device *pdev)
 {
 	bool default_state = true;	/* off */
 	int ret = 0;
-
+#ifdef LPM_ON
 	int_handler_enabled = false;
-
+#endif
 #ifdef CONFIG_ACPI
 	if (ACPI_HANDLE(&pdev->dev)) {
 		/*
@@ -425,6 +458,35 @@ static int bcm43xx_bluetooth_probe(struct platform_device *pdev)
 		goto err_data_probe;
 	}
 
+#ifdef CONFIG_PF450CL
+	ret = gpio_request(bt_lpm.gpio_reg_on, pdev->name);
+	if (ret < 0) {
+		pr_err("%s: Unable to request gpio %d\n", __func__,
+							bt_lpm.gpio_reg_on);
+		goto err_gpio_enable_req;
+	}
+
+	ret = gpio_direction_output(bt_lpm.gpio_reg_on, 0);
+	if (ret < 0) {
+		pr_err("%s: Unable to set int direction for gpio %d\n",
+					__func__, bt_lpm.gpio_reg_on);
+		goto err_gpio_enable_dir;
+	}
+
+	ret = gpio_request(bt_lpm.gpio_reset, pdev->name);
+	if (ret < 0) {
+		pr_err("%s: Unable to request gpio %d\n", __func__,
+							bt_lpm.gpio_reset);
+		goto err_gpio_enable_req;
+	}
+
+	ret = gpio_direction_output(bt_lpm.gpio_reset, 0);
+	if (ret < 0) {
+		pr_err("%s: Unable to set int direction for gpio %d\n",
+					__func__, bt_lpm.gpio_reset);
+		goto err_gpio_enable_dir;
+	}
+#else
 	ret = gpio_request(bt_lpm.gpio_enable_bt, pdev->name);
 	if (ret < 0) {
 		pr_err("%s: Unable to request gpio %d\n", __func__,
@@ -455,6 +517,7 @@ static int bcm43xx_bluetooth_probe(struct platform_device *pdev)
                                         __func__, bt_lpm.gpio_bt_rst);
                 goto err_gpio_bt_rst;
         }
+#endif
 
 #ifdef LPM_ON
 	ret = gpio_request(bt_lpm.gpio_host_wake, pdev->name);
@@ -485,11 +548,20 @@ static int bcm43xx_bluetooth_probe(struct platform_device *pdev)
 		goto err_gpio_wake_dir;
 	}
 
+#ifdef CONFIG_PF450CL
+	pr_err("%s: gpio_reset=%d, gpio_reg_on=%d, gpio_wake=%d, gpio_host_wake=%d\n",
+							__func__,
+							bt_lpm.gpio_reset,
+							bt_lpm.gpio_reg_on,
+							bt_lpm.gpio_wake,
+							bt_lpm.gpio_host_wake);
+#else
 	pr_debug("%s: gpio_enable=%d, gpio_wake=%d, gpio_host_wake=%d\n",
 							__func__,
 							bt_lpm.gpio_enable_bt,
 							bt_lpm.gpio_wake,
 							bt_lpm.gpio_host_wake);
+#endif
 #endif
 
 	bt_rfkill = rfkill_alloc("bcm43xx Bluetooth", &pdev->dev,
@@ -531,7 +603,12 @@ err_gpio_host_wake_req:
 err_gpio_bt_rst:
     gpio_free(bt_lpm.gpio_bt_rst);
 err_gpio_enable_dir:
+#ifdef CONFIG_PF450CL
+	gpio_free(bt_lpm.gpio_reg_on);
+	gpio_free(bt_lpm.gpio_reset);
+#else
 	gpio_free(bt_lpm.gpio_enable_bt);
+#endif
 err_gpio_enable_req:
 err_data_probe:
 	return ret;
@@ -542,7 +619,12 @@ static int bcm43xx_bluetooth_remove(struct platform_device *pdev)
 	rfkill_unregister(bt_rfkill);
 	rfkill_destroy(bt_rfkill);
 
+#ifdef CONFIG_PF450CL
+	gpio_free(bt_lpm.gpio_reg_on);
+	gpio_free(bt_lpm.gpio_reset);
+#else
 	gpio_free(bt_lpm.gpio_enable_bt);
+#endif
 #ifdef LPM_ON
 	gpio_free(bt_lpm.gpio_wake);
 	gpio_free(bt_lpm.gpio_host_wake);

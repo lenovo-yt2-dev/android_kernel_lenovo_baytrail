@@ -19,7 +19,7 @@
  *
  */
 
-#include "ia_css_acc_types.h"
+#include "ia_css_types.h"
 #define __INLINE_SP__
 #include "sp.h"
 
@@ -30,6 +30,7 @@
 #include "memory_access.h"
 #include "assert_support.h"
 #include "ia_css_spctrl.h"
+#include "ia_css_debug.h"
 
 typedef struct {
 	struct ia_css_sp_init_dmem_cfg dmem_config;
@@ -82,19 +83,42 @@ enum ia_css_err ia_css_spctrl_load_fw(sp_ID_t sp_id,
 		return IA_CSS_ERR_CANNOT_ALLOCATE_MEMORY;
 	mmgr_store(code_addr, spctrl_cfg->code, spctrl_cfg->code_size);
 
-	assert(sizeof(hrt_vaddress) <= sizeof(hrt_data));
+	if (sizeof(hrt_vaddress) > sizeof(hrt_data)) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_ERROR,
+				    "size of hrt_vaddress can not be greater than hrt_data\n");
+		mmgr_free(spctrl_cfg->code_size);
+		spctrl_cfg->code_size = mmgr_NULL;
+		return IA_CSS_ERR_INTERNAL_ERROR;
+	}
 
 	init_dmem_cfg->ddr_data_addr  = code_addr + spctrl_cfg->ddr_data_offset;
-	assert((init_dmem_cfg->ddr_data_addr % HIVE_ISP_DDR_WORD_BYTES) == 0);
+	if ((init_dmem_cfg->ddr_data_addr % HIVE_ISP_DDR_WORD_BYTES) != 0) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_ERROR,
+				    "DDR address pointer is not properly aligned for DMA transfer\n");
+		mmgr_free(spctrl_cfg->code_size);
+		spctrl_cfg->code_size = mmgr_NULL;
+		return IA_CSS_ERR_INTERNAL_ERROR;
+	}
 #endif
 	spctrl_cofig_info[sp_id].sp_entry = spctrl_cfg->sp_entry;
 	spctrl_cofig_info[sp_id].code_addr = code_addr;
 	spctrl_cofig_info[sp_id].program_name = spctrl_cfg->program_name;
 
 #ifdef HRT_CSIM
-	hrt_cell_set_icache_base_address(SP, spctrl_cofig_info[sp_id].code_addr);
-	hrt_cell_invalidate_icache(SP);
-	hrt_cell_load_program(SP, spctrl_cofig_info[sp_id].program_name);
+	/* Secondary SP is named as SP2 in SDK, however we are using secondary
+	   SP as SP1 in the HSS and secondary SP Firmware */
+	if (sp_id == SP0_ID) {
+		hrt_cell_set_icache_base_address(SP, spctrl_cofig_info[sp_id].code_addr);
+		hrt_cell_invalidate_icache(SP);
+		hrt_cell_load_program(SP, spctrl_cofig_info[sp_id].program_name);
+	}
+#if defined(HAS_SEC_SP)
+	else {
+		hrt_cell_set_icache_base_address(SP2, spctrl_cofig_info[sp_id].code_addr);
+		hrt_cell_invalidate_icache(SP2);
+		hrt_cell_load_program(SP2, spctrl_cofig_info[sp_id].program_name);
+	}
+#endif /* HAS_SEC_SP */
 #else
 	/* now we program the base address into the icache and
 	 * invalidate the cache.
@@ -122,10 +146,17 @@ enum ia_css_err ia_css_spctrl_unload_fw(sp_ID_t sp_id)
 enum ia_css_err ia_css_spctrl_start(sp_ID_t sp_id)
 {
 	unsigned int HIVE_ADDR_sp_start_isp_entry;
+#if defined(HAS_SEC_SP)
+	unsigned int HIVE_ADDR_sp1_start_entry;
+#endif /* HAS_SEC_SP */
 	if ((sp_id >= N_SP_ID) || ((sp_id < N_SP_ID) && (!spctrl_loaded[sp_id])))
 		return IA_CSS_ERR_INVALID_ARGUMENTS;
-
+if (sp_id == SP0_ID)
 	HIVE_ADDR_sp_start_isp_entry = spctrl_cofig_info[sp_id].sp_entry;
+#if defined(HAS_SEC_SP)
+else
+	HIVE_ADDR_sp1_start_entry = spctrl_cofig_info[sp_id].sp_entry;
+#endif /* HAS_SEC_SP  */
 
 #if !defined(C_RUN) && !defined(HRT_UNSCHED)
 	sp_dmem_store(sp_id,
@@ -133,12 +164,18 @@ enum ia_css_err ia_css_spctrl_start(sp_ID_t sp_id)
 		&spctrl_cofig_info[sp_id].dmem_config,
 		sizeof(spctrl_cofig_info[sp_id].dmem_config));
 #endif
-	hrt_cell_start_function(SP, sp_start_isp);
+	if (sp_id == SP0_ID)
+		hrt_cell_start_function(SP, sp_start_isp);
+#if defined(HAS_SEC_SP)
+	else
+		/* Secondary SP is named as sp1 in the firmware however in
+		   SDK secondary SP is named as SP2 */
+		hrt_cell_start_function(SP2, sp1_start);
+#endif /* HAS_SEC_SP */
+
 	return IA_CSS_SUCCESS;
 }
-
 #else
-
 /* Initialize dmem_cfg in SP dmem  and  start SP program*/
 enum ia_css_err ia_css_spctrl_start(sp_ID_t sp_id)
 {
@@ -163,21 +200,23 @@ enum ia_css_err ia_css_spctrl_start(sp_ID_t sp_id)
 	sp_ctrl_setbit(sp_id, SP_SC_REG, SP_START_BIT);
 	return IA_CSS_SUCCESS;
 }
-
 #endif
-
-/* Query the state of SP */
+/* Query the state of SP1 */
 ia_css_spctrl_sp_sw_state ia_css_spctrl_get_state(sp_ID_t sp_id)
 {
-	ia_css_spctrl_sp_sw_state state;
+	ia_css_spctrl_sp_sw_state state = 0;
 	unsigned int HIVE_ADDR_sp_sw_state;
-
 	if (sp_id >= N_SP_ID)
 		return IA_CSS_SP_SW_TERMINATED;
 
 	HIVE_ADDR_sp_sw_state = spctrl_cofig_info[sp_id].spctrl_state_dmem_addr;
 	(void)HIVE_ADDR_sp_sw_state; /* Suppres warnings in CRUN */
-	state = sp_dmem_load_uint32(sp_id, (unsigned)sp_address_of(sp_sw_state));
+	if (sp_id == SP0_ID)
+		state = sp_dmem_load_uint32(sp_id, (unsigned)sp_address_of(sp_sw_state));
+#if defined(HAS_SEC_SP)
+	else
+		state = sp_dmem_load_uint32(sp_id, (unsigned)sp1_address_of(sp_sw_state));
+#endif /* HAS_SEC_SP */
 
 	return state;
 }

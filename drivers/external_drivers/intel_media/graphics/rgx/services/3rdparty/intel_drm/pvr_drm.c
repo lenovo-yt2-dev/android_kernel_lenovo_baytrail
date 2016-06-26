@@ -24,6 +24,7 @@
  *
  ******************************************************************************/
 
+#include <linux/version.h>
 #include <drm/drmP.h>
 #include <drm/drm.h>
 
@@ -203,9 +204,7 @@ int PVRSRVDrmOpen(struct drm_device *dev, struct drm_file *file)
 #if defined(SUPPORT_DRM_EXT)
 void PVRSRVDrmPostClose(struct drm_device *dev, struct drm_file *file)
 {
-	PVRSRVRelease(file->driver_priv);
-
-	file->driver_priv = NULL;
+	PVRSRVRelease(&file->driver_priv);
 }
 #else
 int PVRSRVDrmRelease(struct inode *inode, struct file *filp)
@@ -293,7 +292,7 @@ int PVRSRVGetMeminfoPages(void* hMemHandle, int npages, struct page ***pages)
         return -EFAULT;
     }
 
-    kaddr = (uint32_t)minfo.pvCpuVirtAddr;
+    kaddr = (uint32_t)((uint64_t)minfo.pvCpuVirtAddr);
 
     if ((pglist = kzalloc(npages * sizeof(struct page*),GFP_KERNEL)) == NULL)
     {
@@ -341,7 +340,7 @@ int PVRSRVGetMeminfoPfn(void           *hMemHandle,
         return 0;
     }
 
-    kaddr = (uint32_t)minfo.pvCpuVirtAddr;
+    kaddr = (uint32_t)((uint64_t)minfo.pvCpuVirtAddr);
 
     if ((pfnlist = kzalloc(npages * sizeof(unsigned long),
                            GFP_KERNEL)) == NULL)

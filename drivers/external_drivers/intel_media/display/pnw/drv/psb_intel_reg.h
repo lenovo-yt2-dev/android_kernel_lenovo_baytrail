@@ -1188,9 +1188,10 @@ When in Sleep Mode, the value returned by get_scanline is undefined.
 #define write_display_brightness	0x51
 #define write_ctrl_display		0x53
 #define write_ctrl_cabc			0x55
-  #define UI_IMAGE		0x01
-  #define STILL_IMAGE		0x02
-  #define MOVING_IMAGE		0x03
+#define CABC_MODE_OFF			0x00
+#define CABC_MODE_UI_IMAGE		0x01
+#define CABC_MODE_STILL_IMAGE		0x02
+#define CABC_MODE_MOVING_IMAGE		0x03
 #define write_hysteresis		0x57
 #define write_gamma_setting		0x58
 #define write_cabc_min_bright		0x5e

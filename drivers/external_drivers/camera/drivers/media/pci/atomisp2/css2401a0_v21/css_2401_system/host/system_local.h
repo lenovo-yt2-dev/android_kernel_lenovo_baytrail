@@ -42,7 +42,7 @@
 /* This interface is deprecated */
 #include "hrt/hive_types.h"
 #else  /* __KERNEL__ */
-#include <stdint.h>
+#include <type_support.h>
 
 #if HRT_ADDRESS_WIDTH == 64
 typedef uint64_t			hrt_address;
@@ -72,18 +72,18 @@ static const hrt_address ISP_CTRL_BASE[N_ISP_ID] = {
 	0x0000000000020000ULL};
 
 static const hrt_address ISP_DMEM_BASE[N_ISP_ID] = {
-	0xffffffffffffffffULL};
+	0x0000000000200000ULL};
 
 static const hrt_address ISP_BAMEM_BASE[N_BAMEM_ID] = {
-	0xffffffffffffffffULL};
+	0x0000000000100000ULL};
 
 static const hrt_address ISP_VAMEM_BASE[N_VAMEM_ID] = {
-	0xffffffffffffffffULL,
-	0xffffffffffffffffULL,
-	0xffffffffffffffffULL};
+	0x00000000001C0000ULL,
+	0x00000000001D0000ULL,
+	0x00000000001E0000ULL};
 
 static const hrt_address ISP_HMEM_BASE[N_HMEM_ID] = {
-	0xffffffffffffffffULL};
+	0x00000000001F0000ULL};
 
 /* SP */
 static const hrt_address SP_CTRL_BASE[N_SP_ID] = {
@@ -108,6 +108,9 @@ static const hrt_address MMU_BASE[N_MMU_ID] = {
 /* DMA */
 static const hrt_address DMA_BASE[N_DMA_ID] = {
 	0x0000000000040000ULL};
+
+static const hrt_address ISYS2401_DMA_BASE[N_ISYS2401_DMA_ID] = {
+	0x00000000000CA000ULL};
 
 /* IRQ */
 static const hrt_address IRQ_BASE[N_IRQ_ID] = {
@@ -139,6 +142,12 @@ static const hrt_address GP_DEVICE_BASE[N_GP_DEVICE_ID] = {
 /* GP_DEVICE (single base for all separate GP_REG instances) */
 static const hrt_address GP_DEVICE_BASE[N_GP_DEVICE_ID] = {
 	0x0000000000000000ULL};
+
+/*GP TIMER , all timer registers are inter-twined,
+ * so, having multiple base addresses for
+ * different timers does not help*/
+static const hrt_address GP_TIMER_BASE =
+	(hrt_address)0x0000000000000600ULL;
 
 /* GPIO */
 static const hrt_address GPIO_BASE[N_GPIO_ID] = {
@@ -253,6 +262,9 @@ static const hrt_address MMU_BASE[N_MMU_ID] = {
 static const hrt_address DMA_BASE[N_DMA_ID] = {
 	0x00040000UL};
 
+static const hrt_address ISYS2401_DMA_BASE[N_ISYS2401_DMA_ID] = {
+	0x000CA000UL};
+
 /* IRQ */
 static const hrt_address IRQ_BASE[N_IRQ_ID] = {
 	0x00000500UL,
@@ -284,6 +296,11 @@ static const hrt_address GP_DEVICE_BASE[N_GP_DEVICE_ID] = {
 static const hrt_address GP_DEVICE_BASE[N_GP_DEVICE_ID] = {
 	0x00000000UL};
 
+/*GP TIMER , all timer registers are inter-twined,
+ * so, having multiple base addresses for
+ * different timers does not help*/
+static const hrt_address GP_TIMER_BASE =
+	(hrt_address)0x00000600UL;
 /* GPIO */
 static const hrt_address GPIO_BASE[N_GPIO_ID] = {
 	0x00000400UL};

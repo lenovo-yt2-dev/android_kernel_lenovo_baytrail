@@ -26,7 +26,15 @@
 #include "ia_css_uds.host.h"
 
 void
-ia_css_uds_encode(struct sh_css_sp_uds_params *to);
+ia_css_uds_encode(
+	struct sh_css_sp_uds_params *to,
+	const struct ia_css_uds_config *from,
+	unsigned size)
+{
+	(void)size;
+	to->crop_pos = from->crop_pos;
+	to->uds      = from->uds;
+}
 
 void
 ia_css_uds_dump(

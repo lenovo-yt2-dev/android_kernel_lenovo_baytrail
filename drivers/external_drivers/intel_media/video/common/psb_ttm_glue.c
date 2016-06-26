@@ -227,7 +227,7 @@ int psb_getpageaddrs_ioctl(struct drm_device *dev, void *data,
 	struct ttm_tt *ttm;
 	struct page **tt_pages;
 	unsigned long i, num_pages;
-	unsigned long *p = arg->page_addrs;
+	unsigned long *p;
 
 	bo = ttm_buffer_object_lookup(psb_fpriv(file_priv)->tfile,
 				      arg->handle);
@@ -239,13 +239,23 @@ int psb_getpageaddrs_ioctl(struct drm_device *dev, void *data,
 	arg->gtt_offset = bo->offset;
 	ttm = bo->ttm;
 	num_pages = ttm->num_pages;
+	p = kzalloc(num_pages * sizeof(unsigned long), GFP_KERNEL);
+	if (unlikely(p == NULL))
+		return -ENOMEM;
+
 	tt_pages = ttm->pages;
 
 	for (i = 0; i < num_pages; i++)
 		p[i] = (unsigned long)page_to_phys(tt_pages[i]);
 
-	ttm_bo_unref(&bo);
+	if (copy_to_user((void __user *)((unsigned long)arg->page_addrs),
+		     p, sizeof(unsigned long) * num_pages)) {
+		printk(KERN_ERR "copy to user failed.\n");
+		return -EFAULT;
+	}
 
+	ttm_bo_unref(&bo);
+	kfree(p);
 	return 0;
 }
 
@@ -254,10 +264,10 @@ void psb_remove_videoctx(struct drm_psb_private *dev_priv, struct file *filp)
 	struct psb_video_ctx *pos, *n;
 	struct psb_video_ctx *found_ctx = NULL;
 	struct msvdx_private *msvdx_priv = dev_priv->msvdx_private;
-	/* iterate to query all ctx to if there is DRM running*/
-	ied_enabled = 0;
 	int ctx_type;
 	unsigned long irq_flags;
+	/* iterate to query all ctx to if there is DRM running*/
+	ied_enabled = 0;
 
 	spin_lock_irqsave(&dev_priv->video_ctx_lock, irq_flags);
 	list_for_each_entry_safe(pos, n, &dev_priv->video_ctx, head) {
@@ -272,8 +282,8 @@ void psb_remove_videoctx(struct drm_psb_private *dev_priv, struct file *filp)
 	spin_unlock_irqrestore(&dev_priv->video_ctx_lock, irq_flags);
 
 	if (found_ctx) {
-		PSB_DEBUG_PM("Video:remove context profile %d,"
-				  " entrypoint %d\n",
+		PSB_DEBUG_PM("Video:remove context profile %lld,"
+				  " entrypoint %lld\n",
 				  (found_ctx->ctx_type >> 8) & 0xff,
 				  (found_ctx->ctx_type & 0xff));
 #ifndef CONFIG_DRM_VXD_BYT
@@ -300,12 +310,16 @@ void psb_remove_videoctx(struct drm_psb_private *dev_priv, struct file *filp)
 			if (dev_priv->last_topaz_ctx == found_ctx)
 				dev_priv->last_topaz_ctx = NULL;
 #ifdef SUPPORT_VSP
-		} else if (VAEntrypointVideoProc ==
+		} else if (
+			(VAEntrypointVideoProc ==
 					(found_ctx->ctx_type & 0xff)
-				|| (VAEntrypointEncSlice ==
+				&& 0xff ==
+					((found_ctx->ctx_type >> 8) & 0xff))
+			|| (VAEntrypointEncSlice ==
 					(found_ctx->ctx_type & 0xff)
 				&& VAProfileVP8Version0_3 ==
-					((found_ctx->ctx_type >> 8) & 0xff))) {
+					((found_ctx->ctx_type >> 8) & 0xff))
+			) {
 			ctx_type = found_ctx->ctx_type & 0xff;
 			PSB_DEBUG_PM("Remove vsp context.\n");
 			vsp_rm_context(dev_priv->dev, filp, ctx_type);
@@ -384,8 +398,9 @@ int psb_video_getparam(struct drm_device *dev, void *data,
 	uint64_t ctx_type = 0;
 	struct psb_video_ctx *video_ctx = NULL;
 	struct msvdx_private *msvdx_priv = dev_priv->msvdx_private;
-	uint32_t imr_info[2], ci_info[2];
-	uint32_t ctx_num = 0;
+#if (!defined(MERRIFIELD) && !defined(CONFIG_DRM_VXD_BYT))
+	uint32_t imr_info[2];
+#endif
 	unsigned long irq_flags;
 	struct file *filp = file_priv->filp;
 #ifdef CONFIG_VIDEO_MRFLD
@@ -429,6 +444,7 @@ int psb_video_getparam(struct drm_device *dev, void *data,
 		}
 		INIT_LIST_HEAD(&video_ctx->head);
 		video_ctx->ctx_type = ctx_type;
+		video_ctx->cur_sequence = 0xffffffff;
 #ifdef CONFIG_SLICE_HEADER_PARSING
 		video_ctx->frame_end_seq = 0xffffffff;
 		if (ctx_type & VA_RT_FORMAT_PROTECTED) {
@@ -451,23 +467,22 @@ int psb_video_getparam(struct drm_device *dev, void *data,
 #endif
 
 #ifdef SUPPORT_VSP
-		if (VAEntrypointVideoProc == (ctx_type & 0xff)
+		if ((VAEntrypointVideoProc == (ctx_type & 0xff)
+				&& 0xff == ((ctx_type >> 8) & 0xff))
 			|| (VAEntrypointEncSlice == (ctx_type & 0xff)
 				&& VAProfileVP8Version0_3 ==
 					((ctx_type >> 8) & 0xff))) {
-			ctx_num = vsp_new_context(dev, filp, ctx_type & 0xff);
-
-			ret = copy_to_user((void __user *)((unsigned long)arg->value),
-				&ctx_num, sizeof(ctx_num));
+			ret = vsp_new_context(dev, filp, ctx_type & 0xff);
 			if (ret)
 				break;
+
 		}
 #endif
 #endif
-		PSB_DEBUG_INIT("Video:add ctx profile %d, entry %d.\n",
+		PSB_DEBUG_INIT("Video:add ctx profile %lld, entry %lld.\n",
 					((ctx_type >> 8) & 0xff),
 					(ctx_type & 0xff));
-		PSB_DEBUG_INIT("Video:add context protected 0x%x.\n",
+		PSB_DEBUG_INIT("Video:add context protected 0x%llx.\n",
 					(ctx_type & VA_RT_FORMAT_PROTECTED));
 		if (ctx_type & VA_RT_FORMAT_PROTECTED)
 			ied_enabled = 1;
@@ -484,15 +499,26 @@ int psb_video_getparam(struct drm_device *dev, void *data,
 		video_ctx = psb_find_videoctx(dev_priv, file_priv->filp);
 		if (video_ctx) {
 			PSB_DEBUG_GENERAL(
-				"Video: update video ctx old value 0x%08x\n",
+				"Video: update video ctx old value 0x%08llx\n",
 				video_ctx->ctx_type);
+			if (video_ctx->ctx_type != ctx_type) {
+#ifdef CONFIG_SLICE_HEADER_PARSING
+				if ((ctx_type & VA_RT_FORMAT_PROTECTED) &&
+					!(video_ctx->ctx_type & VA_RT_FORMAT_PROTECTED)) {
+					video_ctx->slice_extract_flag = 1;
+					video_ctx->frame_boundary = 1;
+					video_ctx->frame_end_seq = 0xffffffff;
+					ied_enabled = 1;
+				}
+#endif
+			}
 			video_ctx->ctx_type = ctx_type;
 			PSB_DEBUG_GENERAL(
-				"Video: update video ctx new value 0x%08x\n",
+				"Video: update video ctx new value 0x%08llx\n",
 				video_ctx->ctx_type);
 		} else
 			PSB_DEBUG_GENERAL(
-				"Video:fail to find context profile %d, entrypoint %d",
+				"Video:fail to find context profile %lld, entrypoint %lld",
 				(ctx_type >> 8), (ctx_type & 0xff));
 		break;
 	case IMG_VIDEO_DECODE_STATUS:
@@ -647,7 +673,7 @@ int psb_video_getparam(struct drm_device *dev, void *data,
 	}
 
 	if (ret) {
-		DRM_ERROR("%s: failed to call sub-ioctl 0x%x",
+		DRM_ERROR("%s: failed to call sub-ioctl 0x%llx",
 			__func__, arg->key);
 		return -EFAULT;
 	}

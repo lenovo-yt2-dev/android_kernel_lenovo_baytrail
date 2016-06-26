@@ -518,10 +518,6 @@ typedef enum {
 #define MSVDX_RENDEC_CONTEXT5_OFFSET			(0x0964)
 /*************************** RENDEC registers end ****************************/
 
-/******************** CMD Register: 0x1000 - 0x1FFF (4kB) ********************/
-#define MSVDX_CMDS_END_SLICE_PICTURE_OFFSET		(0x1404)
-/****************************** CMD Register end *****************************/
-
 /******************** VEC Local RAM: 0x2000 - 0x2FFF (4kB) *******************/
 /* vec local MEM save/restore */
 #define VEC_LOCAL_MEM_BYTE_SIZE (4 * 1024)

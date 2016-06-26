@@ -25,7 +25,7 @@
 #include <sp.h>
 #include <isp.h>
 
-#include "ia_css.h"	/* enum ia_css_stream_format */
+#include "ia_css_stream_format.h"
 
 /* SP access */
 void ia_css_inputfifo_send_input_frame(

@@ -20,10 +20,10 @@
  */
 
 #include "ia_css_device_access.h"
-#include <type_support.h>
-#include <assert_support.h>
-#include <device_access.h>
-#include <ia_css_env.h>
+#include <type_support.h>   /* for uint*, size_t */
+#include <system_types.h>   /* for hrt_address */
+#include <ia_css_env.h>     /* for ia_css_hw_access_env */
+#include <assert_support.h> /* for assert */
 
 static struct ia_css_hw_access_env my_env;
 
@@ -92,11 +92,11 @@ ia_css_device_store_uint64(const hrt_address addr, const uint64_t data)
 void
 ia_css_device_load(const hrt_address addr, void *data, const size_t size)
 {
-	my_env.load(addr, data, size);
+	my_env.load(addr, data, (uint32_t)size);
 }
 
 void
 ia_css_device_store(const hrt_address addr, const void *data, const size_t size)
 {
-	my_env.store(addr, data, size);
+	my_env.store(addr, data, (uint32_t)size);
 }

@@ -1,7 +1,7 @@
 /*
  * Support for camera module fps thermal throttling.
  *
- * Copyright (c) 2010 Intel Corporation. All Rights Reserved.
+ * Copyright (c) 2014 Intel Corporation. All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License version
@@ -11,11 +11,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
  *
  */
 
@@ -30,13 +25,13 @@
 #define STATE_NUM 4
 #define HANDSHAKE_TIMEOUT 500
 
-wait_queue_head_t wait;
+static wait_queue_head_t wait;
 static unsigned int cur_state = 0;
 static int state_list[STATE_NUM] = {100, 75, 50, 25};
 static struct kobject *adapter_kobj;
 struct thermal_cooling_device *tcd_fps;
 
-struct adapter_attr {
+static struct adapter_attr {
 	struct attribute attr;
 	int value;
 };
@@ -48,24 +43,25 @@ enum fps_throttling_state {
 };
 
 static struct adapter_attr notify = {
-	.attr.name="notify",
+	.attr.name = "notify",
 	.attr.mode = 0664,
 	.value = 100,
 };
 
 static struct adapter_attr handshake = {
-	.attr.name="handshake",
+	.attr.name = "handshake",
 	.attr.mode = 0664,
 	.value = FPS_THROTTLE_DISABLE,
 };
 
-static struct attribute * throttle_attr[] = {
+static struct attribute *throttle_attr[] = {
 	&notify.attr,
 	&handshake.attr,
 	NULL
 };
 
-static void set_fps_scaling(int fs) {
+static void set_fps_scaling(int fs)
+{
 	notify.value = fs;
 	handshake.value = FPS_THROTTLE_ENABLE;
 	sysfs_notify(adapter_kobj, NULL, "notify");
@@ -77,7 +73,8 @@ static ssize_t show(struct kobject *kobj, struct attribute *attr, char *buf)
 	return scnprintf(buf, PAGE_SIZE, "%d\n", a->value);
 }
 
-static ssize_t store(struct kobject *kobj, struct attribute *attr, const char *buf, size_t len)
+static ssize_t store(struct kobject *kobj, struct attribute *attr,
+				const char *buf, size_t len)
 {
 	struct adapter_attr *a = container_of(attr, struct adapter_attr, attr);
 	sscanf(buf, "%d", &a->value);
@@ -102,22 +99,22 @@ static struct kobj_type throttle_type = {
 	.default_attrs = throttle_attr,
 };
 
-static int thermal_get_max_state(struct thermal_cooling_device *tcd, unsigned
-		long *pms)
+static int thermal_get_max_state(struct thermal_cooling_device *tcd,
+				unsigned long *pms)
 {
 	*pms = STATE_NUM;
 	return 0;
 }
 
-static int thermal_get_cur_state(struct thermal_cooling_device *tcd, unsigned
-		long *pcs)
+static int thermal_get_cur_state(struct thermal_cooling_device *tcd,
+				unsigned long *pcs)
 {
 	int i;
 	if (handshake.value == FPS_THROTTLE_DISABLE)
 		return -EPERM;
 
-	for (i=0; i < 4; i++) {
-		if (notify.value == state_list[i]){
+	for (i = 0; i < 4; i++) {
+		if (notify.value == state_list[i]) {
 			*pcs = i;
 			break;
 		}
@@ -126,8 +123,8 @@ static int thermal_get_cur_state(struct thermal_cooling_device *tcd, unsigned
 	return 0;
 }
 
-static int thermal_set_cur_state(struct thermal_cooling_device *tcd, unsigned
-		long pcs)
+static int thermal_set_cur_state(struct thermal_cooling_device *tcd,
+				unsigned long pcs)
 {
 	int ret;
 
@@ -140,15 +137,17 @@ static int thermal_set_cur_state(struct thermal_cooling_device *tcd, unsigned
 	}
 
 	set_fps_scaling(state_list[(int)pcs]);
-	//Wait the fps seting by HAL.
+	/* Wait the fps seting by HAL. */
 	ret = wait_event_interruptible_timeout(wait,
-					(handshake.value == FPS_THROTTLE_SUCCESS), HANDSHAKE_TIMEOUT);
+				(handshake.value == FPS_THROTTLE_SUCCESS),
+				HANDSHAKE_TIMEOUT);
 	if (ret > 0) {
 		cur_state = (int)pcs;
 		handshake.value = FPS_THROTTLE_ENABLE;
 	} else {
-		//fps change request is not replied by camera HAL, remain the value as
-		//the previous one.
+		/* fps change request is not replied by camera HAL, remain the value as
+		 * the previous one.
+		 */
 		notify.value = state_list[cur_state];
 	}
 
@@ -156,7 +155,7 @@ static int thermal_set_cur_state(struct thermal_cooling_device *tcd, unsigned
 }
 
 static int thermal_set_force_state_override(struct thermal_cooling_device *tcd,
-		char *fps_state)
+				char *fps_state)
 {
 	sscanf(fps_state, "%d %d %d %d\n", &state_list[0],
 			 &state_list[1],
@@ -166,14 +165,14 @@ static int thermal_set_force_state_override(struct thermal_cooling_device *tcd,
 }
 
 static int thermal_get_force_state_override(struct thermal_cooling_device *tcd,
-		char *fps_state)
+				char *fps_state)
 {
 	return sprintf(fps_state, "%d %d %d %d\n", state_list[0], state_list[1],
 			state_list[2], state_list[3]);
 }
 
 static int thermal_get_available_states(struct thermal_cooling_device *tcd,
-		char *fps_state)
+				char *fps_state)
 {
 	return sprintf(fps_state, "%d %d %d %d\n", state_list[0], state_list[1],
 			state_list[2], state_list[3]);
@@ -207,8 +206,8 @@ static int thermal_adapter_init(void)
 		goto thermal_failed;
 	}
 
-	init_waitqueue_head (&wait);
-	return err;
+	init_waitqueue_head(&wait);
+	return 0;
 
 thermal_failed:
 	kobject_del(adapter_kobj);

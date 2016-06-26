@@ -549,6 +549,19 @@ IMG_VOID DCUnregisterDevice(IMG_HANDLE hSrvHandle);
 IMG_VOID DCDisplayConfigurationRetired(IMG_HANDLE hConfigData);
 
 /*************************************************************************/ /*!
+@Function       DCDisplayHasPendingCommand
+
+@Description    Called by DC to check if there is still some pending command
+                in scp queue.
+
+@Input          hConfigData             ConfigData that is being retired
+
+@Return         IMG_TRUE there is at least one pending command
+*/
+/*****************************************************************************/
+IMG_BOOL DCDisplayHasPendingCommand(IMG_HANDLE hConfigData);
+
+/*************************************************************************/ /*!
 @Function       DCImportBufferAcquire
 
 @Description    Acquire information about a buffer that was imported with

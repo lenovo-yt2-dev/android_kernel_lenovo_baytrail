@@ -23,7 +23,6 @@
 
 #include "reboot_target.h"
 #include "intel_mid_osnib_ilb.h"
-#include "intel_mid_osip.h"
 
 #define VALLEYVIEW2_FAMILY	0x30670
 #define CPUID_MASK		0xffff0
@@ -313,17 +312,6 @@ int intel_mid_ilb_write_osnib_rr(const char *target, int id)
 		id);
 	intel_mid_ilb_write_osnib_checksum(&osnib_buffer);
 
-	switch (id) {
-	case RECOVERY:
-		osip_invalidate_main();
-		break;
-	case MAIN:
-		osip_restore_main();
-		break;
-	default:
-		/* Nothing to do */
-		break;
-	}
 	return 0;
 }
 
@@ -367,6 +355,11 @@ static int __init intel_mid_ilb_osnib_init(void)
 {
 	int retval;
 
+	if (efi_enabled(EFI_RUNTIME_SERVICES)) {
+		pr_err("OSNIB mechanism is not available on this platform\n");
+		return -1;
+	}
+
 	/*
 	 * FIXME: shouldn't be cpu based, ilb flag needed
 	 */
@@ -379,8 +372,7 @@ static int __init intel_mid_ilb_osnib_init(void)
 		return 0;
 	}
 
-	if (!efi_enabled(EFI_RUNTIME_SERVICES) &&
-	    reboot_target_register(&target_mode_osnib))
+	if (reboot_target_register(&target_mode_osnib))
 		pr_err("%s: can't register target mode accessor\n",
 		       __func__);
 
@@ -410,8 +402,12 @@ static int __init intel_mid_ilb_osnib_init(void)
 	pr_info("%s: boot_mode = '%s'\n", __func__,
 		intel_mid_ilb_get_bootflow_value(osnib_buffer.bootflow.type));
 
-	pr_info("%s: wake_src  =  '%s'\n", __func__,
-		wake_srcs[osnib_buffer.fw_to_os.wake_src].name);
+	if (osnib_buffer.fw_to_os.wake_src < ARRAY_SIZE(wake_srcs))
+		pr_info("%s: wake_src  =  '%s'\n", __func__,
+				wake_srcs[osnib_buffer.fw_to_os.wake_src].name);
+	else
+		pr_info("%s: wake_src  =  'unlisted reason 0x%x'\n", __func__,
+				osnib_buffer.fw_to_os.wake_src);
 
 	osnib_kobj = kobject_create_and_add("osnib", firmware_kobj);
 	if (!osnib_kobj)
@@ -438,8 +434,7 @@ static void __exit intel_mid_ilb_osnib_exit(void)
 		return;
 	}
 
-	if (!efi_enabled(EFI_RUNTIME_SERVICES))
-		reboot_target_unregister(&target_mode_osnib);
+	reboot_target_unregister(&target_mode_osnib);
 
 	kobject_put(osnib_kobj);
 	platform_driver_unregister(&ilb_osnib_driver);

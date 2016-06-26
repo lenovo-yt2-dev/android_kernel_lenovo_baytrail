@@ -41,6 +41,7 @@
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
 #include <linux/timer.h>
+#include <linux/power_supply.h>
 #include <asm/intel_scu_ipc.h>
 #include <asm/intel_scu_pmic.h>
 #include <linux/spinlock.h>
@@ -60,9 +61,9 @@
  #define BCUIRQ		0x00A
  #define MBCUIRQ	0x019
 
- #define VWARNA_THRES	0x04 /*2.9v*/
- #define VWARNB_THRES	0x04 /*2.9v*/
- #define VWARNCRIT_THRES	0x01 /*3.2v*/
+ #define VWARNA_THRES		0x02	/* 3.1V */
+ #define VWARNB_THRES		0x03	/* 3.0V */
+ #define VWARNCRIT_THRES	0x04	/* 2.9V */
 
 #else
 
@@ -579,6 +580,49 @@ static void unmask_theburst(struct work_struct *work)
 	}
 }
 
+static inline struct power_supply *get_psy_battery(void)
+{
+	struct class_dev_iter iter;
+	struct device *dev;
+	static struct power_supply *pst;
+
+	class_dev_iter_init(&iter, power_supply_class, NULL, NULL);
+	while ((dev = class_dev_iter_next(&iter))) {
+		pst = (struct power_supply *)dev_get_drvdata(dev);
+		if (pst->type == POWER_SUPPLY_TYPE_BATTERY) {
+			class_dev_iter_exit(&iter);
+			return pst;
+		}
+	}
+	class_dev_iter_exit(&iter);
+
+	return NULL;
+}
+
+/**
+ * Initiate Graceful Shutdown by setting the SOC to 0% via battery driver and
+ * post the power supply changed event to indicate the change in battery level.
+ */
+static inline int bcu_action_voltage_drop(void)
+{
+	struct power_supply *psy;
+	union power_supply_propval val;
+	int ret;
+
+	psy = get_psy_battery();
+	if (!psy)
+		return -EINVAL;
+
+	/* setting battery capacity to 0 */
+	val.intval = 0;
+	ret = psy->set_property(psy, POWER_SUPPLY_PROP_CAPACITY, &val);
+	if (ret < 0)
+		return ret;
+
+	power_supply_changed(psy);
+	return 0;
+}
+
 /**
   * handle_events - handle different type of interrupts related to BCU
   * @flag - is the enumeration value for VWARNA, VWARNB or
@@ -589,7 +633,6 @@ static void handle_events(int flag, void *dev_data)
 {
 	uint8_t irq_data, sticky_data;
 	struct vdd_info *vinfo = (struct vdd_info *)dev_data;
-	char *bcu_envp[2] = {NULL};
 	int ret;
 
 	ret = intel_scu_ipc_ioread8(SBCUIRQ, &irq_data);
@@ -601,8 +644,6 @@ static void handle_events(int flag, void *dev_data)
 		pr_info_ratelimited("%s: VCRIT_EVENT occurred\n",
 					DRIVER_NAME);
 		if (!pdata->is_clvp) {
-			bcu_envp[0] = GET_ENVP(VCRIT);
-
 			/* Masking VCRIT after one event occurs */
 			ret = intel_scu_ipc_update_register(MBCUIRQ,
 					MBCUIRQ_SET, VCRIT_MASK);
@@ -656,8 +697,17 @@ static void handle_events(int flag, void *dev_data)
 	case VWARNB_EVENT:
 		pr_info_ratelimited("%s: VWARNB_EVENT occurred\n",
 					DRIVER_NAME);
+		/**
+		 * Trigger graceful shutdown via battery driver by setting SOC
+		 * to 0%
+		 */
+		dev_info(&vinfo->pdev->dev, "EM_BCU: Trigger Graceful Shutdown\n");
+		ret = bcu_action_voltage_drop();
+		if (ret)
+			dev_err(&vinfo->pdev->dev,
+				"EM_BCU: Triggering Graceful Shutdown Failed.");
+
 		if (!pdata->is_clvp) {
-			bcu_envp[0] = GET_ENVP(VWARN2);
 
 			ret = intel_scu_ipc_update_register(MBCUIRQ,
 					MBCUIRQ_SET, VWARNB_MASK);
@@ -692,8 +742,6 @@ static void handle_events(int flag, void *dev_data)
 		pr_info_ratelimited("%s: VWARNA_EVENT occurred\n",
 					DRIVER_NAME);
 		if (!pdata->is_clvp && bcu_workqueue) {
-			bcu_envp[0] = GET_ENVP(VWARN1);
-
 			ret = intel_scu_ipc_update_register(MBCUIRQ,
 					MBCUIRQ_SET, VWARNA_MASK);
 			if (ret) {
@@ -729,11 +777,6 @@ static void handle_events(int flag, void *dev_data)
 	default:
 		dev_warn(&vinfo->pdev->dev, "Unresolved interrupt occurred\n");
 	}
-
-	/* For baytrail notify event type
-	 * using Uevent to userspace */
-	if (bcu_envp[0] && !pdata->is_clvp)
-		kobject_uevent_env(&vinfo->dev->kobj, KOBJ_CHANGE, bcu_envp);
 
 	return;
 handle_ipc_fail:

@@ -57,7 +57,7 @@ int ia_css_eventq_send(
 {
 	uint8_t tmp[4];
 	uint32_t sw_event;
-	int error;
+	int error = ENOSYS;
 
 	/*
 	 * Encode the queue type, the thread ID and
@@ -70,16 +70,16 @@ int ia_css_eventq_send(
 	ia_css_event_encode(tmp, 4, &sw_event);
 
 	/* queue the software event (busy-waiting) */
-	do {
+	for ( ; ; ) {
 		error = ia_css_queue_enqueue(eventq_handle, sw_event);
-		if (ENOBUFS != error ) {
+		if (ENOBUFS != error) {
 			/* We were able to successfully send the event
 			   or had a real failure. return the status*/
-			return error;
+			break;
 		}
 		/* Wait for the queue to be not full and try again*/
 		hrt_sleep();
-	} while(1);
+	}
 
-	return ENOSYS;
+	return error;
 }

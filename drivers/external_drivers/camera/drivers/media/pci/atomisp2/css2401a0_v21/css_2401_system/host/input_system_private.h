@@ -102,8 +102,11 @@ STORAGE_CLASS_INPUT_SYSTEM_C void input_system_dump_state(
 				&(state->pixelgen_ctrl_state[i]));
 	}
 
-	/* TODO: get the states of all stream2mmio devices */
+	/* dump the states of all st2mmio devices */
 	for (i = 0; i < N_STREAM2MMIO_ID; i++) {
+		stream2mmio_dump_state(
+				(stream2mmio_ID_t)i,
+				&(state->stream2mmio_state[i]));
 	}
 
 	/* dump the states of all ibuf-controller devices */

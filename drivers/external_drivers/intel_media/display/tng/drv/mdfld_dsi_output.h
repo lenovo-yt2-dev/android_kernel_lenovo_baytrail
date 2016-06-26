@@ -245,6 +245,9 @@ struct mdfld_dsi_hw_context {
 	u32 ddl3;
 	u32 ddl4;
 
+	u32 dsparb;
+	u32 dsparb2;
+
 	/*overlay*/
 	u32 ovaadd;
 	u32 ovcadd;
@@ -252,6 +255,9 @@ struct mdfld_dsi_hw_context {
 	/* gamma and csc */
 	u32 palette[256];
 	u32 color_coef[6];
+	u32 gamma_red_max;
+	u32 gamma_green_max;
+	u32 gamma_blue_max;
 
 	/*pipe regs*/
 	u32 htotal;
@@ -450,6 +456,7 @@ struct mdfld_dsi_config {
 	struct mutex context_lock;
 	struct mdfld_dsi_hw_context dsi_hw_context;
 
+	u8 cabc_mode;
 	int pipe;
 	int changed;
 
@@ -476,6 +483,10 @@ struct mdfld_dsi_config {
 
 #define MDFLD_DSI_ENCODER(encoder) \
 	(container_of(encoder, struct mdfld_dsi_encoder, base))
+
+#define MDFLD_DSI_ENCODER_WITH_DRM_ENABLE(encoder) \
+		(container_of((struct drm_encoder *) encoder, \
+		struct mdfld_dsi_encoder, base))
 
 static inline struct mdfld_dsi_config *
 mdfld_dsi_get_config(struct mdfld_dsi_connector *connector)
@@ -571,6 +582,18 @@ extern int mdfld_dsi_get_power_mode(struct mdfld_dsi_config *dsi_config,
 		u8 transmission);
 
 extern mdfld_dsi_encoder_t is_panel_vid_or_cmd(struct drm_device *dev);
+extern mdfld_dsi_encoder_t get_mipi_panel_type(struct drm_device *dev);
+extern const char *panel_mode_string(struct drm_device *dev);
+
 extern void mdfld_dsi_set_drain_latency(struct drm_encoder *encoder,
 		struct drm_display_mode *mode);
+
+extern int mdfld_dsi_set_cabc_mode(struct drm_device *dev,
+	struct mdfld_dsi_config *dsi_config, u8 cabc_mode);
+extern int mdfld_dsi_get_cabc_mode(struct drm_device *dev,
+	struct mdfld_dsi_config *dsi_config);
+
+extern int display_cmn_set_cabc_mode(struct mdfld_dsi_config *dsi_config, u8 cabc_mode);
+extern int display_cmn_get_cabc_mode(struct mdfld_dsi_config *dsi_config);
+
 #endif /*__MDFLD_DSI_OUTPUT_H__*/

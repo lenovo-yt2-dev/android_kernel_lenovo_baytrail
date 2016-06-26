@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_INPUT_PORT_H
 #define __IA_CSS_INPUT_PORT_H
 
+/** @file
+ * This file contains information about the possible input ports for CSS
+ */
+
 /** Enumeration of the physical input ports on the CSS hardware.
  *  There are 3 MIPI CSI-2 ports.
  */

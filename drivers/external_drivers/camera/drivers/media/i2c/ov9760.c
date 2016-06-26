@@ -512,11 +512,12 @@ static int ov9760_s_power(struct v4l2_subdev *sd, int on)
    for filling in EXIF data, not for actual image processing. */
 static int ov9760_q_exposure(struct v4l2_subdev *sd, s32 *value)
 {
+#if 0
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	u16 tmp;
 	u16 coarse;
 	int ret;
-
+	//dump_stack();
 	/* the fine integration time is currently not calculated */
 	ret = ov9760_read_reg(client, OV9760_8BIT,
 			       OV9760_COARSE_INTEGRATION_TIME_H, &tmp);
@@ -527,7 +528,12 @@ static int ov9760_q_exposure(struct v4l2_subdev *sd, s32 *value)
 	
 	coarse = (coarse >> 4) | ((tmp & 0xf) << 12);
 	*value = coarse;
-
+#else
+	int ret = 0;
+	struct ov9760_device *dev = to_ov9760_sensor(sd);
+	*value = dev->odm_exposure_value;
+	printk("%s: line: %d  *value: %d\n", __func__, __LINE__,*value);
+#endif
 	return ret;
 }
 
@@ -1124,7 +1130,7 @@ static long __ov9760_set_exposure(struct v4l2_subdev *sd, u16 coarse_itg,
 		goto out_disable;
 	
 	/* set global gain */
-	gain = clamp(gain, 0, OV9760_MAX_GAIN_VALUE);
+	gain = clamp(gain, (u16)0, (u16)OV9760_MAX_GAIN_VALUE);
 	ret = ov9760_write_reg(client, OV9760_16BIT,
 			OV9760_GLOBAL_GAIN, (gain & 0x7ff));
 	if (ret)
@@ -1162,6 +1168,7 @@ static int ov9760_set_exposure(struct v4l2_subdev *sd, u16 exposure, u16 gain)
 
 	mutex_lock(&dev->input_lock);
 	ret = __ov9760_set_exposure(sd, exposure, gain);
+	dev->odm_exposure_value = exposure;
 	mutex_unlock(&dev->input_lock);
 
 	return ret;
@@ -1308,7 +1315,7 @@ ov9760_s_config(struct v4l2_subdev *sd, int irq, void *platform_data)
 			}
 		}
 	} else {
-		printk("ov9760 load from user-space success size:0x%x\n", fw->size);
+		printk("ov9760 load from user-space success size:0x%x\n", (unsigned int)fw->size);
 		memcpy(ov9760_data, fw->data, fw->size);
 		ov9760_size = fw->size;
 		ret = ov9760_otp_trans(ov9760_data, ov9760_size, otp_data, &otp_size);

@@ -67,6 +67,9 @@ struct panel_info {
 	u32 width_mm;
 	u32 height_mm;
 
+	bool panel_180_rotation;
+	bool legacy_csc_enable;
+	bool legacy_gamma_enable;
 	/*other infos*/
 };
 
@@ -99,6 +102,12 @@ struct panel_funcs {
 	int (*set_brightness)(struct mdfld_dsi_config *dsi_config, int level);
 	int (*drv_ic_init)(struct mdfld_dsi_config *dsi_config);
 	int (*drv_set_panel_mode)(struct mdfld_dsi_config *dsi_config);
+	int (*drv_set_cabc_mode)(struct mdfld_dsi_config *dsi_config,
+		u8 cabc_mode);
+	int (*drv_get_cabc_mode)(struct mdfld_dsi_config *dsi_config);
+	void (*set_legacy_coefficient)(struct mdfld_dsi_config *dsi_config);
+	void (*set_legacy_gamma_table)(struct mdfld_dsi_config *dsi_config);
+
 };
 
 struct intel_mid_panel_list {
@@ -110,5 +119,6 @@ struct intel_mid_panel_list {
 extern void mdfld_output_init(struct drm_device *dev);
 extern enum panel_type get_panel_type(struct drm_device *dev, int pipe);
 extern bool is_dual_dsi(struct drm_device *dev);
+extern bool is_dual_panel(struct drm_device *dev);
 
 #endif

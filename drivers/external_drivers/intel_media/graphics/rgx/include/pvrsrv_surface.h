@@ -49,12 +49,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "img_types.h"
 #include "fbc_types.h"
 
-#define PVRSRV_SURFACE_TRANSFORM_NONE	   0
-#define PVRSRV_SURFACE_TRANSFORM_FLIP_H    (1 << 1)
-#define PVRSRV_SURFACE_TRANSFORM_FLIP_V    (1 << 2)
-#define PVRSRV_SURFACE_TRANSFORM_ROT_90    (1 << 3)
-#define PVRSRV_SURFACE_TRANSFORM_ROT_180   ((1 << 1) + (1 << 2))
-#define PVRSRV_SURFACE_TRANSFORM_ROT_270   ((1 << 1) + (1 << 2) + (1 << 3))
+#define PVRSRV_SURFACE_TRANSFORM_NONE	   (0 << 0)
+#define PVRSRV_SURFACE_TRANSFORM_FLIP_H    (1 << 0)
+#define PVRSRV_SURFACE_TRANSFORM_FLIP_V    (1 << 1)
+#define PVRSRV_SURFACE_TRANSFORM_ROT_90    (1 << 2)
+#define PVRSRV_SURFACE_TRANSFORM_ROT_180   ((1 << 0) + (1 << 1))
+#define PVRSRV_SURFACE_TRANSFORM_ROT_270   ((1 << 0) + (1 << 1) + (1 << 2))
 
 #define PVRSRV_SURFACE_BLENDING_NONE	   0
 #define PVRSRV_SURFACE_BLENDING_PREMULT	   1
@@ -113,12 +113,12 @@ typedef struct _PVRSRV_SURFACE_CONFIG_INFO_
 	IMG_UINT32				eBlendType;
 
 	/*!< Custom data for the display engine */
-	IMG_UINT32				ui32Custom;
+	IMG_UINT64				ui64Custom;
 
 	/*!< Plane alpha */
 	IMG_UINT8				ui8PlaneAlpha;
 	IMG_UINT8				ui8Reserved1[3];
-} PVRSRV_SURFACE_CONFIG_INFO;
+} __attribute__((packed)) PVRSRV_SURFACE_CONFIG_INFO;
 
 typedef struct _PVRSRV_PANEL_INFO_
 {
@@ -143,7 +143,7 @@ static INLINE IMG_VOID SurfaceConfigFromSurfInfo(PVRSRV_SURFACE_INFO *psSurfaceI
 	psConfigInfo->sDisplay.i32YOffset = 0;
 	psConfigInfo->ui32Transform = PVRSRV_SURFACE_TRANSFORM_NONE;
 	psConfigInfo->eBlendType = PVRSRV_SURFACE_BLENDING_NONE;
-	psConfigInfo->ui32Custom = 0;
+	psConfigInfo->ui64Custom = 0;
 	psConfigInfo->ui8PlaneAlpha = 0xff;
 }
 

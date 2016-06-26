@@ -33,6 +33,8 @@
 #include "psb_irq.h"
 #include "dispmgrnl.h"
 #include "mrfld_clock.h"
+#include "android_hdmi.h"
+#include "otm_hdmi.h"
 
 #define KEEP_UNUSED_CODE 0
 
@@ -83,31 +85,21 @@ int mdfld_dsi_dpi_timing_calculation(struct drm_device *dev,
 	 * byte clock counts were calculated by following formula
 	 * bclock_count = pclk_count * bpp / num_lane / 8
 	 */
-	if (is_dual_dsi(dev)) {
-		dpi_timing->hsync_count = pclk_hsync;
-		dpi_timing->hbp_count = pclk_hbp;
-		dpi_timing->hfp_count = pclk_hfp;
-		dpi_timing->hactive_count = pclk_hactive;
-		dpi_timing->vsync_count = pclk_vsync;
-		dpi_timing->vbp_count = pclk_vbp;
-		dpi_timing->vfp_count = pclk_vfp;
-	} else {
-		dpi_timing->hsync_count =
-			mdfld_dsi_dpi_to_byte_clock_count(pclk_hsync, num_lane, bpp);
-		dpi_timing->hbp_count =
-			mdfld_dsi_dpi_to_byte_clock_count(pclk_hbp, num_lane, bpp);
-		dpi_timing->hfp_count =
-			mdfld_dsi_dpi_to_byte_clock_count(pclk_hfp, num_lane, bpp);
+	dpi_timing->hsync_count =
+		mdfld_dsi_dpi_to_byte_clock_count(pclk_hsync, num_lane, bpp);
+	dpi_timing->hbp_count =
+		mdfld_dsi_dpi_to_byte_clock_count(pclk_hbp, num_lane, bpp);
+	dpi_timing->hfp_count =
+		mdfld_dsi_dpi_to_byte_clock_count(pclk_hfp, num_lane, bpp);
+	if (is_dual_dsi(dev))
+		dpi_timing->hactive_count =
+			mdfld_dsi_dpi_to_byte_clock_count(pclk_hactive / 2, num_lane, bpp);
+	else
 		dpi_timing->hactive_count =
 			mdfld_dsi_dpi_to_byte_clock_count(pclk_hactive, num_lane, bpp);
-
-		dpi_timing->vsync_count =
-			mdfld_dsi_dpi_to_byte_clock_count(pclk_vsync, num_lane, bpp);
-		dpi_timing->vbp_count =
-			mdfld_dsi_dpi_to_byte_clock_count(pclk_vbp, num_lane, bpp);
-		dpi_timing->vfp_count =
-			mdfld_dsi_dpi_to_byte_clock_count(pclk_vfp, num_lane, bpp);
-	}
+	dpi_timing->vsync_count = pclk_vsync;
+	dpi_timing->vbp_count = pclk_vbp;
+	dpi_timing->vfp_count = pclk_vfp;
 	PSB_DEBUG_ENTRY("DPI timings: %d, %d, %d, %d, %d, %d, %d\n",
 			dpi_timing->hsync_count, dpi_timing->hbp_count,
 			dpi_timing->hfp_count, dpi_timing->hactive_count,
@@ -248,7 +240,6 @@ static void __dpi_set_properties(struct mdfld_dsi_config *dsi_config,
 	REG_WRITE(regs->vsync_count_reg + offset, ctx->vsync_count);
 	REG_WRITE(regs->vbp_count_reg + offset, ctx->vbp_count);
 	REG_WRITE(regs->vfp_count_reg + offset, ctx->vfp_count);
-
 }
 
 static int __dpi_config_port(struct mdfld_dsi_config *dsi_config,
@@ -283,12 +274,67 @@ static int __dpi_config_port(struct mdfld_dsi_config *dsi_config,
 	return 0;
 }
 
+static void ann_dc_setup(struct mdfld_dsi_config *dsi_config)
+{
+	struct drm_device *dev = dsi_config->dev;
+	struct mdfld_dsi_hw_registers *regs = &dsi_config->regs;
+	struct mdfld_dsi_hw_context *ctx = &dsi_config->dsi_hw_context;
+	uint32_t pipeconf = 0;
+
+	DRM_INFO("restore some registers to default value\n");
+
+	power_island_get(OSPM_DISPLAY_B | OSPM_DISPLAY_C);
+
+	REG_WRITE(DSPCLK_GATE_D, 0x0);
+	REG_WRITE(RAMCLK_GATE_D, 0xc0000 | (1 << 11)); // FIXME: delay 1us for RDB done signal
+	REG_WRITE(PFIT_CONTROL, 0x20000000);
+	REG_WRITE(DSPIEDCFGSHDW, 0x0);
+	REG_WRITE(DSPARB2, 0x000A0200);
+	REG_WRITE(DSPARB, 0x18040080);
+	REG_WRITE(DSPFW1, 0x0F0F3F3F);
+	REG_WRITE(DSPFW2, 0x5F2F0F3F);
+	REG_WRITE(DSPFW3, 0x0);
+	REG_WRITE(DSPFW4, 0x07071F1F);
+	REG_WRITE(DSPFW5, 0x2F17071F);
+	REG_WRITE(DSPFW6, 0x00001F3F);
+	REG_WRITE(DSPFW7, 0x1F3F1F3F);
+	REG_WRITE(DSPSRCTRL, 0x00080100);
+	REG_WRITE(DSPCHICKENBIT, 0x20);
+	REG_WRITE(FBDC_CHICKEN, 0x0C0C0C0C);
+	REG_WRITE(CURACNTR, 0x0);
+	REG_WRITE(CURBCNTR, 0x0);
+	REG_WRITE(CURCCNTR, 0x0);
+	REG_WRITE(IEP_OVA_CTRL, 0x0);
+	REG_WRITE(IEP_OVA_CTRL, 0x0);
+
+	REG_WRITE(DSPBCNTR, 0x0);
+	REG_WRITE(DSPCCNTR, 0x0);
+	REG_WRITE(DSPDCNTR, 0x0);
+	REG_WRITE(DSPECNTR, 0x0);
+	REG_WRITE(DSPFCNTR, 0x0);
+	REG_WRITE(GCI_CTRL, REG_READ(GCI_CTRL) | 1);
+
+	/* set frame start delay to 0x2 */
+	pipeconf = REG_READ(regs->pipeconf_reg);
+	pipeconf = (pipeconf & (~BIT27)) | BIT28;
+	REG_WRITE(regs->pipeconf_reg, pipeconf);
+
+	power_island_put(OSPM_DISPLAY_B | OSPM_DISPLAY_C);
+
+	DRM_INFO("setup drain latency\n");
+
+	REG_WRITE(regs->ddl1_reg, ctx->ddl1);
+	REG_WRITE(regs->ddl2_reg, ctx->ddl2);
+	REG_WRITE(regs->ddl3_reg, ctx->ddl3);
+	REG_WRITE(regs->ddl4_reg, ctx->ddl4);
+}
+
 /**
  * Power on sequence for video mode MIPI panel.
  * NOTE: do NOT modify this function
  */
 static int __dpi_panel_power_on(struct mdfld_dsi_config *dsi_config,
-		struct panel_funcs *p_funcs)
+		struct panel_funcs *p_funcs, bool first_boot)
 {
 	u32 val = 0;
 	struct mdfld_dsi_hw_registers *regs;
@@ -298,7 +344,6 @@ static int __dpi_panel_power_on(struct mdfld_dsi_config *dsi_config,
 	int retry, reset_count = 10;
 	int i;
 	int err = 0;
-	u32 guit_val = 0;
 	u32 power_island = 0;
 	int offset = 0;
 
@@ -312,7 +357,6 @@ static int __dpi_panel_power_on(struct mdfld_dsi_config *dsi_config,
 	dev = dsi_config->dev;
 	dev_priv = dev->dev_private;
 	power_island = pipe_to_island(dsi_config->pipe);
-
 	if (power_island & (OSPM_DISPLAY_A | OSPM_DISPLAY_C))
 		power_island |= OSPM_DISPLAY_MIO;
 	if (is_dual_dsi(dev))
@@ -320,6 +364,8 @@ static int __dpi_panel_power_on(struct mdfld_dsi_config *dsi_config,
 
 	if (!power_island_get(power_island))
 		return -EAGAIN;
+	if (android_hdmi_is_connected(dev) && first_boot)
+			otm_hdmi_power_islands_on();
 
 reset_recovery:
 	--reset_count;
@@ -343,42 +389,20 @@ reset_recovery:
 		}
 	}
 
-	if (IS_ANN_A0(dev)) {
+	if (IS_ANN(dev)) {
 		/* FIXME: reset the DC registers for ANN A0 */
-		power_island_get(OSPM_DISPLAY_B | OSPM_DISPLAY_C);
-
-		REG_WRITE(DSPCLK_GATE_D, 0xFFFFFFFF); /* 0x10000000 */
-		REG_WRITE(RAMCLK_GATE_D, 0xFFFFFFFF); /* 0x0 */
-		REG_WRITE(PFIT_CONTROL, 0x20000000);
-		REG_WRITE(DSPIEDCFGSHDW, 0x0);
-		REG_WRITE(DSPARB2, 0x000A0200);
-		REG_WRITE(DSPARB, 0x18040080);
-		REG_WRITE(DSPFW1, 0x0F0F3F3F);
-		REG_WRITE(DSPFW2, 0x5F2F0F3F);
-		REG_WRITE(DSPFW3, 0x0);
-		REG_WRITE(DSPFW4, 0x07071F1F);
-		REG_WRITE(DSPFW5, 0x2F17071F);
-		REG_WRITE(DSPFW6, 0x00001F3F);
-		REG_WRITE(DSPFW7, 0x1F3F1F3F);
-		REG_WRITE(DSPSRCTRL, 0x00080100);
-		REG_WRITE(DSPCHICKENBIT, 0x0);
-		REG_WRITE(FBDC_CHICKEN, 0x0C0C0C0C);
-		REG_WRITE(CURACNTR, 0x0);
-		REG_WRITE(CURBCNTR, 0x0);
-		REG_WRITE(CURCCNTR, 0x0);
-		REG_WRITE(IEP_OVA_CTRL, 0x0);
-		REG_WRITE(IEP_OVA_CTRL, 0x0);
-		REG_WRITE(DSPACNTR, 0x0);
-		REG_WRITE(DSPBCNTR, 0x0);
-		REG_WRITE(DSPCCNTR, 0x0);
-		REG_WRITE(DSPDCNTR, 0x0);
-		REG_WRITE(DSPECNTR, 0x0);
-		REG_WRITE(DSPFCNTR, 0x0);
-
-		power_island_put(OSPM_DISPLAY_B | OSPM_DISPLAY_C);
+		ann_dc_setup(dsi_config);
 	}
 
 	__dpi_set_properties(dsi_config, PORT_A);
+
+	/* update 0x650c[0] = 1 to fixed arbitration pattern
+	 * it is found display TLB request be blocked by display plane
+	 * memory requests, never goes out. This causes display controller
+	 * uses stale TLB data to do memory translation, getting wrong
+	 * memory address for data, and causing the flickering issue.
+	 */
+	REG_WRITE(GCI_CTRL, REG_READ(GCI_CTRL) | 1);
 
 	/*Setup pipe timing*/
 	REG_WRITE(regs->htotal_reg, ctx->htotal);
@@ -398,13 +422,11 @@ reset_recovery:
 	REG_WRITE(regs->dsplinoff_reg, ctx->dsplinoff);
 	REG_WRITE(regs->vgacntr_reg, ctx->vgacntr);
 
-	/*restore color_coef (chrome) */
-	for (i = 0; i < 6; i++)
-		REG_WRITE(regs->color_coef_reg + (i<<2), ctx->color_coef[i]);
+	if (p_funcs && p_funcs->set_legacy_coefficient)
+		p_funcs->set_legacy_coefficient(dsi_config);
 
-	/* restore palette (gamma) */
-	for (i = 0; i < 256; i++)
-		REG_WRITE(regs->palette_reg + (i<<2), ctx->palette[i]);
+	if (p_funcs && p_funcs->set_legacy_gamma_table)
+		p_funcs->set_legacy_gamma_table(dsi_config);
 
 	/* restore dpst setting */
 	if (dev_priv->psb_dpst_state) {
@@ -444,7 +466,6 @@ reset_recovery:
 	/*Enable MIPI Port A*/
 	offset = 0x0;
 	REG_WRITE(regs->mipi_reg + offset, (ctx->mipi | BIT31));
-
 	REG_WRITE(regs->dpi_control_reg + offset, BIT1);
 	if (is_dual_dsi(dev)) {
 		/*Enable MIPI Port C*/
@@ -464,12 +485,19 @@ reset_recovery:
 			goto power_on_err;
 		}
 
-	if (IS_ANN_A0(dev)) {
+	if (IS_ANN(dev)) {
 		REG_WRITE(regs->ddl1_reg, ctx->ddl1);
 		REG_WRITE(regs->ddl2_reg, ctx->ddl2);
 		REG_WRITE(regs->ddl3_reg, ctx->ddl3);
 		REG_WRITE(regs->ddl4_reg, ctx->ddl4);
+
+		REG_WRITE(DSPARB2, ctx->dsparb2);
+		REG_WRITE(DSPARB, ctx->dsparb);
 	}
+
+	/*enable plane*/
+	val = ctx->dspcntr | BIT31;
+	REG_WRITE(regs->dspcntr_reg, val);
 
 	/*Enable pipe*/
 	val = ctx->pipeconf;
@@ -478,7 +506,10 @@ reset_recovery:
 	 * Frame Start occurs on third HBLANK
 	 * after the start of VBLANK
 	 */
-	val |= BIT31 | BIT28;
+	val = (val & (~BIT27)) | BIT28 | BIT31;
+	if (dev_priv->legacy_csc_enable)
+		val |= BIT20;
+
 	REG_WRITE(regs->pipeconf_reg, val);
 	/*Wait for pipe enabling,when timing generator
 	  is wroking */
@@ -493,9 +524,6 @@ reset_recovery:
 			goto power_on_err;
 		}
 	}
-	/*enable plane*/
-	val = ctx->dspcntr | BIT31;
-	REG_WRITE(regs->dspcntr_reg, val);
 
 	if (p_funcs && p_funcs->set_brightness) {
 		if (p_funcs->set_brightness(dsi_config,
@@ -531,7 +559,6 @@ static int __dpi_panel_power_off(struct mdfld_dsi_config *dsi_config,
 	int retry;
 	int i;
 	int err = 0;
-	u32 guit_val = 0;
 	u32 power_island = 0;
 	int offset = 0;
 
@@ -545,10 +572,14 @@ static int __dpi_panel_power_off(struct mdfld_dsi_config *dsi_config,
 	dev = dsi_config->dev;
 	dev_priv = dev->dev_private;
 
+	ctx->dsparb = REG_READ(DSPARB);
+	ctx->dsparb2 = REG_READ(DSPARB2);
+
 	/* Don't reset brightness to 0.*/
 	ctx->lastbrightnesslevel = psb_brightness;
 
 	tmp = REG_READ(regs->pipeconf_reg);
+        ctx->dspcntr = REG_READ(regs->dspcntr_reg);
 
 	/*save color_coef (chrome) */
 	for (i = 0; i < 6; i++)
@@ -586,7 +617,14 @@ static int __dpi_panel_power_off(struct mdfld_dsi_config *dsi_config,
 
 		if (!retry) {
 			DRM_ERROR("Failed to disable pipe\n");
-			err = -EAGAIN;
+			if (IS_MOFD(dev)) {
+				/*
+				 * FIXME: turn off the power island directly
+				 * although failed to disable pipe.
+				 */
+				err = 0;
+			} else
+				err = -EAGAIN;
 			goto power_off_err;
 		}
 	}
@@ -618,13 +656,13 @@ static int __dpi_panel_power_off(struct mdfld_dsi_config *dsi_config,
 	if (is_dual_dsi(dev)) {
 		offset = 0x1000;
 		/*Disable MIPI port*/
-		REG_WRITE(regs->mipi_reg, (REG_READ(regs->mipi_reg) & ~BIT31));
+		REG_WRITE(regs->mipi_reg + offset, (REG_READ(regs->mipi_reg + offset) & ~BIT31));
 
 		/*clear Low power output hold*/
-		REG_WRITE(regs->mipi_reg, (REG_READ(regs->mipi_reg) & ~BIT16));
+		REG_WRITE(regs->mipi_reg + offset, (REG_READ(regs->mipi_reg + offset) & ~BIT16));
 		offset = 0x800;
 		/*Disable DSI controller*/
-		REG_WRITE(regs->device_ready_reg, (ctx->device_ready & ~BIT0));
+		REG_WRITE(regs->device_ready_reg + offset, (REG_READ(regs->device_ready_reg + offset) & ~BIT0));
 
 		/*enter ULPS*/
 		__dpi_enter_ulps_locked(dsi_config, offset);
@@ -742,10 +780,26 @@ static int __mdfld_dsi_dpi_set_power(struct drm_encoder *encoder, bool on)
 
 	mutex_lock(&dsi_config->context_lock);
 
-	if (dpi_output->first_boot && dsi_config->dsi_hw_context.panel_on) {
-		printk(KERN_ALERT "skip panle power setting for first boot!" \
-				"panel is already powered on\n");
-		goto fun_exit;
+	if (dpi_output->first_boot && on) {
+		if (dsi_config->dsi_hw_context.panel_on) {
+			if (IS_ANN(dev))
+				ann_dc_setup(dsi_config);
+
+			psb_enable_vblank(dev, dsi_config->pipe);
+
+			/* don't need ISLAND c for non dual-dsi panel */
+			if (!is_dual_dsi(dev))
+				power_island_put(OSPM_DISPLAY_C);
+
+			DRM_INFO("skip panle power setting for first boot! "
+				 "panel is already powered on\n");
+			goto fun_exit;
+		}
+		if (android_hdmi_is_connected(dev))
+			otm_hdmi_power_islands_off();
+		/* power down islands turned on by firmware */
+		power_island_put(OSPM_DISPLAY_A | OSPM_DISPLAY_C |
+				 OSPM_DISPLAY_MIO);
 	}
 
 	switch (on) {
@@ -753,13 +807,21 @@ static int __mdfld_dsi_dpi_set_power(struct drm_encoder *encoder, bool on)
 		/* panel is already on */
 		if (dsi_config->dsi_hw_context.panel_on)
 			goto fun_exit;
-		if (__dpi_panel_power_on(dsi_config, p_funcs)) {
+		if (__dpi_panel_power_on(dsi_config, p_funcs, dpi_output->first_boot)) {
 			DRM_ERROR("Faild to turn on panel\n");
 			goto set_power_err;
 		}
 		dsi_config->dsi_hw_context.panel_on = 1;
+
+		/* for every dpi panel power on, clear the dpi underrun count */
+		dev_priv->pipea_dpi_underrun_count = 0;
+		dev_priv->pipec_dpi_underrun_count = 0;
+
 		break;
 	case false:
+		if (!dsi_config->dsi_hw_context.panel_on &&
+			!dpi_output->first_boot)
+			goto fun_exit;
 		if (__dpi_panel_power_off(dsi_config, p_funcs)) {
 			DRM_ERROR("Faild to turn off panel\n");
 			goto set_power_err;
@@ -785,17 +847,19 @@ void mdfld_dsi_dpi_set_power(struct drm_encoder *encoder, bool on)
 	struct mdfld_dsi_encoder *dsi_encoder = MDFLD_DSI_ENCODER(encoder);
 	struct mdfld_dsi_config *dsi_config =
 		mdfld_dsi_encoder_get_config(dsi_encoder);
+	int pipe = mdfld_dsi_encoder_get_pipe(dsi_encoder);
+	struct drm_device *dev;
+	struct drm_psb_private *dev_priv;
+	struct mdfld_dsi_dpi_output *dpi_output = NULL;
+	u32 mipi_reg = MIPI;
+	u32 pipeconf_reg = PIPEACONF;
+
 	if (!dsi_config) {
 		DRM_ERROR("dsi_config is NULL\n");
 		return;
 	}
-
-	int pipe = mdfld_dsi_encoder_get_pipe(dsi_encoder);
-	struct drm_device *dev = dsi_config->dev;
-	struct drm_psb_private *dev_priv = dev->dev_private;
-	struct mdfld_dsi_dpi_output *dpi_output = NULL;
-	u32 mipi_reg = MIPI;
-	u32 pipeconf_reg = PIPEACONF;
+	dev = dsi_config->dev;
+	dev_priv = dev->dev_private;
 
 	PSB_DEBUG_ENTRY("set power %s on pipe %d\n", on ? "On" : "Off", pipe);
 
@@ -825,6 +889,12 @@ void mdfld_dsi_dpi_dpms(struct drm_encoder *encoder, int mode)
 	struct mdfld_dsi_config *dsi_config;
 	struct drm_device *dev;
 	struct drm_psb_private *dev_priv;
+	struct mdfld_dsi_dpi_output *dpi_output;
+	struct panel_funcs *p_funcs;
+#ifdef CONFIG_BACKLIGHT_CLASS_DEVICE
+	struct mdfld_dsi_hw_context *ctx;
+	struct backlight_device bd;
+#endif
 
 	dsi_encoder = MDFLD_DSI_ENCODER(encoder);
 	dsi_config = mdfld_dsi_encoder_get_config(dsi_encoder);
@@ -835,29 +905,46 @@ void mdfld_dsi_dpi_dpms(struct drm_encoder *encoder, int mode)
 	dev = dsi_config->dev;
 	dev_priv = dev->dev_private;
 
-	PSB_DEBUG_ENTRY("%s\n", (mode == DRM_MODE_DPMS_ON ? "on" : "off"));
+	dpi_output = MDFLD_DSI_DPI_OUTPUT(dsi_encoder);
+	p_funcs = dpi_output->p_funcs;
+
+	PSB_DEBUG_ENTRY("%s\n", (mode == DRM_MODE_DPMS_ON ? "on" :
+		DRM_MODE_DPMS_STANDBY == mode ? "standby" : "off"));
 
 	mutex_lock(&dev_priv->dpms_mutex);
-	DCLockMutex();
 
+	DCLockMutex();
 	if (mode == DRM_MODE_DPMS_ON) {
-		mdfld_dsi_dpi_set_power(encoder, true);
+		/*
+		 * We remove power operation here to prevent power is on
+		 * after ospm power off the panel, it will lead pipe hang.
+		 */
+		if (dev_priv->early_suspended)
+			goto unlock_dc;
 		DCAttachPipe(dsi_config->pipe);
 		DC_MRFLD_onPowerOn(dsi_config->pipe);
-	} else {
-		mdfld_dsi_dpi_set_power(encoder, false);
 
-		drm_handle_vblank(dev, dsi_config->pipe);
+#ifdef CONFIG_BACKLIGHT_CLASS_DEVICE
+		ctx = &dsi_config->dsi_hw_context;
+		bd.props.brightness = ctx->lastbrightnesslevel;
+		psb_set_brightness(&bd);
+#endif
+	} else if (mode == DRM_MODE_DPMS_STANDBY) {
+#ifdef CONFIG_BACKLIGHT_CLASS_DEVICE
+		ctx = &dsi_config->dsi_hw_context;
+		ctx->lastbrightnesslevel = psb_get_brightness(&bd);
+		bd.props.brightness = 0;
+		psb_set_brightness(&bd);
+#endif
 
-		/* Turn off TE interrupt. */
-		drm_vblank_off(dev, dsi_config->pipe);
-
-		/* Make the pending flip request as completed. */
 		DCUnAttachPipe(dsi_config->pipe);
 		DC_MRFLD_onPowerOff(dsi_config->pipe);
+	} else {
+		// nothing to do
 	}
-
+unlock_dc:
 	DCUnLockMutex();
+
 	mutex_unlock(&dev_priv->dpms_mutex);
 }
 
@@ -873,7 +960,7 @@ bool mdfld_dsi_dpi_mode_fixup(struct drm_encoder *encoder,
 
 	if (!dsi_config) {
 		DRM_ERROR("dsi_config is NULL\n");
-		return;
+		return false;
 	}
 
 	fixed_mode = dsi_config->fixed_mode;
@@ -928,14 +1015,14 @@ static void __mdfld_dsi_dpi_set_timing(struct mdfld_dsi_config *config,
 {
 	struct mdfld_dsi_dpi_timing dpi_timing;
 	struct mdfld_dsi_hw_context *ctx;
-	
+	struct drm_device *dev;
+
 	if (!config) {
-                DRM_ERROR("Invalid parameters\n");
-                return;
-        }
+		DRM_ERROR("Invalid parameters\n");
+		return;
+	}
 
-	struct drm_device *dev = config->dev;
-
+	dev = config->dev;
 	mode = adjusted_mode;
 	ctx = &config->dsi_hw_context;
 
@@ -982,10 +1069,10 @@ void mdfld_dsi_dpi_mode_set(struct drm_encoder *encoder,
 	 * if TMD panel call new power on/off sequences instead.
 	 * NOTE: refine TOSHIBA panel code later
 	 */
-      if (!dsi_config) {
-                DRM_ERROR("Invalid dsi config\n");
-                return NULL;
-        }
+	if (!dsi_config) {
+		DRM_ERROR("Invalid dsi config\n");
+		return;
+	}
 
 	__mdfld_dsi_dpi_set_timing(dsi_config, mode, adjusted_mode);
 	mdfld_dsi_set_drain_latency(encoder, adjusted_mode);
@@ -1010,7 +1097,12 @@ void mdfld_dsi_dpi_save(struct drm_encoder *encoder)
 	pipe = mdfld_dsi_encoder_get_pipe(dsi_encoder);
 
 	DCLockMutex();
-	__mdfld_dsi_dpi_set_power(encoder, false);
+
+	/* give time to the last flip to take effective,
+	 * if we disable hardware too quickly, overlay hardware may crash,
+	 * causing pipe hang next time when we try to use overlay
+	 */
+	msleep(50);
 
 	drm_handle_vblank(dev, pipe);
 
@@ -1020,6 +1112,7 @@ void mdfld_dsi_dpi_save(struct drm_encoder *encoder)
 	/* Make the pending flip request as completed. */
 	DCUnAttachPipe(pipe);
 	DC_MRFLD_onPowerOff(pipe);
+	__mdfld_dsi_dpi_set_power(encoder, false);
 	DCUnLockMutex();
 }
 
@@ -1043,6 +1136,8 @@ void mdfld_dsi_dpi_restore(struct drm_encoder *encoder)
 
 	DCLockMutex();
 	__mdfld_dsi_dpi_set_power(encoder, true);
+
+	drm_vblank_on(dev, pipe);
 
 	DCAttachPipe(pipe);
 	DC_MRFLD_onPowerOn(pipe);
@@ -1115,11 +1210,9 @@ struct mdfld_dsi_encoder *mdfld_dsi_dpi_init(struct drm_device *dev,
 		else
 			dsi_connector->status = connector_status_disconnected;
 	}
-
 	/*init DSI controller*/
 	if (p_funcs->dsi_controller_init)
 		p_funcs->dsi_controller_init(dsi_config);
-
 	/**
 	 * TODO: can we keep these code out of display driver as
 	 * it will make display driver hard to be maintained
@@ -1140,7 +1233,6 @@ struct mdfld_dsi_encoder *mdfld_dsi_dpi_init(struct drm_device *dev,
 	dpi_output->dev = dev;
 	dpi_output->p_funcs = p_funcs;
 	dpi_output->first_boot = 1;
-
 	/*get fixed mode*/
 	fixed_mode = dsi_config->fixed_mode;
 

@@ -43,8 +43,6 @@ struct mdfld_dsi_dsr {
 
 	int free_count;
 
-	/*pending write_mem_start*/
-	int pending_fb_updates;
 	/*dsr enabled*/
 	int dsr_enabled;
 	/*dsr state*/

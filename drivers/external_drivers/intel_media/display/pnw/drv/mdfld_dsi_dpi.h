@@ -58,4 +58,21 @@ struct mdfld_dsi_dpi_output {
 extern struct mdfld_dsi_encoder *mdfld_dsi_dpi_init(struct drm_device *dev,
 		struct mdfld_dsi_connector *dsi_connector);
 
+/*ASUS_BSP: [DDS] +++*/
+#define OFILM_PANEL 0x50
+#define WINTEK_PANEL_NT35510 0x51
+#define WINTEK_PANEL_NT35510S 0x52
+
+
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+void mdfld_reset_dpi_panel(struct drm_psb_private *dev_priv, int connected);
+void mdfld_reset_same_dpi_panel(struct drm_psb_private *dev_priv);
+void mdfld_reset_same_dpi_panel_work(struct work_struct *work);
+#endif
+
+#if defined(CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY)
+void mdfld_shutdown_panel(struct drm_psb_private *dev_priv);
+#endif
+//ASUS_BSP: [DDS] ---
+
 #endif /*__MDFLD_DSI_DPI_H__*/

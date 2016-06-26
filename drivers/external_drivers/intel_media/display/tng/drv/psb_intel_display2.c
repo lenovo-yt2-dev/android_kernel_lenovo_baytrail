@@ -47,9 +47,7 @@ void mdfldWaitForPipeDisable(struct drm_device *dev, int pipe)
 {
 	int count, temp;
 	u32 pipeconf_reg = PIPEACONF;
-#if 1				/* FIXME MRFLD */
-	return;
-#endif				/* FIXME MRFLD */
+
 	switch (pipe) {
 	case 0:
 		break;
@@ -80,9 +78,6 @@ void mdfldWaitForPipeEnable(struct drm_device *dev, int pipe)
 {
 	int count, temp;
 	u32 pipeconf_reg = PIPEACONF;
-#if 1				/* FIXME MRFLD */
-	return;
-#endif				/* FIXME MRFLD */
 
 	switch (pipe) {
 	case 0:
@@ -198,7 +193,7 @@ static int mdfld_intel_crtc_cursor_set(struct drm_crtc *crtc,
 	/*insert this bo into gtt */
 //        DRM_INFO("%s: map meminfo for hw cursor. handle %x, pipe = %d \n", __FUNCTION__, handle, pipe);
 
-	ret = psb_gtt_map_meminfo(dev, (void *)handle, 0, &page_offset);
+	ret = psb_gtt_map_meminfo(dev, (void *)((uint64_t)handle), 0, &page_offset);
 	if (ret) {
 		DRM_ERROR("Can not map meminfo to GTT. handle 0x%x\n", handle);
 		return ret;
@@ -1125,6 +1120,7 @@ static int mdfld_crtc_dsi_mode_set(struct drm_crtc *crtc,
 	struct psb_framebuffer *mdfld_fb;
 	struct psb_intel_mode_device *mode_dev;
 	struct mdfld_dsi_hw_context *ctx;
+	struct drm_psb_private *dev_priv;
 	int fb_bpp;
 	int fb_pitch;
 	int fb_depth;
@@ -1149,6 +1145,7 @@ static int mdfld_crtc_dsi_mode_set(struct drm_crtc *crtc,
 	fb_pitch = crtc->fb->pitches[0];
 	fb_depth = crtc->fb->depth;
 	dev = crtc->dev;
+	dev_priv = dev->dev_private;
 
 	mutex_lock(&dsi_config->context_lock);
 
@@ -1183,9 +1180,6 @@ static int mdfld_crtc_dsi_mode_set(struct drm_crtc *crtc,
 	if (get_panel_type(dev, 0) == TMD_6X10_VID)
 		ctx->dspsize = ((mode->crtc_vdisplay - 1) << 16) |
 		    (mode->crtc_hdisplay - 200 - 1);
-	else if (is_dual_dsi(dev))
-		ctx->dspsize = ((mode->crtc_vdisplay - 1) << 16) |
-		    (mode->crtc_hdisplay / 2 - 1);
 	else
 		ctx->dspsize = ((mode->crtc_vdisplay - 1) << 16) |
 		    (mode->crtc_hdisplay - 1);
@@ -1193,7 +1187,10 @@ static int mdfld_crtc_dsi_mode_set(struct drm_crtc *crtc,
 	ctx->dspstride = fb_pitch;
 
 	ctx->dspsurf = mode_dev->bo_offset(dev, mdfld_fb);
-	ctx->dsplinoff = y * fb_pitch + x * (fb_bpp / 8);
+	if (dev_priv->panel_180_rotation && dsi_config->pipe == 0)
+		ctx->dsplinoff = y * fb_pitch + x * (fb_bpp / 8) + (mode->crtc_vdisplay - 1) * fb_pitch + (mode->crtc_hdisplay - 1) * (fb_bpp / 8);
+	else
+		ctx->dsplinoff = y * fb_pitch + x * (fb_bpp / 8);
 
 	switch (fb_bpp) {
 	case 8:
@@ -1217,6 +1214,9 @@ static int mdfld_crtc_dsi_mode_set(struct drm_crtc *crtc,
 
 	if (dsi_config->pipe == 2)
 		ctx->dspcntr |= (0x2 << 24);
+
+	if (dev_priv->panel_180_rotation && dsi_config->pipe == 0)
+		ctx->dspcntr |= (0x1 << 15);
 
 	/*
 	 * Setup pipe configuration for different panels

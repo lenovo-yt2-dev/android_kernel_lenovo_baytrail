@@ -87,7 +87,7 @@ struct data_rate_divider_selector_list_t {
 };
 static struct data_rate_divider_selector_list_t
 	data_rate_divider_selector_list[] = {
-			{25175, 2, 156, 1, 3, 16},
+			{25175, 2, 118, 1, 3, 12},
 			{25200, 2, 105, 1, 2, 16},
 			{26000, 2, 122, 1, 3, 12},
 			{27000, 3, 75, 1, 2, 16},
@@ -299,6 +299,8 @@ static struct data_rate_divider_selector_list_t
 #define TX_SWINGS_5     0x0690
 #define TX_SWINGS_6     0x822C
 #define TX_SWINGS_7     0x8224
+#define TX_GROUP_1      0x82AC
+#define TX_GROUP_2      0x82B8
 
 #define DPLL_IOSF_EP 0x13
 
@@ -386,24 +388,30 @@ static bool __ips_hdmi_get_divider_selector(
 			int *m1, int *m2,
 			int *n, int *p1, int *p2)
 {
-	int i;
+	int i, matched_idx = 0;
+	uint32_t min_diff = 0xffffffff, curr_diff;
 
-	for (i = 0; i < NUM_SELECTOR_LIST; i++) {
-		if (dclk <=
-			data_rate_divider_selector_list[i].target_data_rate) {
-			*real_dclk =
-			data_rate_divider_selector_list[i].target_data_rate;
-			*m1 = data_rate_divider_selector_list[i].m1;
-			*m2 = data_rate_divider_selector_list[i].m2;
-			*n = data_rate_divider_selector_list[i].n;
-			*p1 = data_rate_divider_selector_list[i].p1;
-			*p2 = data_rate_divider_selector_list[i].p2;
-			return true;
-		}
+	if (dclk > data_rate_divider_selector_list[NUM_SELECTOR_LIST - 1].target_data_rate ||
+			dclk < data_rate_divider_selector_list[0].target_data_rate ) {
+		pr_err("Could not find supported mode\n");
+		return false;
 	}
 
-	pr_err("Could not find supported mode\n");
-	return false;
+	for (i = 0; i < NUM_SELECTOR_LIST; i++) {
+		curr_diff = abs(dclk - data_rate_divider_selector_list[i].target_data_rate);
+		if (min_diff > curr_diff) {
+			min_diff = curr_diff;
+			matched_idx = i;
+		}
+	}
+	*m1 = data_rate_divider_selector_list[matched_idx].m1;
+	*m2 = data_rate_divider_selector_list[matched_idx].m2;
+	*n = data_rate_divider_selector_list[matched_idx].n;
+	*p1 = data_rate_divider_selector_list[matched_idx].p1;
+	*p2 = data_rate_divider_selector_list[matched_idx].p2;
+	*real_dclk = data_rate_divider_selector_list[matched_idx].target_data_rate;
+	pr_debug("dclk: %d, real_dclk: %d", dclk,  *real_dclk);
+	return true;
 }
 
 /**
@@ -441,7 +449,7 @@ static void __ips_hdmi_set_program_dpll(int n, int p1, int p2, int m1, int m2)
 	gunit_iosf_write32(DPLL_IOSF_EP, PLLB_DWORD8, tmp & 0x00FFFFFF);
 
 	/* Enable Tx for periodic GRC update*/
-	gunit_iosf_write32(DPLL_IOSF_EP, DPLL_Tx_GRC, 0x0100000F);
+	gunit_iosf_write32(DPLL_IOSF_EP, DPLL_Tx_GRC, 0x00004000);
 
 	/* GRC cal clock set to 19.2MHZ */
 	gunit_iosf_write32(DPLL_IOSF_EP, REF_DWORD18, 0x30002400);
@@ -450,6 +458,12 @@ static void __ips_hdmi_set_program_dpll(int n, int p1, int p2, int m1, int m2)
 	 * Disable fast lock.
 	 */
 	gunit_iosf_write32(DPLL_IOSF_EP, CMN_DWORD8, 0x0);
+
+	/* Stagger Programming */
+	gunit_iosf_write32(DPLL_IOSF_EP, TX_GROUP_1, 0x00001500);
+	gunit_iosf_write32(DPLL_IOSF_EP, TX_GROUP_2, 0x40400000);
+	gunit_iosf_write32(DPLL_IOSF_EP, PCS_DWORD12_1, 0x00220F00);
+	gunit_iosf_write32(DPLL_IOSF_EP, PCS_DWORD12_2, 0x00750F00);
 
 	/* Set divisors*/
 	gunit_iosf_write32(DPLL_IOSF_EP, PLLA_DWORD3_1, div);
@@ -482,17 +496,13 @@ static void __ips_hdmi_set_program_dpll(int n, int p1, int p2, int m1, int m2)
 
 	/* Swing settings */
 	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_1, 0x00000000);
-	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_2, 0x2B407055);
-	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_3, 0x55A0983A);
+	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_2, 0x2B245555);
+	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_3, 0x5578B83A);
 	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_4, 0x0C782040);
-	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_5, 0x2B247878);
+	//gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_5, 0x2B247878);
 	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_6, 0x00030000);
 	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_7, 0x00004000);
 	gunit_iosf_write32(DPLL_IOSF_EP, TX_SWINGS_1, 0x80000000);
-
-	/* Stagger Programming */
-	gunit_iosf_write32(DPLL_IOSF_EP, PCS_DWORD12_1, 0x00401F00);
-	gunit_iosf_write32(DPLL_IOSF_EP, PCS_DWORD12_2, 0x00451F00);
 
 	/* Wait until DPLL is locked */
 	ret = hdmi_read32(IPS_DPLL_B);

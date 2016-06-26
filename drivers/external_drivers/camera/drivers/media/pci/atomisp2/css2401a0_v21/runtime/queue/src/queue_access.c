@@ -42,7 +42,7 @@ int ia_css_queue_load(
 				rdesc->desc.remote.cb_desc_addr
 				+ offsetof(ia_css_circbuf_desc_t, size));
 
-			if ( 0 == cb_desc->size ) {
+			if (0 == cb_desc->size) {
 				/* Adding back the workaround which was removed
 				   while refactoring queues. When reading size
 				   through sp_dmem_load_*, sometimes we get back

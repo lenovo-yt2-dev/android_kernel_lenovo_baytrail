@@ -236,7 +236,6 @@ int ttm_fence_object_flush(struct ttm_fence_object *fence, uint32_t type)
 	struct ttm_fence_class_manager *fc = ttm_fence_fc(fence);
 	unsigned long irq_flags;
 	uint32_t saved_pending_flush;
-	uint32_t diff;
 	bool call_flush;
 
 	if (type & ~fence->fence_type) {

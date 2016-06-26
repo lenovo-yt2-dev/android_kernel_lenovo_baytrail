@@ -57,6 +57,11 @@
 #include "psb_dpst_func.h"
 #include "mdfld_dsi_dbi_dsr.h"
 
+/*	ASUS_BSP: Louis ++	*/
+#include <linux/HWVersion.h>
+extern int Read_HW_ID(void);
+/*	ASUS_BSP: Louis --	*/
+
 static struct drm_device *g_dev;   /* hack for the queue */
 static int blc_adj2;
 static u32 lut_adj[256];
@@ -344,6 +349,14 @@ int psb_dpst_get_level_ioctl(struct drm_device *dev, void *data,
 	if (dpst_level < AGGRESSIVE_LEVEL_MIN ||
 			dpst_level > AGGRESSIVE_LEVEL_MAX)
 		dpst_level = AGGRESSIVE_LEVEL_DEFAULT;
+
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+	if (panel_id == DDS_PAD || (panel_id == DDS_PHONE && Read_HW_ID() >= HW_ID_ER2)) {
+		*arg = AGGRESSIVE_LEVEL_MIN;
+		PSB_DEBUG_ENTRY("[Display] Turn off DPST\n");
+		return AGGRESSIVE_LEVEL_MIN;
+	}
+#endif
 
 	*arg = dpst_level;
 

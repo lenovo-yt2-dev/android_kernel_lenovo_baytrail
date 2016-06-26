@@ -26,6 +26,7 @@
 
 #include "mdfld_dsi_dbi.h"
 #include "mdfld_dsi_esd.h"
+#include <asm/intel_scu_ipcutil.h>
 #include <asm/intel_scu_pmic.h>
 #include <asm/intel_mid_rpmsg.h>
 #include <asm/intel_mid_remoteproc.h>
@@ -216,22 +217,37 @@ err_out:
 	return ret;
 }
 
+#define MSIC_VPROG2_MRFLD_CTRL          0xAD
+#define MSIC_B0_VPROG2_MRFLD_CTRL       0x141
+#define PMIC_ID_ADDR                    0x00
+#define PMIC_CHIP_ID_B0_VAL             0x08
+
 static void __vpro2_power_ctrl(bool on)
 {
-	u8 addr, value;
-	addr = 0xad;
-	if (intel_scu_ipc_ioread8(addr, &value))
-		DRM_ERROR("%s: %d: failed to read vPro2\n", __func__, __LINE__);
 
-	/* Control vPROG2 power rail with 2.85v. */
-	if (on)
-		value |= 0x1;
-	else
-		value &= ~0x1;
+        u8 value, addr = MSIC_VPROG2_MRFLD_CTRL;
+        int ret = 0xFF;
+        uint8_t pmic_id = 0;
 
-	if (intel_scu_ipc_iowrite8(addr, value))
-		DRM_ERROR("%s: %d: failed to write vPro2\n",
-				__func__, __LINE__);
+        ret  = intel_scu_ipc_ioread8(PMIC_ID_ADDR, &pmic_id);
+	if (!ret) {
+		if (PMIC_CHIP_ID_B0_VAL == pmic_id)
+			addr = MSIC_B0_VPROG2_MRFLD_CTRL;
+
+		if (intel_scu_ipc_ioread8(addr, &value))
+			DRM_ERROR("%s: %d: failed to read vPro2\n", __func__, __LINE__);
+
+		/* Control vPROG2 power rail with 2.85v. */
+		if (on)
+			value |= 0x1;
+		else
+			value &= ~0x1;
+
+		if (intel_scu_ipc_iowrite8(addr, value))
+			DRM_ERROR("%s: %d: failed to write vPro2\n",__func__, __LINE__);
+	} else {
+		DRM_ERROR("%s: %d: failed to read pmic id \n",__func__, __LINE__);
+	}
 }
 
 static int sharp5_cmd_power_off(struct mdfld_dsi_config *dsi_config)
@@ -312,7 +328,7 @@ sharp5_cmd_set_brightness( struct mdfld_dsi_config *dsi_config, int level)
 		return -EINVAL;
 	}
 
-	duty_val = (0xFF * level) / 100;
+	duty_val = (0xFF * level) / 255;
 	mdfld_dsi_send_mcs_short_hs(sender,
 			write_display_brightness, duty_val, 1,
 			MDFLD_DSI_SEND_PACKAGE);
@@ -358,7 +374,7 @@ static int sharp5_cmd_panel_reset(struct mdfld_dsi_config *dsi_config)
 					NULL, 0,
 					SECURE_I2C_FLIS_REG, 0);
 
-	__vpro2_power_ctrl(true);
+	intel_scu_ipc_msic_vprog2(true);
 	usleep_range(2000, 2500);
 
 	if (bias_en_gpio == 0) {
@@ -448,8 +464,8 @@ static void sharp5_cmd_get_panel_info(int pipe, struct panel_info *pi)
 	PSB_DEBUG_ENTRY("\n");
 
 	if (pipe == 0) {
-		pi->width_mm = PANEL_4DOT3_WIDTH;
-		pi->height_mm = PANEL_4DOT3_HEIGHT;
+		pi->width_mm = 58;
+		pi->height_mm = 103;
 	}
 }
 

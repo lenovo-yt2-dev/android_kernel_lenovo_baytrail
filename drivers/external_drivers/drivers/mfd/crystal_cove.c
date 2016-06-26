@@ -186,6 +186,9 @@ int intel_scu_ipc_update_register(u16 addr, u8 data, u8 mask)
 {
 	int ret;
 
+	if (!pmic->i2c)
+		return -ENODEV;
+
 	mutex_lock(&pmic->io_lock);
 
 	ret = i2c_smbus_read_byte_data(pmic->i2c, addr);
@@ -244,6 +247,9 @@ int intel_mid_pmic_readb(int reg)
 {
 	int ret;
 
+	if (!pmic->i2c)
+		return -ENODEV;
+
 	mutex_lock(&pmic->io_lock);
 	ret = i2c_smbus_read_byte_data(pmic->i2c, reg);
 	mutex_unlock(&pmic->io_lock);
@@ -254,6 +260,9 @@ EXPORT_SYMBOL(intel_mid_pmic_readb);
 int intel_mid_pmic_writeb(int reg, u8 val)
 {
 	int ret;
+
+	if (!pmic->i2c)
+		return -ENODEV;
 
 	mutex_lock(&pmic->io_lock);
 	ret = i2c_smbus_write_byte_data(pmic->i2c, reg, val);
@@ -267,6 +276,9 @@ int intel_mid_pmic_setb(int reg, u8 mask)
 	int ret;
 	int val;
 
+	if (!pmic->i2c)
+		return -ENODEV;
+
 	mutex_lock(&pmic->io_lock);
 	val = i2c_smbus_read_byte_data(pmic->i2c, reg);
 	val |= mask;
@@ -279,6 +291,9 @@ int intel_mid_pmic_clearb(int reg, u8 mask)
 {
 	int ret;
 	int val;
+
+	if (!pmic->i2c)
+		return -ENODEV;
 
 	mutex_lock(&pmic->io_lock);
 	val = i2c_smbus_read_byte_data(pmic->i2c, reg);
@@ -386,7 +401,11 @@ static int pmic_irq_init(void)
 	int ret;
 
 	pmic->irq_mask = 0xff;
-	intel_mid_pmic_writeb(MIRQLVL1, pmic->irq_mask);
+	ret = intel_mid_pmic_writeb(MIRQLVL1, pmic->irq_mask);
+	if (ret) {
+		dev_err(pmic->dev, "Failed to communicate with PMIC.");
+		return ret;
+	}
 	pmic->irq_mask = intel_mid_pmic_readb(MIRQLVL1);
 	pmic->irq_base = irq_alloc_descs(VV_PMIC_IRQBASE, 0, PMIC_IRQ_NUM, 0);
 	if (pmic->irq_base < 0) {
@@ -427,7 +446,7 @@ static int pmic_irq_init(void)
 static int pmic_i2c_probe(struct i2c_client *i2c,
 			    const struct i2c_device_id *id)
 {
-	int i;
+	int i, ret;
 	struct mfd_cell *cell_dev = crystal_cove_data;
 
 	mutex_init(&pmic->io_lock);
@@ -439,7 +458,10 @@ static int pmic_i2c_probe(struct i2c_client *i2c,
 	pmic->i2c = i2c;
 	pmic->dev = &i2c->dev;
 	pmic->irq = i2c->irq;
-	pmic_irq_init();
+	ret = pmic_irq_init();
+	if (ret)
+		return ret;
+
 	dev_info(&i2c->dev, "Crystal Cove: ID 0x%02X, VERSION 0x%02X\n",
 		intel_mid_pmic_readb(CHIPID), intel_mid_pmic_readb(CHIPVER));
 	for (i = 0; cell_dev[i].name != NULL; i++)

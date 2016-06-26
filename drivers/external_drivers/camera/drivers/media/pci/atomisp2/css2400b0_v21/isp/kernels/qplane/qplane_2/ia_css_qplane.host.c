@@ -33,9 +33,12 @@
 void
 ia_css_qplane_config(
 	struct sh_css_isp_qplane_isp_config *to,
-	const struct ia_css_qplane_configuration  *from)
+	const struct ia_css_qplane_configuration  *from,
+	unsigned size)
 {
 	unsigned elems_a = ISP_VEC_NELEMS;
+
+	(void)size;
 	ia_css_dma_configure_from_info(&to->port_b, from->info);
 	to->width_a_over_b = elems_a / to->port_b.elems;
 

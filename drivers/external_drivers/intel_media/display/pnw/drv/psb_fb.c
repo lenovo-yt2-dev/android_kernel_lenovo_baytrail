@@ -1005,6 +1005,15 @@ static int psbfb_create(struct psb_fbdev * fbdev, struct drm_fb_helper_surface_s
 	* is 608x1024(64 bits align), or the information between android
 	* and Linux frame buffer is not consistent.
 	*/
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH   /*  ASUS_BSP: [DDS] +++ */
+	if (0) {
+		mode_cmd.width = 800;
+		mode_cmd.height = 1280;
+	} else {
+		mode_cmd.width = fixed_mode->hdisplay;
+		mode_cmd.height = fixed_mode->vdisplay;
+	}
+#else
 	if (is_tmd_6x10_panel(dev, 0)) {
 		mode_cmd.width  = fixed_mode->hdisplay - 200;
 		mode_cmd.height = fixed_mode->vdisplay;
@@ -1012,6 +1021,7 @@ static int psbfb_create(struct psb_fbdev * fbdev, struct drm_fb_helper_surface_s
 		mode_cmd.width = fixed_mode->hdisplay;
 		mode_cmd.height = fixed_mode->vdisplay;
 	}
+#endif  /*  ASUS_BSP: [DDS] --- */
 
         //HW requires pitch to be 64 byte aligned
 

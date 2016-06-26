@@ -31,6 +31,8 @@
 
 #define ATOMISP_CSS2_PIPE_MAX	2
 #define ATOMISP_CSS2_NUM_OFFLINE_INIT_CONTINUOUS_FRAMES     3
+#define ATOMISP_CSS2_NUM_OFFLINE_INIT_CONTINUOUS_FRAMES_LOCK_EN     4
+#define ATOMISP_CSS2_NUM_DVS_FRAME_DELAY     2
 
 #define atomisp_css_pipe_id ia_css_pipe_id
 #define atomisp_css_pipeline	ia_css_pipe
@@ -52,6 +54,7 @@
 #define atomisp_css_ee_config	ia_css_ee_config
 #define atomisp_css_ob_config	ia_css_ob_config
 #define atomisp_css_de_config	ia_css_de_config
+#define atomisp_css_dz_config	ia_css_dz_config
 #define atomisp_css_ce_config	ia_css_ce_config
 #define atomisp_css_gc_config	ia_css_gc_config
 #define atomisp_css_tnr_config	ia_css_tnr_config
@@ -80,6 +83,7 @@
 #define atomisp_css_morph_table	ia_css_morph_table
 #define atomisp_css_dvs_6axis_config	ia_css_dvs_6axis_config
 #define atomisp_css_fw_info	ia_css_fw_info
+#define atomisp_css_formats_config	ia_css_formats_config
 typedef struct ia_css_isp_3a_statistics atomisp_css_3a_data;
 
 #define CSS_PIPE_ID_PREVIEW	IA_CSS_PIPE_ID_PREVIEW
@@ -87,6 +91,7 @@ typedef struct ia_css_isp_3a_statistics atomisp_css_3a_data;
 #define CSS_PIPE_ID_VIDEO	IA_CSS_PIPE_ID_VIDEO
 #define CSS_PIPE_ID_CAPTURE	IA_CSS_PIPE_ID_CAPTURE
 #define CSS_PIPE_ID_ACC		IA_CSS_PIPE_ID_ACC
+#define CSS_PIPE_ID_YUVPP	IA_CSS_PIPE_ID_YUVPP
 #define CSS_PIPE_ID_NUM		IA_CSS_PIPE_ID_NUM
 
 #define CSS_INPUT_MODE_SENSOR	IA_CSS_INPUT_MODE_BUFFERED_SENSOR
@@ -128,6 +133,8 @@ typedef struct ia_css_isp_3a_statistics atomisp_css_3a_data;
 struct atomisp_device;
 struct atomisp_sub_device;
 
+#define MAX_STREAMS_PER_CHANNEL	2
+
 /*
  * These are used to indicate the css stream state, corresponding
  * stream handling can be done via judging the different state.
@@ -139,9 +146,21 @@ enum atomisp_css_stream_state {
 	CSS_STREAM_STOPPED,
 };
 
+/*
+ *  Sensor of external ISP can send multiple steams with different mipi data
+ * type in the same virtual channel. This information needs to come from the
+ * sensor or external ISP
+ */
+struct atomisp_css_isys_config_info {
+	unsigned int input_format;
+	unsigned int width;
+	unsigned int height;
+};
+
 struct atomisp_stream_env {
 	struct ia_css_stream *stream;
 	struct ia_css_stream_config stream_config;
+	struct ia_css_stream_info stream_info;
 	struct ia_css_pipe *pipes[IA_CSS_PIPE_ID_NUM];
 	struct ia_css_pipe *multi_pipes[IA_CSS_PIPE_ID_NUM];
 	struct ia_css_pipe_config pipe_configs[IA_CSS_PIPE_ID_NUM];
@@ -152,6 +171,8 @@ struct atomisp_stream_env {
 	enum atomisp_css_stream_state acc_stream_state;
 	struct ia_css_stream_config acc_stream_config;
 	unsigned int ch_id; /* virtual channel ID */
+	unsigned int isys_configs;
+	struct atomisp_css_isys_config_info isys_info[MAX_STREAMS_PER_CHANNEL];
 };
 
 struct atomisp_css_env {
@@ -161,11 +182,14 @@ struct atomisp_css_env {
 
 struct atomisp_s3a_buf {
 	atomisp_css_3a_data *s3a_data;
+	struct ia_css_isp_3a_statistics_map *s3a_map;
 	struct list_head list;
 };
 
 struct atomisp_dis_buf {
 	struct atomisp_css_dis_data *dis_data;
+	struct ia_css_isp_dvs_statistics_map *dvs_map;
+	unsigned int exp_id;
 	struct list_head list;
 };
 
@@ -229,10 +253,30 @@ void atomisp_css_set_b_gamma_table(struct atomisp_sub_device *asd,
 void atomisp_css_set_anr_thres(struct atomisp_sub_device *asd,
 			struct atomisp_css_anr_thres *anr_thres);
 
+int atomisp_css_check_firmware_version(struct atomisp_device *isp);
+
 int atomisp_css_load_firmware(struct atomisp_device *isp);
 
 void atomisp_css_unload_firmware(struct atomisp_device *isp);
 
 void atomisp_css_set_dvs_6axis(struct atomisp_sub_device *asd,
 			struct atomisp_css_dvs_6axis *dvs_6axis);
+
+unsigned int atomisp_css_debug_get_dtrace_level(void);
+
+int atomisp_css_debug_dump_isp_binary(void);
+
+int atomisp_css_dump_sp_raw_copy_linecount(bool reduced);
+
+int atomisp_css_dump_blob_infor(void);
+
+void atomisp_css_set_isp_config_id(struct atomisp_sub_device *asd,
+			uint32_t isp_config_id);
+
+void atomisp_css_set_isp_config_applied_frame(struct atomisp_sub_device *asd,
+			struct atomisp_css_frame *output_frame);
+
+int atomisp_get_css_dbgfunc(void);
+
+int atomisp_set_css_dbgfunc(struct atomisp_device *isp, int opt);
 #endif

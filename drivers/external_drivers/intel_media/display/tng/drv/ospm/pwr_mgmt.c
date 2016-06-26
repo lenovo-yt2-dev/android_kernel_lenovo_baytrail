@@ -43,6 +43,7 @@
 #include "gfx_ospm.h"
 #endif
 #include "dc_ospm.h"
+#include "dc_maxfifo.h"
 #include "video_ospm.h"
 #include "early_suspend.h"
 #include "early_suspend_sysfs.h"
@@ -188,6 +189,8 @@ static void ospm_suspend_pci(struct drm_device *dev)
 	dev_priv->saveBGSM = bgsm;
 	pci_read_config_dword(pdev, PSB_PCIx_MSI_ADDR_LOC, &dev_priv->msi_addr);
 	pci_read_config_dword(pdev, PSB_PCIx_MSI_DATA_LOC, &dev_priv->msi_data);
+	pci_save_state(pdev);
+	pci_set_power_state(pdev, PCI_D3hot);
 }
 
 /**
@@ -331,7 +334,7 @@ static bool power_down_island(struct ospm_power_island *p_island)
 	if (atomic_dec_return(&p_island->ref_count) < 0) {
 		DRM_ERROR("Island %x, UnExpect RefCount %d\n",
 				p_island->island,
-				p_island->ref_count);
+				atomic_read(&p_island->ref_count));
 		dump_stack();
 		goto power_down_err;
 	}
@@ -396,7 +399,7 @@ static bool any_island_on(void)
 bool power_island_get(u32 hw_island)
 {
 	u32 i = 0;
-	bool ret = true;
+	bool ret = true, first_island = false;
 	int pm_ret;
 	struct ospm_power_island *p_island;
 	struct drm_psb_private *dev_priv = g_ospm_data->dev->dev_private;
@@ -412,10 +415,11 @@ bool power_island_get(u32 hw_island)
 		pm_ret = pm_runtime_get_sync(&g_ospm_data->dev->pdev->dev);
 		if (pm_ret < 0) {
 			ret = false;
-			PSB_DEBUG_PM("pm_runtime_get_sync failed 0x%x.\n",
+			PSB_DEBUG_PM("pm_runtime_get_sync failed %p.\n",
 				&g_ospm_data->dev->pdev->dev);
 			goto out_err;
 		}
+		first_island = true;
 
 	}
 
@@ -432,6 +436,8 @@ bool power_island_get(u32 hw_island)
 	}
 
 out_err:
+	if (ret && first_island)
+		pm_qos_remove_request(&dev_priv->s0ix_qos);
 	mutex_unlock(&g_ospm_data->ospm_lock);
 
 	return ret;
@@ -465,14 +471,15 @@ bool power_island_put(u32 hw_island)
 		}
 	}
 
-out_err:
 	/* Check to see if we need to suspend PCI */
 	if (!any_island_on()) {
 		PSB_DEBUG_PM("Suspending PCI\n");
 		/* Here, we use runtime pm framework to suit
 		 * S3 PCI suspend/resume
 		 */
-		pm_runtime_put(&g_ospm_data->dev->pdev->dev);
+		pm_qos_add_request(&dev_priv->s0ix_qos,
+				PM_QOS_CPU_DMA_LATENCY, CSTATE_EXIT_LATENCY_S0i1 - 1);
+		pm_runtime_put_sync_suspend(&g_ospm_data->dev->pdev->dev);
 		wake_unlock(&dev_priv->ospm_wake_lock);
 	}
 	mutex_unlock(&g_ospm_data->ospm_lock);
@@ -558,7 +565,13 @@ void ospm_power_init(struct drm_device *dev)
 			case OSPM_DISPLAY_A:
 			case OSPM_DISPLAY_C:
 			case OSPM_DISPLAY_MIO:
-				island_list[i].p_funcs->power_down(dev, &island_list[i]);
+				atomic_set(&island_list[i].ref_count, 1);
+				island_list[i].island_state = OSPM_POWER_ON;
+				if (island_list[i].p_dependency) {
+					atomic_inc(&island_list[i].p_dependency->ref_count);
+					island_list[i].island_state = OSPM_POWER_ON;
+				}
+
 				break;
 			default:
 				break;
@@ -571,7 +584,7 @@ void ospm_power_init(struct drm_device *dev)
 	intel_media_early_suspend_init(dev);
 #endif
 	intel_media_early_suspend_sysfs_init(dev);
-
+	dc_maxfifo_init(dev);
 	rtpm_init(dev);
 out_err:
 	return;
@@ -675,10 +688,9 @@ void ospm_apm_power_down_msvdx(struct drm_device *dev, int force_off)
 {
 	unsigned long irq_flags;
 	int ret, frame_finished = 0;
-	int seq_flag = 0, shp_ctx_count = 0;
+	int shp_ctx_count = 0;
 	struct ospm_power_island *p_island;
 	struct drm_psb_private *dev_priv = psb_priv(dev);
-	struct msvdx_private *msvdx_priv = dev_priv->msvdx_private;
 	struct psb_video_ctx *pos, *n;
 
 
@@ -726,7 +738,6 @@ void ospm_apm_power_down_msvdx(struct drm_device *dev, int force_off)
 	if (!ospm_power_is_hw_on(OSPM_VIDEO_DEC_ISLAND))
 		PSB_DEBUG_PM("msvdx in power off.\n");
 
-	psb_msvdx_dequeue_send(dev);
 
 #ifdef CONFIG_SLICE_HEADER_PARSING
 	spin_lock_irqsave(&dev_priv->video_ctx_lock, irq_flags);
@@ -741,7 +752,11 @@ void ospm_apm_power_down_msvdx(struct drm_device *dev, int force_off)
 		}
 	}
 	spin_unlock_irqrestore(&dev_priv->video_ctx_lock, irq_flags);
+#endif
 
+	psb_msvdx_dequeue_send(dev);
+
+#ifdef CONFIG_SLICE_HEADER_PARSING
 	if (shp_ctx_count == 0 || frame_finished)
 		power_island_put(OSPM_VIDEO_DEC_ISLAND);
 #else
@@ -793,9 +808,9 @@ void ospm_apm_power_down_vsp(struct drm_device *dev)
 {
 	int ret;
 	struct ospm_power_island *p_island;
-	unsigned long flags;
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct vsp_private *vsp_priv = dev_priv->vsp_private;
+	int island_ref;
 
 	PSB_DEBUG_PM("Power down VPP...\n");
 	p_island = get_island_ptr(OSPM_VIDEO_VPP_ISLAND);
@@ -810,9 +825,10 @@ void ospm_apm_power_down_vsp(struct drm_device *dev)
 	if (!ospm_power_is_hw_on(OSPM_VIDEO_VPP_ISLAND))
 		goto out;
 
-	if (atomic_read(&p_island->ref_count))
+	island_ref = atomic_read(&p_island->ref_count);
+	if (island_ref)
 		PSB_DEBUG_PM("VPP ref_count has been set(%d), bypass\n",
-			     atomic_read(&p_island->ref_count));
+			     island_ref);
 
 	if (vsp_priv->vsp_cmd_num > 0) {
 		VSP_DEBUG("command in VSP, by pass\n");
@@ -832,7 +848,18 @@ void ospm_apm_power_down_vsp(struct drm_device *dev)
 	/* handle the dependency */
 	if (p_island->p_dependency) {
 		/* Power down dependent island */
-		power_down_island(p_island->p_dependency);
+		do {
+			power_down_island(p_island->p_dependency);
+			island_ref--;
+		} while (island_ref);
+	}
+
+	if (!any_island_on()) {
+		PSB_DEBUG_PM("Suspending PCI\n");
+		pm_qos_add_request(&dev_priv->s0ix_qos,
+			PM_QOS_CPU_DMA_LATENCY, CSTATE_EXIT_LATENCY_S0i1 - 1);
+		pm_runtime_put(&g_ospm_data->dev->pdev->dev);
+		wake_unlock(&dev_priv->ospm_wake_lock);
 	}
 
 	PSB_DEBUG_PM("Power down VPP done\n");
@@ -848,7 +875,7 @@ int ospm_runtime_pm_allow(struct drm_device *dev)
 
 void ospm_runtime_pm_forbid(struct drm_device *dev)
 {
-	struct drm_psb_private *dev_priv = dev->dev_private;
+//	struct drm_psb_private *dev_priv = dev->dev_private;
 
-	pm_runtime_forbid(&dev->pdev->dev);
+//	pm_runtime_forbid(&dev->pdev->dev);
 }

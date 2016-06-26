@@ -61,6 +61,7 @@
 #define DEBUG_INTG_FACT	(1<<2)
 #define DEBUG_OTP	(1<<4)
 static unsigned int debug = 0x00;
+static unsigned int probe_flag = 1;
 module_param(debug, int, S_IRUGO|S_IWUSR);
 
 struct ov8865_device * global_dev;
@@ -406,7 +407,7 @@ static int bu64243_cmd(struct v4l2_subdev *sd, s32 reg, s32 val)
 	int cmd = 0;
 	struct bu64243_device *dev = to_bu64243_device(sd);
 
-	printk("BU64243 reg:%d\n", reg);
+	OV8865_LOG(0,"BU64243 reg:%d\n", reg);
 	OV8865_LOG(0, "BU64243_PS(dev->power_state):%x-->%x\n", dev->power_state, BU64243_PS(dev->power_state));
 	OV8865_LOG(0, "BU64243_EN(dev->output_status):%x-->%x\n", dev->output_status, BU64243_EN(dev->output_status));
 	OV8865_LOG(0, "BU64243_PS(dev->W0_W2):%x-->%x\n", reg,	BU64243_W0_W2(reg));
@@ -494,10 +495,20 @@ static int bu64243_power_up(struct v4l2_subdev *sd)
 }
 
 static int bu64243_power_down(struct v4l2_subdev *sd)
-{
-	/* shunyong for power on */
-	OV8865_LOG(0, "power is controlled via sensor control\n");
-	return 0;
+{	
+	int i=0,ret=0,value=0,value_step=0;
+	struct bu64243_device *dev = to_bu64243_device(sd);
+	value = dev->focus;//get current lens position
+	value_step=value/BU64243_POWER_DOWN_MOVE_LENS_POSITION_COUNT;
+	OV8865_LOG(1, "%s %d current_lens_position = %d,value_step = %d\n", __func__, __LINE__,value,value_step);
+	for(i=0;i<BU64243_POWER_DOWN_MOVE_LENS_POSITION_COUNT;i++){
+		value-=value_step;
+		OV8865_LOG(0, "wdy current lens_position   value[%d] =  %d\n",i, value);
+		bu64243_t_focus_abs(sd,value);
+		mdelay(5);
+	}
+	ret = bu64243_t_focus_abs(sd,0);
+	return ret;
 }
 
 static void bu64243_dump_regs(struct v4l2_subdev *sd)
@@ -555,38 +566,6 @@ static int bu64243_vcm_ctrl(const char *val, struct kernel_param *kp)
 	return 0;
 }
 
-/* Start group hold for the following register writes */
-static int ov8865_grouphold_start(struct v4l2_subdev *sd)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	const int group = 0;
-
-	return ov8865_write_reg(client, OV8865_8BIT,
-				OV8865_GROUP_ACCESS,
-				group | OV8865_GROUP_ACCESS_HOLD_START);
-}
-
-/* End group hold and delay launch it */
-static int ov8865_grouphold_launch(struct v4l2_subdev *sd)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	const int group = 0;
-	int ret;
-
-	/* End group */
-	ret = ov8865_write_reg(client, OV8865_8BIT,
-			       OV8865_GROUP_ACCESS,
-			       group | OV8865_GROUP_ACCESS_HOLD_END);
-	if (ret)
-		return ret;
-
-	/* Delay launch group (during next vertical blanking) */
-	return ov8865_write_reg(client, OV8865_8BIT,
-				OV8865_GROUP_ACCESS,
-				group | OV8865_GROUP_ACCESS_DELAY_LAUNCH);
-}
-
-
 static int ov8865_g_priv_int_data(struct v4l2_subdev *sd,
 				  struct v4l2_private_int_data *priv)
 {
@@ -643,68 +622,16 @@ static int __ov8865_get_max_fps_index(
 	return i - 1;
 }
 
-static int __ov8865_update_frame_timing(struct v4l2_subdev *sd, int exposure,
-			u16 *hts, u16 *vts)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	int ret;
 
-	/* Increase the VTS to match exposure + 14 */
-	if (exposure > *vts - OV8865_INTEGRATION_TIME_MARGIN)
-		*vts = (u16) exposure + OV8865_INTEGRATION_TIME_MARGIN;
+unsigned char group_start[] = {0x32, 0x08, 0x00};
+unsigned char exposure_data[] = {0x35, 0x00, 0x00, 0x00, 0x00};
+unsigned char gain_data[] = {0x35, 0x08, 0x00, 0x00};
+unsigned char vts_data[] = {0x38, 0x0e, 0x00, 0x00};
+unsigned char group_end[] = {0x32, 0x08, 0x10};
+unsigned char group_launch[] = {0x32, 0x08, 0xA0};
 
-	ret = ov8865_write_reg(client, OV8865_16BIT, OV8865_TIMING_HTS, *hts);
-	if (ret)
-		return ret;
 
-	return ov8865_write_reg(client, OV8865_16BIT, OV8865_TIMING_VTS, *vts);
-}
-
-static int __ov8865_set_exposure(struct v4l2_subdev *sd, int exposure, int gain,
-			int dig_gain, u16 *hts, u16 *vts)
-{
-	/* shunyong: disabled exposure setting */
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	int exp_val, ret;
-
-	/* Update frame timings. Expsure must be minimum <  vts-14 */
-	ret = __ov8865_update_frame_timing(sd, exposure, hts, vts);
-	if (ret)
-		return ret;
-
-	/* For OV8835, the low 4 bits are fraction bits and must be kept 0 */
-	exp_val = exposure << 4;
-	ret = ov8865_write_reg(client, OV8865_8BIT,
-			       OV8865_LONG_EXPO+2, exp_val & 0xFF);
-	if (ret)
-		return ret;
-
-	ret = ov8865_write_reg(client, OV8865_8BIT,
-			       OV8865_LONG_EXPO+1, (exp_val >> 8) & 0xFF);
-	if (ret)
-		return ret;
-
-	ret = ov8865_write_reg(client, OV8865_8BIT,
-			       OV8865_LONG_EXPO, (exp_val >> 16) & 0x0F);
-	if (ret)
-		return ret;
-
-	/* Digital gain : to all MWB channel gains */
-	if (dig_gain) {
-		ret = ov8865_write_reg(client, OV8865_8BIT,
-				OV8865_DIGI_GAIN, ((dig_gain >> 6) & 0xFF));
-		if (ret)
-			return ret;
-		ret = ov8865_write_reg(client, OV8865_8BIT,
-				(OV8865_DIGI_GAIN + 1), dig_gain & 0x3F);
-		if (ret)
-			return ret;
-
-	}
-
-	/* set global gain */
-	return ov8865_write_reg(client, OV8865_16BIT, OV8865_AGC_ADJ, gain & 0x1FFF);
-}
+struct i2c_msg exp_msg[6];
 
 static int ov8865_set_exposure(struct v4l2_subdev *sd, int exposure, int gain,
 				int dig_gain)
@@ -712,13 +639,14 @@ static int ov8865_set_exposure(struct v4l2_subdev *sd, int exposure, int gain,
 	struct ov8865_device *dev = to_ov8865_sensor(sd);
 	const struct ov8865_resolution *res;
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	u16 hts, vts;
+	u16 vts;
 	int ret;
+	int exp_val = exposure << 4;
 
 	mutex_lock(&dev->input_lock);
 
 	/* Validate exposure:  cannot exceed 16bit value */
-	exposure = clamp_t(int, exposure, 0, OV8865_MAX_EXPOSURE_VALUE);
+	exposure = clamp_t(int, exposure, 2, OV8865_MAX_EXPOSURE_VALUE);
 
 	/* Validate gain: must not exceed maximum 8bit value */
 	gain = clamp_t(int, gain, 0, OV8865_MAX_GAIN_VALUE);
@@ -727,30 +655,62 @@ static int ov8865_set_exposure(struct v4l2_subdev *sd, int exposure, int gain,
 	dig_gain = clamp_t(int, dig_gain, 0, OV8865_MWB_GAIN_MAX);
 
 	/* Group hold is valid only if sensor is streaming. */
-	if (dev->streaming) {
-		ret = ov8865_grouphold_start(sd);
-		if (ret)
-			goto out;
-	}
 
+//[End]
 	res = &dev->curr_res_table[dev->fmt_idx];
-	hts = res->fps_options[dev->fps_index].pixels_per_line;
 	vts = res->fps_options[dev->fps_index].lines_per_frame;
+	if (exposure > vts - OV8865_INTEGRATION_TIME_MARGIN)
+		vts = (u16) exposure + OV8865_INTEGRATION_TIME_MARGIN;
 
-	ret = __ov8865_set_exposure(sd, exposure, gain, dig_gain, &hts, &vts);
-	if (ret)
-		goto out;
+	exp_msg[0].addr = client->addr;
+	exp_msg[0].flags = 0;
+	exp_msg[0].len = sizeof(group_start);
+	exp_msg[0].buf = group_start;
+
+	exposure_data[2] = (exp_val >> 16) & 0x0F;
+	exposure_data[3] = (exp_val >> 8) & 0xFF;
+	exposure_data[4] = exp_val & 0xFF;
+	exp_msg[1].addr = client->addr;
+	exp_msg[1].flags = 0;
+	exp_msg[1].len = sizeof(exposure_data);
+	exp_msg[1].buf = exposure_data;
+
+	gain_data[2] = (gain >> 8) & 0x1F;
+	gain_data[3] = gain & 0xFF;
+	exp_msg[2].addr = client->addr;
+	exp_msg[2].flags = 0;
+	exp_msg[2].len = sizeof(gain_data);
+	exp_msg[2].buf = gain_data;
+
+	vts_data[2] = vts >> 8;
+	vts_data[3] = vts & 0xff;
+	exp_msg[3].addr = client->addr;
+	exp_msg[3].flags = 0;
+	exp_msg[3].len = sizeof(vts_data);
+	exp_msg[3].buf = vts_data;
+
+	exp_msg[4].addr = client->addr;
+	exp_msg[4].flags = 0;
+	exp_msg[4].len = sizeof(group_end);
+	exp_msg[4].buf = group_end;
+
+	exp_msg[5].addr = client->addr;
+	exp_msg[5].flags = 0;
+	exp_msg[5].len = sizeof(group_launch);
+	exp_msg[5].buf = group_launch;
+
+	ret = i2c_transfer(client->adapter, exp_msg, 6);
+
+	if (ret == 6) ret = 0;
+	else ret = -1;
 
 	/* Updated the device variable. These are the current values. */
 	dev->gain = gain;
 	dev->exposure = exposure;
+	dev->odm_exposure_value = exposure;
 	dev->digital_gain = dig_gain;
 
-out:
-	/* Group hold launch - delayed launch */
-	if (dev->streaming)
-		ret = ov8865_grouphold_launch(sd);
-
+//[End]
 	mutex_unlock(&dev->input_lock);
 
 	if (debug & DEBUG_GAIN_EXP) {
@@ -896,18 +856,21 @@ static int power_down(struct v4l2_subdev *sd)
 static int __ov8865_s_power(struct v4l2_subdev *sd, int on)
 {
 	struct ov8865_device *dev = to_ov8865_sensor(sd);
-	int ret, r;
+	int ret=0;
 
 	if (on == 0)
 	{
+		if(!probe_flag){
+			ret = bu64243_power_down(sd);
+			if(ret){
+				printk( "%s   bu64243_power_down  error,ret = %d\n",__func__,ret);
+				goto power_out;
+			}
+		}
 		ov8865_uninit(sd);
 		ret = power_down(sd);
 
  		/* shunyong: disable VCM for PO */
-		r = bu64243_power_down(sd);
-		if (ret == 0)
-			ret = r;
-		
 		dev->power = 0;
 	} 
 	else
@@ -917,13 +880,14 @@ static int __ov8865_s_power(struct v4l2_subdev *sd, int on)
 			return ret;
 
 		/* shunyong: disable VCM for PO */
+		if(!probe_flag){
 		ret = bu64243_power_up(sd);
-		if (ret)
-		{
-			power_down(sd);
-			return ret;
+			if (ret)
+			{
+				power_down(sd);
+				return ret;
+			}
 		}
-
 		ret = ov8865_init_registers(sd);
 		if(ret)
 		{
@@ -933,7 +897,8 @@ static int __ov8865_s_power(struct v4l2_subdev *sd, int on)
 		dev->power = 1;
 	}
 
-	return ret;
+power_out:
+		return ret;
 }
 
 static int ov8865_s_power(struct v4l2_subdev *sd, int on)
@@ -954,7 +919,35 @@ static int ov8865_s_power(struct v4l2_subdev *sd, int on)
 
 	return ret;
 }
-
+/* This returns the exposure time being used. This should only be used
+   for filling in EXIF data, not for actual image processing. */
+static int ov8865_q_exposure(struct v4l2_subdev *sd, s32 *value)
+{
+#if 0
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	u16 tmp;
+	u16 coarse;
+	int ret;
+	
+	/* the fine integration time is currently not calculated */
+	ret = ov8865_read_reg(client, OV8865_8BIT,
+			       OV8865_AEC_PK_EXPO_H, &tmp);
+	printk("%s: line: %d tmp: %d\n", __func__, __LINE__,tmp);			   
+	/* the fine integration time is currently not calculated */
+	ret = ov8865_read_reg(client, OV8865_16BIT,
+			       OV8865_AEC_PK_EXPO_M, &coarse);
+	printk("%s: line: %d coarse: %d\n", __func__, __LINE__,coarse);
+	coarse = (coarse >> 4) | ((tmp & 0xf) << 12);
+	printk("%s: line: %d coarse: %d\n", __func__, __LINE__,coarse);
+	*value = coarse;
+#else
+	int ret = 0;
+	struct ov8865_device *dev = to_ov8865_sensor(sd);
+	*value = dev->odm_exposure_value;
+	printk("%s: line: %d  *value: %d\n", __func__, __LINE__,*value);
+#endif
+	return ret;
+} 
 static int ov8865_g_chip_ident(struct v4l2_subdev *sd,
 				struct v4l2_dbg_chip_ident *chip)
 {
@@ -1045,7 +1038,7 @@ static int ov8865_get_intg_factor(struct v4l2_subdev *sd,
 	m->line_length_pck = res->fps_options[dev->fps_index].pixels_per_line;
 	m->frame_length_lines =	res->fps_options[dev->fps_index].lines_per_frame;
 	
-	m->coarse_integration_time_min = 0;
+	m->coarse_integration_time_min = 2;
 	m->coarse_integration_time_max_margin = OV8865_INTEGRATION_TIME_MARGIN;
 
 	/* OV Sensor do not use fine integration time. */
@@ -1129,61 +1122,61 @@ static int ov8865_get_intg_factor(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int __ov8865_s_frame_interval(struct v4l2_subdev *sd,
-			struct v4l2_subdev_frame_interval *interval)
-{
+//static int __ov8865_s_frame_interval(struct v4l2_subdev *sd,
+//			struct v4l2_subdev_frame_interval *interval)
+//{
 	/* shunyong disabel s_frame_interval for PO */
-#if 0
-	struct ov8865_device *dev = to_ov8865_sensor(sd);
-	struct camera_mipi_info *info = v4l2_get_subdev_hostdata(sd);
-	const struct ov8865_resolution *res =
-		res = &dev->curr_res_table[dev->fmt_idx];
-	int i;
-	int ret;
-	int fps;
-	u16 hts;
-	u16 vts;
+//#if 0
+//	struct ov8865_device *dev = to_ov8865_sensor(sd);
+//	struct camera_mipi_info *info = v4l2_get_subdev_hostdata(sd);
+//	const struct ov8865_resolution *res =
+//		res = &dev->curr_res_table[dev->fmt_idx];
+//	int i;
+//	int ret;
+//	int fps;
+//	u16 hts;
+//	u16 vts;
 
-	if (!interval->interval.numerator)
-		interval->interval.numerator = 1;
+//	if (!interval->interval.numerator)
+//		interval->interval.numerator = 1;
 
-	fps = interval->interval.denominator / interval->interval.numerator;
+//	fps = interval->interval.denominator / interval->interval.numerator;
 
 	/* Ignore if we are already using the required FPS. */
-	if (fps == res->fps_options[dev->fps_index].fps)
-		return 0;
+//	if (fps == res->fps_options[dev->fps_index].fps)
+//		return 0;
 
-	dev->fps_index = 0;
+//	dev->fps_index = 0;
 
 	/* Go through the supported FPS list */
-	for (i = 0; i < MAX_FPS_OPTIONS_SUPPORTED; i++) {
-		if (!res->fps_options[i].fps)
-			break;
-		if (abs(res->fps_options[i].fps - fps)
-		    < abs(res->fps_options[dev->fps_index].fps - fps))
-			dev->fps_index = i;
-	}
+//	for (i = 0; i < MAX_FPS_OPTIONS_SUPPORTED; i++) {
+//		if (!res->fps_options[i].fps)
+//			break;
+//		if (abs(res->fps_options[i].fps - fps)
+//		    < abs(res->fps_options[dev->fps_index].fps - fps))
+//			dev->fps_index = i;
+//	}
 
 	/* Get the new Frame timing values for new exposure */
-	hts = res->fps_options[dev->fps_index].pixels_per_line;
-	vts = res->fps_options[dev->fps_index].lines_per_frame;
+//	hts = res->fps_options[dev->fps_index].pixels_per_line;
+//	vts = res->fps_options[dev->fps_index].lines_per_frame;
 
 	/* update frametiming. Conside the curren exposure/gain as well */
-	ret = __ov8865_set_exposure(sd, dev->exposure, dev->gain,
-					dev->digital_gain, &hts, &vts);
-	if (ret)
-		return ret;
+//	ret = __ov8865_set_exposure(sd, dev->exposure, dev->gain,
+//					dev->digital_gain, &hts, &vts);
+//	if (ret)
+//		return ret;
 
 	/* Update the new values so that user side knows the current settings */
-	ret = ov8865_get_intg_factor(sd, info, dev->basic_settings_list);
-	if (ret)
-		return ret;
+//	ret = ov8865_get_intg_factor(sd, info, dev->basic_settings_list);
+//	if (ret)
+//		return ret;
 
-	interval->interval.denominator = res->fps_options[dev->fps_index].fps;
-	interval->interval.numerator = 1;
-#endif
-	return 0;
-}
+//	interval->interval.denominator = res->fps_options[dev->fps_index].fps;
+//	interval->interval.numerator = 1;
+//#endif
+//	return 0;
+//}
 
 /*
  * distance - calculate the distance
@@ -1229,7 +1222,33 @@ static int nearest_resolution_index(struct v4l2_subdev *sd, int w, int h)
 	int min_dist = INT_MAX;
 	const struct ov8865_resolution *tmp_res = NULL;
 	struct ov8865_device *dev = to_ov8865_sensor(sd);
-
+	
+	printk("-%lx %lx  w:%d h:%d\r\n", (unsigned long)dev->curr_res_table, (unsigned long )ov8865_res_preview, w, h);
+       if ((dev->curr_res_table == ov8865_res_preview)||
+		(dev->curr_res_table == ov8865_res_still)) {
+		if ((((w == 1332) && (h == 1092))) ||
+			(((w == 1320) && (h == 1080)))||
+			//(((w == 1292) &&(h == 732))) ||
+			(((w == 1024) &&(h == 576))) || (((w == 1036) &&(h == 588)))||
+			(((w == 720) &&(h == 480))) || (((w == 732) &&(h == 492)))||
+			(((w == 640) &&(h == 360))) || (((w == 652) &&(h == 372)))||
+			(((w == 320) &&(h == 180))) || (((w == 332) &&(h == 192)))){
+			w = 1632;
+			h = 1224;
+		}
+		if((((w == 1920) &&(h == 1080))) || (((w == 1280) &&(h == 720))) ||
+		(((w == 1932) &&(h == 1092)))){
+			w = 1936;
+			h = 1096;
+		}
+	}
+        if ((dev->curr_res_table == ov8865_res_still)) {
+		if ((((w == 176) && (h == 144))) ||
+			(((w == 188) && (h == 156)))){
+			w = 1632;
+			h = 1224;
+		}
+	}
 	for (i = 0; i < dev->entries_curr_table; i++) {
 		tmp_res = &dev->curr_res_table[i];
 		dist = distance(tmp_res, w, h);
@@ -1248,6 +1267,22 @@ static int get_resolution_index(struct v4l2_subdev *sd, int w, int h)
 	int i;
 	struct ov8865_device *dev = to_ov8865_sensor(sd);
 
+	printk("%lx %lx  w:%d h:%d\r\n", (unsigned long)dev->curr_res_table, (unsigned long )ov8865_res_preview, w, h);
+        if ((dev->curr_res_table == ov8865_res_preview)||
+		(dev->curr_res_table == ov8865_res_still)) {
+		if ((((w == 1332) && (h == 1092))) ||
+			(((w == 1320) && (h == 1080)))){
+			w = 1632;
+			h = 1224;
+		}
+	}
+        if ((dev->curr_res_table == ov8865_res_still)) {
+		if ((((w == 176) && (h == 144))) ||
+			(((w == 188) && (h == 156)))){
+			w = 1632;
+			h = 1224;
+		}
+	}
 	for (i = 0; i < dev->entries_curr_table; i++) {
 		if (w != dev->curr_res_table[i].width)
 			continue;
@@ -1310,7 +1345,6 @@ static int ov8865_s_mbus_fmt(struct v4l2_subdev *sd,
 	struct ov8865_device *dev = to_ov8865_sensor(sd);
 	struct camera_mipi_info *ov8865_info = NULL;
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	u16 hts, vts;
 	int ret;
 	const struct ov8865_resolution *res;
 
@@ -1345,18 +1379,6 @@ static int ov8865_s_mbus_fmt(struct v4l2_subdev *sd,
 	
 	OV8865_LOG(2, "%s %d name:%s width:%d height:%d\n", __func__, __LINE__, res->desc, res->width, res->height);
 	/* Frame timing registers are updates as part of exposure */
-	hts = res->fps_options[dev->fps_index].pixels_per_line;
-	vts = res->fps_options[dev->fps_index].lines_per_frame;
-
-	/*
-	 * update hts, vts, exposure and gain as one block. Note that the vts
-	 * will be changed according to the exposure used. But the maximum vts
-	 * dev->curr_res_table[dev->fmt_idx] should not be changed at all.
-	 */
-	ret = __ov8865_set_exposure(sd, dev->exposure, dev->gain,
-					dev->digital_gain, &hts, &vts);
-	if (ret)
-		goto out;
 
 	ret = ov8865_get_intg_factor(sd, ov8865_info, dev->basic_settings_list);
 
@@ -1512,11 +1534,11 @@ static int ov8865_s_config(struct v4l2_subdev *sd,
 	struct ov8865_device *dev = to_ov8865_sensor(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	const struct firmware *fw;
-	u8 sensor_revision;
+	u8 sensor_revision = 0xff;
 	u16 sensor_id;
 	int ret;
 
-	OV8865_LOG(2, "%s %d pdata=%x\n", __func__, __LINE__, (unsigned int)pdata);
+	OV8865_LOG(2, "%s %d pdata=%p\n", __func__, __LINE__, pdata);
 	if (pdata == NULL)
 		return -ENODEV;
 
@@ -1560,7 +1582,7 @@ static int ov8865_s_config(struct v4l2_subdev *sd,
 				OV8865_LOG(2, "ov8865 otp trans failed\n");
 		}
 	} else {
-		OV8865_LOG(2, "ov8865 load from user-space success size:0x%x\n", fw->size);
+		OV8865_LOG(2, "ov8865 load from user-space success size:0x%x\n", (unsigned int)fw->size);
 		memcpy(ov8865_raw, fw->data, fw->size);
 		ov8865_raw_size = fw->size;
 		ret = ov8865_otp_trans(ov8865_raw, ov8865_raw_size, ov8865_otp_data, &ov8865_otp_size);
@@ -1677,7 +1699,7 @@ static int ov8865_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ov8865_device *dev = container_of(
 		ctrl->handler, struct ov8865_device, ctrl_handler);
-	struct i2c_client *client = v4l2_get_subdevdata(&dev->sd);
+	//struct i2c_client *client = v4l2_get_subdevdata(&dev->sd);
 
 	/* input_lock is taken by the control framework, so it
 	 * doesn't need to be taken here.
@@ -1704,9 +1726,11 @@ static int ov8865_s_ctrl(struct v4l2_ctrl *ctrl)
 		dev->fps_index = 0;
 
 		return 0;
+	#if 0
 	case V4L2_CID_TEST_PATTERN:
 		return ov8865_write_reg(client, OV8865_16BIT, 0x3070,
 					ctrl->val);
+	#endif
 	/* shunyong: disable focus when PO */
 
 	case V4L2_CID_FOCUS_ABSOLUTE:
@@ -1720,7 +1744,7 @@ static int ov8865_g_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ov8865_device *dev = container_of(
 		ctrl->handler, struct ov8865_device, ctrl_handler);
-
+	
 	switch (ctrl->id) {
 		/* shunyong, disable Focus when PO */
 		case V4L2_CID_FOCUS_STATUS: {
@@ -1755,9 +1779,13 @@ static int ov8865_g_ctrl(struct v4l2_ctrl *ctrl)
 
 			OV8865_LOG(0, "bin-factor for ISP:%d\n",  ctrl->val);
 			return 0;
-		}
+		} 
 	}
-
+	
+	if(ctrl->type == V4L2_CTRL_TYPE_MENU) {
+		ov8865_q_exposure(&dev->sd,&ctrl->val);
+	}
+	
 	return 0;
 }
 
@@ -1780,7 +1808,7 @@ ov8865_g_frame_interval(struct v4l2_subdev *sd,
 
 	return 0;
 }
-
+/*
 static int ov8865_s_frame_interval(struct v4l2_subdev *sd,
 			struct v4l2_subdev_frame_interval *interval)
 {
@@ -1793,7 +1821,7 @@ static int ov8865_s_frame_interval(struct v4l2_subdev *sd,
 
 	return ret;
 }
-
+*/
 static int ov8865_g_skip_frames(struct v4l2_subdev *sd, u32 *frames)
 {
 	struct ov8865_device *dev = to_ov8865_sensor(sd);
@@ -1894,6 +1922,7 @@ static const struct v4l2_ctrl_config ctrls[] = {
 		.type = V4L2_CTRL_TYPE_MENU,
 		.max = 0xffff,
 		.qmenu = ctrl_run_mode_menu,
+		.flags = V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_VOLATILE,//yxw add
 	}, {
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_TEST_PATTERN,
@@ -2044,6 +2073,7 @@ static int ov8865_probe(struct i2c_client *client,
 	
 	global_dev = dev;
 	OV8865_LOG(2, "%s %d done\n", __func__, __LINE__);
+	probe_flag=0;
 	return 0;
 
 out_free:

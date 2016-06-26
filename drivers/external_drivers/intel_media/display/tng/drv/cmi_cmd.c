@@ -31,6 +31,7 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/intel_pmic.h>
 #include <linux/regulator/machine.h>
+#include <asm/intel_scu_ipcutil.h>
 #include <asm/intel_scu_pmic.h>
 #include <asm/intel_mid_rpmsg.h>
 #include <asm/intel_mid_remoteproc.h>
@@ -286,7 +287,7 @@ int mdfld_cmi_drv_ic_init(struct mdfld_dsi_config *dsi_config)
 
 	/* turn CABC on*/
 	mdfld_dsi_send_mcs_short_hs(sender,
-			write_ctrl_cabc, STILL_IMAGE, 1,
+			write_ctrl_cabc, dsi_config->cabc_mode, 1,
 			MDFLD_DSI_SEND_PACKAGE);
 
 	mdfld_dsi_send_mcs_long_hs(sender, cmi_mcs_protect_on, 4, 0);
@@ -500,7 +501,7 @@ static int mdfld_dsi_cmi_cmd_power_off(struct mdfld_dsi_config *dsi_config)
 
 	/* turn off cabc */
 	err = mdfld_dsi_send_mcs_short_hs(sender,
-		write_ctrl_cabc, 0, 1,
+		write_ctrl_cabc, CABC_MODE_OFF, 1,
 		MDFLD_DSI_SEND_PACKAGE);
 
 	/*turn off backlight*/
@@ -648,7 +649,7 @@ int mdfld_dsi_cmi_cmd_set_brightness(struct mdfld_dsi_config *dsi_config,
 		DRM_ERROR("Failed to get DSI packet sender\n");
 		return -EINVAL;
 	}
-	duty_val = (255 * level) / 100;
+	duty_val = (255 * level) / 255;
 	cmi_set_brightness[1] = duty_val;
 
 	mdfld_dsi_send_mcs_short_hs(sender,
@@ -657,22 +658,37 @@ int mdfld_dsi_cmi_cmd_set_brightness(struct mdfld_dsi_config *dsi_config,
 	return 0;
 }
 
+#define MSIC_VPROG2_MRFLD_CTRL          0xAD
+#define MSIC_B0_VPROG2_MRFLD_CTRL       0x141
+#define PMIC_ID_ADDR                    0x00
+#define PMIC_CHIP_ID_B0_VAL             0x08
+
 static void __vpro2_power_ctrl(bool on)
 {
-	u8 addr, value;
-	addr = 0xad;
-	if (intel_scu_ipc_ioread8(addr, &value))
-		DRM_ERROR("%s: %d: failed to read vPro2\n", __func__, __LINE__);
+        u8 value, addr = MSIC_VPROG2_MRFLD_CTRL;
+        int ret = 0xFF;
+        uint8_t pmic_id = 0;
 
-	/* Control vPROG2 power rail with 2.85v. */
-	if (on)
-		value |= 0x1;
-	else
-		value &= ~0x1;
+        ret  = intel_scu_ipc_ioread8(PMIC_ID_ADDR, &pmic_id);
 
-	if (intel_scu_ipc_iowrite8(addr, value))
-		DRM_ERROR("%s: %d: failed to write vPro2\n",
-				__func__, __LINE__);
+	if (!ret) {
+		if (PMIC_CHIP_ID_B0_VAL == pmic_id)
+			addr = MSIC_B0_VPROG2_MRFLD_CTRL;
+
+		if (intel_scu_ipc_ioread8(addr, &value))
+			DRM_ERROR("%s: %d: failed to read vPro2\n", __func__, __LINE__);
+
+		/* Control vPROG2 power rail with 2.85v. */
+		if (on)
+			value |= 0x1;
+		else
+			value &= ~0x1;
+
+		if (intel_scu_ipc_iowrite8(addr, value))
+			DRM_ERROR("%s: %d: failed to write vPro2\n",__func__, __LINE__);
+	} else {
+		DRM_ERROR("%s: %d: failed to read pmic id \n",__func__, __LINE__);
+	}
 }
 static
 void _get_panel_reset_gpio(void)
@@ -714,7 +730,7 @@ int mdfld_dsi_cmi_cmd_panel_reset(struct mdfld_dsi_config *dsi_config)
 					NULL, 0,
 					SECURE_I2C_FLIS_REG, 0);
 
-	__vpro2_power_ctrl(true);
+	intel_scu_ipc_msic_vprog2(true);
 	usleep_range(2000, 2500);
 
 	_get_panel_reset_gpio();

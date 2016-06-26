@@ -156,6 +156,19 @@ bool otm_hdmi_hdcp_enable(hdmi_context_t *hdmi_context,
 bool otm_hdmi_hdcp_disable(hdmi_context_t *hdmi_context);
 
 /**
+ * Description: copy BKSV to the buffer
+ *
+ * @bksv: buffer to receive bksv
+ * @size: length of buffer
+ *
+ * Returns:	true on success
+ *		false on failure
+ */
+
+bool otm_hdmi_hdcp_get_bksv(uint8_t *bksv, int size);
+
+
+/**
  * Description: hdcp init function
  *
  * @hdmi_context handle hdmi_context

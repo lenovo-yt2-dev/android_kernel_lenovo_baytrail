@@ -49,6 +49,15 @@ struct mid_vibra_pdata pmic_vibra_data_byt_ffrd8 = {
 	.base_unit	= 0x0,
 	.gpio_pwm	= -1,
 	.name		= "drv8601",
+	.use_gpio_en    = true,
+};
+
+struct mid_vibra_pdata pmic_vibra_data_cht = {
+	.time_divisor	= 0x7f, /* for 50% duty cycle */
+	.base_unit	= 0x0,
+	.gpio_pwm	= -1,
+	.name		= "VIBR22A8",
+	.use_gpio_en    = false, /* CHT vibra does not use gpio enable control */
 };
 
 static int vibra_pmic_pwm_configure(struct vibra_info *info, bool enable)
@@ -116,16 +125,17 @@ int intel_mid_plat_vibra_probe(struct platform_device *pdev)
 	pr_debug("%s for %s", __func__, hid);
 
 	data = mid_vibra_acpi_get_drvdata(hid);
-	printk("wqf %s:time_divisor=%x\n",__func__,data->time_divisor);
 	if (!data) {
 		pr_err("Invalid driver data\n");
 		return -ENODEV;
 	}
 
-	data->gpio_en = acpi_get_gpio_by_index(&pdev->dev, 0, NULL);
-	if (data->gpio_en < 0) {
-		pr_err("Invalid gpio number from acpi\n");
-		return -ENODEV;
+	if (data->use_gpio_en) {
+		data->gpio_en = acpi_get_gpio_by_index(&pdev->dev, 0, NULL);
+		if (data->gpio_en < 0) {
+			pr_err("Invalid gpio number from acpi\n");
+			return -ENODEV;
+		}
 	}
 
 	info = mid_vibra_setup(dev, data);
@@ -136,20 +146,26 @@ int intel_mid_plat_vibra_probe(struct platform_device *pdev)
 	info->max_base_unit = CRYSTALCOVE_PMIC_VIBRA_MAX_BASEUNIT;
 	info->max_duty_cycle = INTEL_VIBRA_MAX_TIMEDIVISOR;
 
-	pr_debug("%s: using gpio_en: %d", __func__, info->gpio_en);
-	ret = gpio_request_one(info->gpio_en, GPIOF_DIR_OUT, "VIBRA ENABLE");
-	if (ret != 0) {
-		pr_err("gpio_request(%d) fails:%d\n", info->gpio_en, ret);
-		return ret;
+	if (data->use_gpio_en) {
+		pr_debug("%s: using gpio_en: %d", __func__, info->gpio_en);
+		ret = gpio_request_one(info->gpio_en, GPIOF_DIR_OUT,
+				"VIBRA ENABLE");
+		if (ret != 0) {
+			pr_err("gpio_request(%d) fails:%d\n",
+					info->gpio_en, ret);
+			return ret;
+		}
+		/* Re configure the PWM EN GPIO to have drive type as CMOS
+		 * and pull disable
+		 */
+		intel_mid_pmic_writeb(CRYSTALCOVE_PMIC_PWM_EN_GPIO_REG,
+				CRYSTALCOVE_PMIC_PWM_EN_GPIO_VALUE);
 	}
-	/* Re configure the PWM EN GPIO to have drive type as CMOS and pull disable*/
-	intel_mid_pmic_writeb(CRYSTALCOVE_PMIC_PWM_EN_GPIO_REG,
-			CRYSTALCOVE_PMIC_PWM_EN_GPIO_VALUE);
 
 	ret = sysfs_create_group(&dev->kobj, info->vibra_attr_group);
 	if (ret) {
 		pr_err("could not register sysfs files\n");
-		gpio_free(info->gpio_en);
+		vibra_gpio_free(info);
 		return ret;
 	}
 
@@ -163,7 +179,7 @@ int intel_mid_plat_vibra_probe(struct platform_device *pdev)
 int intel_mid_plat_vibra_remove(struct platform_device *pdev)
 {
 	struct vibra_info *info = platform_get_drvdata(pdev);
-	gpio_free(info->gpio_en);
+	vibra_gpio_free(info);
 	sysfs_remove_group(&info->dev->kobj, info->vibra_attr_group);
 	platform_set_drvdata(pdev, NULL);
 	return 0;

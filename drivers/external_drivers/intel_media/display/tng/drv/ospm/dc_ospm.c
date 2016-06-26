@@ -30,6 +30,7 @@
 #include "pmu_tng.h"
 #include "tng_wa.h"
 #include "mrfld_clock.h"
+#include "mdfld_output.h"
 #include <asm/intel-mid.h>
 
 /***********************************************************
@@ -92,9 +93,14 @@ static bool disp_a_power_up(struct drm_device *dev,
 		if (!ret)
 			apply_TNG_A0_workarounds(OSPM_DISPLAY_ISLAND, 0);
 	}
+	/* ANN A0 workarounds */
+	if (IS_ANN(dev))
+		apply_ANN_A0_workarounds(OSPM_DISPLAY_ISLAND, 0);
 
 	PSB_DEBUG_PM("Power on island %x, returned %d\n", p_island->island, ret);
 
+	/* FIXME: Can we move dpst out of ospm code? */
+	psb_dpst_diet_restore(dev);
 	return !ret;
 }
 
@@ -108,6 +114,7 @@ static bool disp_a_power_down(struct drm_device *dev,
 {
 	bool ret;
 
+	psb_dpst_diet_save(dev);
 #ifndef USE_GFX_INTERNAL_PM_FUNC
 	ret = pmu_nc_set_power_state(PMU_DISP_A, OSPM_ISLAND_DOWN, DSP_SS_PM);
 #else
@@ -325,7 +332,10 @@ void ospm_mio_init(struct drm_device *dev,
 {
 	p_island->p_funcs->power_up = mio_power_up;
 	p_island->p_funcs->power_down = mio_power_down;
-	p_island->p_dependency = get_island_ptr(OSPM_DISPLAY_A);
+	if (get_panel_type(dev, 0) == SDC_25x16_CMD)
+		p_island->p_dependency = NULL;
+	else
+		p_island->p_dependency = get_island_ptr(OSPM_DISPLAY_A);
 }
 
 /***********************************************************

@@ -22,6 +22,11 @@
 #ifndef __IA_CSS_DP_TYPES_H
 #define __IA_CSS_DP_TYPES_H
 
+/** @file
+* CSS-API header file for Defect Pixel Correction (DPC) parameters.
+*/
+
+
 /** Defect Pixel Correction configuration.
  *
  *  ISP block: DPC1 (DPC after WB)

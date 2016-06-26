@@ -138,6 +138,12 @@ void ospm_runtime_pm_forbid(struct drm_device *dev);
 void acquire_ospm_lock(void);
 void release_ospm_lock(void);
 
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+void ospm_resume_display(struct pci_dev *pdev);
+void ospm_suspend_display(struct drm_device *dev);
+#endif
+//ASUS_BSP: [DDS] ---
 
 /*
  * If vec/ved/gfx are idle, submit a request to execute the subsystem-level

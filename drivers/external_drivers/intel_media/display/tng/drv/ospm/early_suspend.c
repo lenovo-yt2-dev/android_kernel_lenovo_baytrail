@@ -33,6 +33,7 @@
 #include "early_suspend.h"
 #include "android_hdmi.h"
 #include "gfx_rtpm.h"
+#include "dc_maxfifo.h"
 
 static struct drm_device *g_dev;
 
@@ -47,6 +48,16 @@ static void gfx_early_suspend(struct early_suspend *h)
 
 	flush_workqueue(dev_priv->power_wq);
 
+	/*
+	 * exit s0i1-disp mode to avoid keeing system in s0i1-disp mode,
+	 * otherwise, we may block system entering into other s0i1 mode
+	 * after screen off
+	 */
+	maxfifo_timer_stop(dev);
+	exit_maxfifo_mode(dev);
+
+	if (dev_priv->psb_dpst_state)
+		psb_irq_disable_dpst(dev);
 	/* protect early_suspend with dpms and mode config */
 	mutex_lock(&dev->mode_config.mutex);
 
@@ -82,6 +93,8 @@ static void gfx_early_suspend(struct early_suspend *h)
 	dev_priv->early_suspended = true;
 
 	mutex_unlock(&dev->mode_config.mutex);
+	psb_dpst_notify_change_um(DPST_EVENT_HIST_INTERRUPT,
+						  dev_priv->psb_dpst_state);
 }
 
 static void gfx_late_resume(struct early_suspend *h)
@@ -117,9 +130,11 @@ static void gfx_late_resume(struct early_suspend *h)
 	 * when system suspend,re-detect once here.
 	 */
 	if (android_hdmi_is_connected(dev)) {
+		DCLockMutex();
 		DCAttachPipe(1);
 		DC_MRFLD_onPowerOn(1);
 		mid_hdmi_audio_resume(dev);
+		DCUnLockMutex();
 	}
 
 	mutex_unlock(&dev->mode_config.mutex);

@@ -22,6 +22,11 @@
 #ifndef __PLATFORM_SUPPORT_H_INCLUDED__
 #define __PLATFORM_SUPPORT_H_INCLUDED__
 
+/**
+* @file
+* Platform specific includes and functionality.
+*/
+
 #if defined(_MSC_VER)
 /*
  * Put here everything _MSC_VER specific not covered in
@@ -29,6 +34,7 @@
  */
 #include "hrt/defs.h"
 #include "storage_class.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -38,8 +44,9 @@ hrt_sleep(void)
 	/* Empty for now. Polling is not used in many places */
 }
 
-/* Ignore warning 4505: Unreferenced local function has been removed */
-#pragma warning(disable: 4505)
+/* Ignore warning 4505: Unreferenced local function has been removed    *
+ * Ignore warning 4324: structure was padded due to __declspec(align()) */
+#pragma warning(disable : 4505 4324)
 
 #define CSS_ALIGN(d, a) _declspec(align(a)) d
 #define inline      __inline
@@ -83,6 +90,7 @@ hrt_sleep(void)
  */
 #include "hrt/host.h"
 #include <string.h>
+#include <stdarg.h>
 #include <stdio.h>
 
 #define CSS_ALIGN(d, a) d __attribute__((aligned(a)))

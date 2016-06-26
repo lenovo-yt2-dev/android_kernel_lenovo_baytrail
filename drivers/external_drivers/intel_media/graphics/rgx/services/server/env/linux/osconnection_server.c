@@ -49,7 +49,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #if defined (SUPPORT_ION)
 #include <linux/err.h>
-#include "linux/ion.h"
+#include PVR_ANDROID_ION_HEADER
 
 /*
 	The ion device (the base object for all requests)

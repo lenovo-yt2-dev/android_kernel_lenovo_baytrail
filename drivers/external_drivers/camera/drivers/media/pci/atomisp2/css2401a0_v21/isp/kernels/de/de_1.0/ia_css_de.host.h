@@ -30,7 +30,8 @@ extern const struct ia_css_de_config default_de_config;
 void
 ia_css_de_encode(
 	struct sh_css_isp_de_params *to,
-	const struct ia_css_de_config *from);
+	const struct ia_css_de_config *from,
+	unsigned size);
 
 void
 ia_css_de_dump(
@@ -41,5 +42,10 @@ void
 ia_css_de_debug_dtrace(
 	const struct ia_css_de_config *config,
 	unsigned level);
+
+void
+ia_css_init_de_state(
+	void/*struct sh_css_isp_de_vmem_state*/ *state,
+	size_t size);
 
 #endif /* __IA_CSS_DE_HOST_H */

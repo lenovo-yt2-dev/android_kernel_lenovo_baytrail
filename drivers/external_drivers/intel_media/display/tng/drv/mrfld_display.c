@@ -145,6 +145,7 @@ void mrfld_disable_crtc(struct drm_device *dev, int pipe, bool plane_d)
 	PSB_DEBUG_ENTRY("pipe = %d\n", pipe);
 
 	if (pipe != 1 && ((get_panel_type(dev, pipe) == JDI_7x12_VID) ||
+			(get_panel_type(dev, pipe) == SHARP_10x19_VID) ||
 			(get_panel_type(dev, pipe) == CMI_7x12_VID)))
 		return;
 
@@ -209,6 +210,28 @@ void mrfld_disable_crtc(struct drm_device *dev, int pipe, bool plane_d)
 	/* Disable PLLs. */
 }
 
+void mofd_update_fifo_size(struct drm_device *dev, bool hdmi_on)
+{
+	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct mdfld_dsi_config *dsi_config = dev_priv->dsi_configs[0];
+	struct mdfld_dsi_hw_context *ctx = &dsi_config->dsi_hw_context;
+
+	DRM_INFO("setting fifo size, hdmi_suspend: %d\n", hdmi_on);
+
+	if (!hdmi_on) {
+		/* no hdmi, 12KB for plane A D E F */
+		REG_WRITE(DSPARB2, 0x90180);
+		REG_WRITE(DSPARB, 0xc0300c0);
+	} else {
+		/* with hdmi, 10KB for plane A D E F; 8KB for plane B */
+		REG_WRITE(DSPARB2, 0x981c0);
+		REG_WRITE(DSPARB, 0x120480a0);
+	}
+
+	ctx->dsparb = REG_READ(DSPARB);
+	ctx->dsparb2 = REG_READ(DSPARB2);
+}
+
 /**
  * Sets the power management mode of crtc including the pll pipe and plane.
  *
@@ -242,14 +265,22 @@ static void mrfld_crtc_dpms(struct drm_crtc *crtc, int mode)
 	 * NOTE: this path only works for TMD panel now. update it to
 	 * support all MIPI panels later.
 	 */
-	if (pipe != 1 && ((get_panel_type(dev, pipe) == TMD_VID) ||
+	if (pipe != 1 && (IS_MOFD(dev) ||
+				(get_panel_type(dev, pipe) == TMD_VID) ||
 				(get_panel_type(dev, pipe) == TMD_6X10_VID) ||
 				(get_panel_type(dev, pipe) == CMI_7x12_VID) ||
 				(get_panel_type(dev, pipe) == CMI_7x12_CMD) ||
 				(get_panel_type(dev, pipe) == SHARP_10x19_CMD) ||
+				(get_panel_type(dev, pipe) == SHARP_10x19_VID) ||
+				(get_panel_type(dev, pipe) == SHARP_10x19_DUAL_CMD) ||
 				(get_panel_type(dev, pipe) == SHARP_25x16_CMD) ||
+				(get_panel_type(dev, pipe) == SDC_16x25_CMD) ||
+				(get_panel_type(dev, pipe) == SDC_25x16_CMD) ||
 				(get_panel_type(dev, pipe) == JDI_7x12_CMD) ||
-				(get_panel_type(dev, pipe) == JDI_7x12_VID))) {
+				(get_panel_type(dev, pipe) == JDI_7x12_VID) ||
+				(get_panel_type(dev, pipe) == SHARP_25x16_VID) ||
+				(get_panel_type(dev, pipe) == JDI_25x16_CMD) ||
+				(get_panel_type(dev, pipe) == JDI_25x16_VID))) {
 		return;
 	}
 #endif
@@ -481,6 +512,9 @@ static void mrfld_crtc_dpms(struct drm_crtc *crtc, int mode)
 		if ((pipe == 1) && hdmi_priv)
 			hdmi_priv->hdmi_suspended = true;
 
+		if (IS_ANN(dev))
+			mofd_update_fifo_size(dev, false);
+
 		/* Make the pending flip request as completed. */
 		DCUnAttachPipe(pipe);
 		DC_MRFLD_onPowerOff(pipe);
@@ -507,17 +541,36 @@ static int mrfld_crtc_mode_set(struct drm_crtc *crtc,
 	int pipe = psb_intel_crtc->pipe;
 
 	PSB_DEBUG_ENTRY("pipe = 0x%x\n", pipe);
-	if (pipe != 1) {
-		if (pipe == 0)
-			dsi_config = dev_priv->dsi_configs[0];
-		else if (pipe == 2)
-			dsi_config = dev_priv->dsi_configs[1];
 
-		mrfld_setup_pll(dev, pipe, adjusted_mode->clock);
+	switch (pipe) {
+	case 0:
+		dsi_config = dev_priv->dsi_configs[0];
+		break;
+	case 1:
+		break;
+	case 2:
+		dsi_config = dev_priv->dsi_configs[1];
+		break;
+	default:
+		DRM_ERROR("Illegal Pipe Number. \n");
+		return 0;
+	}
+
+	if (pipe != 1) {
+		int clk;
+
+		if (dsi_config->lane_count)
+			clk = adjusted_mode->clock / dsi_config->lane_count;
+		else
+			clk = adjusted_mode->clock;
+
+		mrfld_setup_pll(dev, pipe, clk);
 
 		return mdfld_crtc_dsi_mode_set(crtc, dsi_config, mode,
 				adjusted_mode, x, y, old_fb);
 	} else {
+		if (IS_ANN(dev))
+			mofd_update_fifo_size(dev, true);
 		android_hdmi_crtc_mode_set(crtc, mode, adjusted_mode,
 				x, y, old_fb);
 

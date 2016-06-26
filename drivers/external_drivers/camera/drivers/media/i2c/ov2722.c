@@ -34,7 +34,12 @@
 #include <linux/gpio.h>
 #include <linux/moduleparam.h>
 #include <media/v4l2-device.h>
+#ifndef CONFIG_GMIN_INTEL_MID /* FIXME! for non-gmin*/
 #include <media/v4l2-chip-ident.h>
+#else
+#include <linux/atomisp_gmin_platform.h>
+#endif
+#include <linux/acpi.h>
 #include <linux/io.h>
 
 #include "ov2722.h"
@@ -283,7 +288,6 @@ static int ov2722_g_fnumber_range(struct v4l2_subdev *sd, s32 *val)
 	return 0;
 }
 
-
 static int ov2722_get_intg_factor(struct i2c_client *client,
 				struct camera_mipi_info *info,
 				const struct ov2722_resolution *res)
@@ -394,19 +398,21 @@ static long __ov2722_set_exposure(struct v4l2_subdev *sd, int coarse_itg,
 
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	u16 vts;
-	int frame_length;
+	struct ov2722_device *dev = to_ov2722_sensor(sd);
+	u16 hts, vts;
 	int ret;
 
-	ret = ov2722_read_reg(client, OV2722_16BIT,
-					OV2722_VTS_DIFF_H, &vts);
+	/* clear VTS_DIFF on manual mode */
+	ret = ov2722_write_reg(client, OV2722_16BIT, OV2722_VTS_DIFF_H, 0);
 	if (ret)
 		return ret;
 
-	if ((coarse_itg + 6) >= vts)
-		frame_length = (coarse_itg + 6) - vts;
-	else
-		frame_length = 0;
+	hts = dev->pixels_per_line;
+	vts = dev->lines_per_frame;;
+
+	if ((coarse_itg + OV2722_COARSE_INTG_TIME_MAX_MARGIN) > vts)
+		vts = coarse_itg + OV2722_COARSE_INTG_TIME_MAX_MARGIN;
+
 	coarse_itg <<= 4;
 	digitgain <<= 2;
 
@@ -416,7 +422,12 @@ static long __ov2722_set_exposure(struct v4l2_subdev *sd, int coarse_itg,
 		return ret;
 
 	ret = ov2722_write_reg(client, OV2722_16BIT,
-				OV2722_VTS_DIFF_H, frame_length >> 8);
+				OV2722_VTS_H, vts);
+	if (ret)
+		return ret;
+
+	ret = ov2722_write_reg(client, OV2722_16BIT,
+				OV2722_HTS_H, hts);
 	if (ret)
 		return ret;
 
@@ -598,6 +609,28 @@ struct ov2722_control ov2722_controls[] = {
 };
 #define N_CONTROLS (ARRAY_SIZE(ov2722_controls))
 
+static int ov2722_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ov2722_device *dev = container_of(ctrl->handler, struct ov2722_device,
+			ctrl_handler);
+	unsigned int val;
+
+	switch (ctrl->id) {
+	case V4L2_CID_LINK_FREQ:
+		val = ov2722_res[dev->fmt_idx].mipi_freq;
+		if (val == 0)
+			return -EINVAL;
+
+		ctrl->val = val * 1000;			/* To Hz */
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+
 static struct ov2722_control *ov2722_find_control(u32 id)
 {
 	int i;
@@ -675,6 +708,58 @@ static int ov2722_init(struct v4l2_subdev *sd)
 	return 0;
 }
 
+static int power_ctrl(struct v4l2_subdev *sd, bool flag)
+{
+	int ret = -1;
+	struct ov2722_device *dev = to_ov2722_sensor(sd);
+
+	if (!dev || !dev->platform_data)
+		return -ENODEV;
+
+	/* Non-gmin platforms use the legacy callback */
+	if (dev->platform_data->power_ctrl)
+		return dev->platform_data->power_ctrl(sd, flag);
+
+#ifdef CONFIG_GMIN_INTEL_MID
+	if (flag) {
+		ret = dev->platform_data->v2p8_ctrl(sd, 1);
+		if (ret == 0) {
+			ret = dev->platform_data->v1p8_ctrl(sd, 1);
+			if (ret)
+			   dev->platform_data->v2p8_ctrl(sd, 0);
+		}
+	} else {
+		ret = dev->platform_data->v1p8_ctrl(sd, 0);
+		ret |= dev->platform_data->v2p8_ctrl(sd, 0);
+	}
+#endif
+
+	return ret;
+}
+
+static int gpio_ctrl(struct v4l2_subdev *sd, bool flag)
+{
+	struct ov2722_device *dev = to_ov2722_sensor(sd);
+	int ret = -1;
+
+	if (!dev || !dev->platform_data)
+		return -ENODEV;
+
+	/* Non-gmin platforms use the legacy callback */
+	if (dev->platform_data->gpio_ctrl)
+		return dev->platform_data->gpio_ctrl(sd, flag);
+
+#ifdef CONFIG_GMIN_INTEL_MID
+	/* Note: the GPIO order is asymmetric: always RESET#
+	 * before PWDN# when turning it on or off. */
+	ret = dev->platform_data->gpio0_ctrl(sd, flag);
+	/*
+	 *ov2722 PWDN# active high when pull down,opposite to the convention
+	 */
+	ret |= dev->platform_data->gpio1_ctrl(sd, !flag);
+#endif
+	return ret;
+}
 
 static int power_up(struct v4l2_subdev *sd)
 {
@@ -689,7 +774,7 @@ static int power_up(struct v4l2_subdev *sd)
 	}
 
 	/* power control */
-	ret = dev->platform_data->power_ctrl(sd, 1);
+	ret = power_ctrl(sd, 1);
 	if (ret)
 		goto fail_power;
 
@@ -697,9 +782,9 @@ static int power_up(struct v4l2_subdev *sd)
 	usleep_range(5000, 6000);
 
 	/* gpio ctrl */
-	ret = dev->platform_data->gpio_ctrl(sd, 1);
+	ret = gpio_ctrl(sd, 1);
 	if (ret) {
-		ret = dev->platform_data->gpio_ctrl(sd, 1);
+		ret = gpio_ctrl(sd, 0);
 		if (ret)
 			goto fail_power;
 	}
@@ -740,15 +825,15 @@ static int power_down(struct v4l2_subdev *sd)
 		dev_err(&client->dev, "flisclk failed\n");
 
 	/* gpio ctrl */
-	ret = dev->platform_data->gpio_ctrl(sd, 0);
+	ret = gpio_ctrl(sd, 0);
 	if (ret) {
-		ret = dev->platform_data->gpio_ctrl(sd, 0);
+		ret = gpio_ctrl(sd, 0);
 		if (ret)
 			dev_err(&client->dev, "gpio failed 2\n");
 	}
 
 	/* power control */
-	ret = dev->platform_data->power_ctrl(sd, 0);
+	ret = power_ctrl(sd, 0);
 	if (ret)
 		dev_err(&client->dev, "vprog failed.\n");
 
@@ -909,6 +994,9 @@ static int ov2722_s_mbus_fmt(struct v4l2_subdev *sd,
 		mutex_unlock(&dev->input_lock);
 		return -EINVAL;
 	}
+
+	dev->pixels_per_line = ov2722_res[dev->fmt_idx].pixels_per_line;
+	dev->lines_per_frame = ov2722_res[dev->fmt_idx].lines_per_frame;
 
 	ret = startup(sd);
 	if (ret) {
@@ -1261,6 +1349,22 @@ static const struct v4l2_subdev_sensor_ops ov2722_sensor_ops = {
 	.g_skip_frames	= ov2722_g_skip_frames,
 };
 
+static struct v4l2_ctrl_ops ov2722_ctrl_ops = {
+	.g_volatile_ctrl = ov2722_g_volatile_ctrl,
+};
+
+static const struct v4l2_ctrl_config v4l2_ctrl_link_freq = {
+	.ops = &ov2722_ctrl_ops,
+	.id = V4L2_CID_LINK_FREQ,
+	.name = "Link Frequency",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.min = 1,
+	.max = 1500000 * 1000,
+	.step = 1,
+	.def = 1,
+	.flags = V4L2_CTRL_FLAG_VOLATILE | V4L2_CTRL_FLAG_READ_ONLY,
+};
+
 static const struct v4l2_subdev_video_ops ov2722_video_ops = {
 	.s_stream = ov2722_s_stream,
 	.g_parm = ov2722_g_parm,
@@ -1306,10 +1410,31 @@ static int ov2722_remove(struct i2c_client *client)
 		dev->platform_data->platform_deinit();
 
 	dev->platform_data->csi_cfg(sd, 0);
-
+	v4l2_ctrl_handler_free(&dev->ctrl_handler);
 	v4l2_device_unregister_subdev(sd);
 	media_entity_cleanup(&dev->sd.entity);
 	kfree(dev);
+
+	return 0;
+}
+
+static int __ov2722_init_ctrl_handler(struct ov2722_device *dev)
+{
+	struct v4l2_ctrl_handler *hdl;
+
+	hdl = &dev->ctrl_handler;
+
+	v4l2_ctrl_handler_init(&dev->ctrl_handler, 3);
+
+	dev->link_freq = v4l2_ctrl_new_custom(&dev->ctrl_handler,
+					      &v4l2_ctrl_link_freq,
+					      NULL);
+
+	if (dev->ctrl_handler.error || dev->link_freq == NULL) {
+		return dev->ctrl_handler.error;
+	}
+
+	dev->sd.ctrl_handler = hdl;
 
 	return 0;
 }
@@ -1318,6 +1443,7 @@ static int ov2722_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
 	struct ov2722_device *dev;
+	void *ovpdev;
 	int ret;
 
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
@@ -1331,12 +1457,20 @@ static int ov2722_probe(struct i2c_client *client,
 	dev->fmt_idx = 0;
 	v4l2_i2c_subdev_init(&(dev->sd), client, &ov2722_ops);
 
-	if (client->dev.platform_data) {
-		ret = ov2722_s_config(&dev->sd, client->irq,
-				       client->dev.platform_data);
-		if (ret)
-			goto out_free;
-	}
+	ovpdev = client->dev.platform_data;
+#ifdef CONFIG_GMIN_INTEL_MID
+	if (ACPI_COMPANION(&client->dev))
+		ovpdev = gmin_camera_platform_data(&dev->sd,
+						   ATOMISP_INPUT_FORMAT_RAW_10,
+						   atomisp_bayer_order_grbg);
+#endif
+	ret = ov2722_s_config(&dev->sd, client->irq, ovpdev);
+	if (ret)
+		goto out_free;
+
+	ret = __ov2722_init_ctrl_handler(dev);
+	if (ret)
+		goto out_ctrl_handler_free;
 
 	dev->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	dev->pad.flags = MEDIA_PAD_FL_SOURCE;
@@ -1347,7 +1481,16 @@ static int ov2722_probe(struct i2c_client *client,
 	if (ret)
 		ov2722_remove(client);
 
+#ifdef CONFIG_GMIN_INTEL_MID
+	if (ACPI_HANDLE(&client->dev))
+		ret = atomisp_register_i2c_module(&dev->sd, ovpdev, RAW_CAMERA);
+#endif
+
 	return ret;
+
+out_ctrl_handler_free:
+	v4l2_ctrl_handler_free(&dev->ctrl_handler);
+
 out_free:
 	v4l2_device_unregister_subdev(&dev->sd);
 	kfree(dev);
@@ -1355,10 +1498,19 @@ out_free:
 }
 
 MODULE_DEVICE_TABLE(i2c, ov2722_id);
+
+static struct acpi_device_id ov2722_acpi_match[] = {
+	{ "INT33FB" },
+	{},
+};
+
+MODULE_DEVICE_TABLE(acpi, ov2722_acpi_match);
+
 static struct i2c_driver ov2722_driver = {
 	.driver = {
 		.owner = THIS_MODULE,
 		.name = OV2722_NAME,
+		.acpi_match_table = ACPI_PTR(ov2722_acpi_match),
 	},
 	.probe = ov2722_probe,
 	.remove = ov2722_remove,

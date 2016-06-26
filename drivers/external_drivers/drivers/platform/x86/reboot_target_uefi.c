@@ -46,6 +46,7 @@ static void uefi_string_to_varname(const char *name, int size, wchar_t *varname)
 static const efi_guid_t LOADER_GUID =
 	EFI_GUID(0x4a67b082, 0x0a4c, 0x41cf, 0xb6, 0xc7, 0x44, 0x0b, 0x29, 0xbb, 0x8c, 0x4f);
 static const char TARGET_VARNAME[] = "LoaderEntryOneShot";
+static const char PANIC_VARNAME[] = "PanicOccured";
 
 static int uefi_set_loader_entry_one_shot(const char *name)
 {
@@ -165,13 +166,37 @@ struct reboot_target reboot_target_uefi = {
 	.set_reboot_target = uefi_set_reboot_target,
 };
 
+static int panic_uefi_notify(struct notifier_block *this, unsigned long event,
+		       void *ptr)
+{
+	wchar_t varname[sizeof(PANIC_VARNAME)];
+	u32 attributes = EFI_VARIABLE_NON_VOLATILE
+		| EFI_VARIABLE_BOOTSERVICE_ACCESS
+		| EFI_VARIABLE_RUNTIME_ACCESS;
+	u8 val = 1;
+
+	uefi_string_to_varname(PANIC_VARNAME, sizeof(PANIC_VARNAME), varname);
+
+	if (efivar_entry_set_safe(varname, LOADER_GUID, attributes, true, sizeof(val), &val))
+		printk(KERN_WARNING "%s: failed to set uefi variable %s\n",
+		       __func__, PANIC_VARNAME);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block panic_uefi = {
+	.notifier_call = panic_uefi_notify,
+};
+
 static int reboot_target_uefi_probe(struct platform_device *pdev)
 {
+	atomic_notifier_chain_register(&panic_notifier_list, &panic_uefi);
 	return reboot_target_register(&reboot_target_uefi);
 }
 
 static int reboot_target_uefi_remove(struct platform_device *pdev)
 {
+	atomic_notifier_chain_unregister(&panic_notifier_list, &panic_uefi);
 	return reboot_target_unregister(&reboot_target_uefi);
 }
 

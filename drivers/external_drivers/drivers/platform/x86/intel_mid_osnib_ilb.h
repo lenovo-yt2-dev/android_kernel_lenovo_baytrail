@@ -31,9 +31,9 @@
 #include <linux/reboot.h>
 #include <asm/intel-mid.h>
 
-#define OSNIB_INTEL_SIZE 32
-#define OSNIB_BIOS_RSVD_SIZE 16
+#define OSNIB_SIZE 64
 #define OSNIB_OEM_RSVD_SIZE 32
+#define OSNIB_INTEL_SIZE (OSNIB_SIZE - OSNIB_OEM_RSVD_SIZE)
 #define OSNIB_DEBUG_SIZE 14
 #define OSNIB_FW_RSVD_SIZE 3
 #define OSNIB_CMOS_BASE_ADDR 0x0E
@@ -141,9 +141,6 @@ struct cmos_osnib {
 	} __packed os_to_fw;
 
 	u8 checksum;
-
-	/* legacy BIOS password region in this area => skip it */
-	u8 bios_reserved[OSNIB_BIOS_RSVD_SIZE];
 
 	struct {
 		u8 reserved[OSNIB_OEM_RSVD_SIZE];

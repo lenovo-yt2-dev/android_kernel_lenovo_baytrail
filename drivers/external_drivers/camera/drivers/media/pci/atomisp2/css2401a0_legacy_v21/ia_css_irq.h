@@ -22,8 +22,13 @@
 #ifndef __IA_CSS_IRQ_H
 #define __IA_CSS_IRQ_H
 
+/** @file
+ * This file contains information for Interrupts/IRQs from CSS
+ */
+
 #include "ia_css_err.h"
 #include "ia_css_pipe_public.h"
+#include "ia_css_input_port.h"
 
 /** Interrupt types, these enumerate all supported interrupt types.
  */
@@ -57,8 +62,11 @@ enum ia_css_irq_info {
 	/**< the css receiver received the end of frame */
 	IA_CSS_IRQ_INFO_CSS_RECEIVER_SOL              = 1 << 4,
 	/**< the css receiver received the start of line */
-	IA_CSS_IRQ_INFO_EVENTS_READY                  = 1 << 5,
-	/**< One or more events are available in the event queue */
+	IA_CSS_IRQ_INFO_PSYS_EVENTS_READY             = 1 << 5,
+	/**< One or more events are available in the PSYS event queue */
+	IA_CSS_IRQ_INFO_EVENTS_READY = IA_CSS_IRQ_INFO_PSYS_EVENTS_READY,
+	/**< deprecated{obsolete version of IA_CSS_IRQ_INFO_PSYS_EVENTS_READY,
+	 * same functionality.} */
 	IA_CSS_IRQ_INFO_CSS_RECEIVER_EOL              = 1 << 6,
 	/**< the css receiver received the end of line */
 	IA_CSS_IRQ_INFO_CSS_RECEIVER_SIDEBAND_CHANGED = 1 << 7,
@@ -89,6 +97,8 @@ enum ia_css_irq_info {
 	/**< the input formatter in in error */
 	IA_CSS_IRQ_INFO_DMA_ERROR                     = 1 << 20,
 	/**< the dma in in error */
+	IA_CSS_IRQ_INFO_ISYS_EVENTS_READY             = 1 << 21,
+	/**< end-of-frame events are ready in the isys_event queue */
 };
 
 /** CSS receiver error types. Whenever the CSS receiver has encountered
@@ -162,9 +172,28 @@ ia_css_irq_translate(unsigned int *info);
  * This function should be used whenever a CSI receiver error interrupt is
  * generated. It provides the detailed information (bits) on the exact error
  * that occurred.
+ *
+ *@deprecated {this function is DEPRECATED since it only works on CSI port 1.
+ * Use the function below instead and specify the appropriate port.}
  */
 void
 ia_css_rx_get_irq_info(unsigned int *irq_bits);
+
+/** @brief Get CSI receiver error info.
+ *
+ * @param[in]  port     Input port identifier.
+ * @param[out] irq_bits	Pointer to the interrupt bits. The interrupt
+ *			bits will be written this info.
+ *			This will be the error bits that are enabled in the CSI
+ *			receiver error register.
+ * @return	None
+ *
+ * This function should be used whenever a CSI receiver error interrupt is
+ * generated. It provides the detailed information (bits) on the exact error
+ * that occurred.
+ */
+void
+ia_css_rx_port_get_irq_info(enum ia_css_csi2_port port, unsigned int *irq_bits);
 
 /** @brief Clear CSI receiver error info.
  *
@@ -176,9 +205,27 @@ ia_css_rx_get_irq_info(unsigned int *irq_bits);
  * and the error bits have been interpreted. It is advised to use the return
  * value of that function as the argument to this function to make sure no new
  * error bits get overwritten.
+ *
+ * @deprecated{this function is DEPRECATED since it only works on CSI port 1.
+ * Use the function below instead and specify the appropriate port.}
  */
 void
 ia_css_rx_clear_irq_info(unsigned int irq_bits);
+
+/** @brief Clear CSI receiver error info.
+ *
+ * @param[in] port      Input port identifier.
+ * @param[in] irq_bits	The bits that should be cleared from the CSI receiver
+ *			interrupt bits register.
+ * @return	None
+ *
+ * This function should be called after ia_css_rx_get_irq_info has been called
+ * and the error bits have been interpreted. It is advised to use the return
+ * value of that function as the argument to this function to make sure no new
+ * error bits get overwritten.
+ */
+void
+ia_css_rx_port_clear_irq_info(enum ia_css_csi2_port port, unsigned int irq_bits);
 
 /** @brief Enable or disable specific interrupts.
  *

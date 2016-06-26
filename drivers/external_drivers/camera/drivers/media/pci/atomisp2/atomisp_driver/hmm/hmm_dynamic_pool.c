@@ -104,7 +104,7 @@ static void free_pages_to_dynamic_pool(void *pool,
 		if (ret)
 			dev_err(atomisp_dev, "set page to WB err ...\n");
 		__free_pages(page_obj->page, 0);
-
+		hmm_mem_stat.sys_size--;
 		return;
 	}
 #ifdef USE_KMEM_CACHE
@@ -121,6 +121,7 @@ static void free_pages_to_dynamic_pool(void *pool,
 		if (ret)
 			dev_err(atomisp_dev, "set page to WB err ...\n");
 		__free_pages(page_obj->page, 0);
+		hmm_mem_stat.sys_size--;
 
 		return;
 	}
@@ -134,6 +135,7 @@ static void free_pages_to_dynamic_pool(void *pool,
 	list_add_tail(&hmm_page->list, &dypool_info->pages_list);
 	dypool_info->pgnr++;
 	spin_unlock_irqrestore(&dypool_info->list_lock, flags);
+	hmm_mem_stat.dyc_size++;
 }
 
 static int hmm_dynamic_pool_init(void **pool, unsigned int pool_size)
@@ -200,6 +202,8 @@ static void hmm_dynamic_pool_exit(void **pool)
 		if (ret)
 			dev_err(atomisp_dev, "set page to WB err...\n");
 		__free_pages(hmm_page->page, 0);
+		hmm_mem_stat.dyc_size--;
+		hmm_mem_stat.sys_size--;
 
 #ifdef USE_KMEM_CACHE
 		kmem_cache_free(dypool_info->pgptr_cache, hmm_page);

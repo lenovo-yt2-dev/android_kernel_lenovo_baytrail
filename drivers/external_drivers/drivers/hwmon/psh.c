@@ -45,12 +45,21 @@
 #include <linux/pm_runtime.h>
 #include <linux/intel_mid_pm.h>
 #include "psh_ia_common.h"
+#include <asm/intel_mid_rpmsg.h>
+#include <asm/intel-mid.h>
+#include <linux/kct.h>
 
 #ifdef VPROG2_SENSOR
 #include <asm/intel_scu_ipcutil.h>
 #endif
 
-#define APP_IMR_SIZE (1024 * 126)
+#define APP_IMR_SIZE (1024 * 256)
+
+static bool disable_psh_recovery = false;
+static bool force_psh_recovery = false;
+
+module_param(disable_psh_recovery, bool, S_IRUGO);
+module_param(force_psh_recovery, bool, S_IRUGO | S_IWUSR);
 
 enum {
 	imr_allocate = 0,
@@ -60,12 +69,104 @@ enum {
 struct psh_plt_priv {
 	int imr_src;
 	struct device *hwmon_dev;
+	struct device *dev;
 	void *imr2;		/* IMR2 */
 	void *ddr;		/* IMR3 */
 	uintptr_t imr2_phy;
 	uintptr_t ddr_phy;
 	struct loop_buffer lbuf;
 };
+
+
+
+static int psh_recovery = 0;
+
+
+
+int do_psh_recovery(struct psh_ia_priv *psh_ia_data)
+{
+	struct psh_plt_priv *plt_priv =
+			(struct psh_plt_priv *)psh_ia_data->platform_priv;
+	int ret = 0;
+
+	psh_err("PSH Recovery started, please wait ... \n");
+
+	psh_recovery = 1;
+	/* set to D0 state */
+	pm_runtime_get_sync(plt_priv->dev);
+
+	/* set recovery IPC cmd to SCU */
+	ret = rpmsg_send_generic_simple_command(0xA2, 0);
+	if (ret) {
+		psh_err("failed to send recovery cmd to SCU, ret=%d\n", ret);
+		goto f_out;
+	}
+	/* maybe may reduce the wait time */
+	msleep(2000);
+
+	ret = do_setup_ddr(plt_priv->dev);
+	if (ret) {
+		psh_err("failed to setup ddr during psh recovery\n");
+		goto f_out;
+	}
+	else {
+		psh_err("PSH recovery done \n");
+	}
+
+
+f_out:
+	/* Report recovery event in crashtool*/
+	/* Replace CT_ADDITIONAL_APLOG with
+	CT_ADDITIONAL_FWMSG|CT_ADDITIONAL_APLOG once online log is working */
+
+	kct_log(CT_EV_CRASH, "PSH", "RECOVERY", 0, "", "", "", "", "", "",
+		"", CT_ADDITIONAL_FWMSG | CT_ADDITIONAL_APLOG);
+
+	pm_runtime_put(plt_priv->dev);
+	psh_recovery = 0;
+
+	return ret;
+}
+
+
+int recovery_send_cmd(struct psh_ia_priv *psh_ia_data,
+                        struct ia_cmd *cmd, int len)
+{
+	int ret = 0;
+	static struct resp_cmd_ack cmd_ack;
+
+	cmd_ack.cmd_id = cmd->cmd_id;
+	psh_ia_data->cmd_ack = &cmd_ack;
+
+	psh_ia_data->cmd_in_progress = cmd->cmd_id;
+	ret = process_send_cmd(psh_ia_data, PSH2IA_CHANNEL0,
+			cmd, len);
+	psh_ia_data->cmd_in_progress = CMD_INVALID;
+	if (ret) {
+		psh_err("send cmd (id = %d) failed, ret=%d\n",
+			cmd->cmd_id, ret);
+		goto f_out;
+	}
+	if (cmd->cmd_id == CMD_FW_UPDATE)
+		goto f_out;
+
+ack_wait:
+	if (!wait_for_completion_timeout(&psh_ia_data->cmd_comp, 5 * HZ)) {
+		psh_err("no CMD_ACK for %d back, timeout!\n",
+			cmd_ack.cmd_id);
+		ret = -ETIMEDOUT;
+	} else if (cmd_ack.ret) {
+		if (cmd_ack.ret == E_CMD_ASYNC)
+			goto ack_wait;
+		psh_err("CMD %d return error %d!\n", cmd_ack.cmd_id,
+				cmd_ack.ret);
+		ret = -EREMOTEIO;
+	}
+
+f_out:
+	psh_ia_data->cmd_ack = NULL;
+	return ret;
+}
 
 int process_send_cmd(struct psh_ia_priv *psh_ia_data,
 			int ch, struct ia_cmd *cmd, int len)
@@ -114,6 +215,20 @@ int process_send_cmd(struct psh_ia_priv *psh_ia_data,
 f_out:
 	if (ch == PSH2IA_CHANNEL0 && cmd->cmd_id == CMD_RESET)
 		intel_psh_ipc_enable_irq();
+
+	
+	if (!disable_psh_recovery) {
+		if ((ret && (psh_recovery == 0)) || (force_psh_recovery))
+		{
+			if (force_psh_recovery) {
+				psh_err("forced PSH recovery\n");
+				force_psh_recovery = 0;
+			}
+			if (do_psh_recovery(psh_ia_data))
+				psh_err("PSH recovery failed\n");
+		}
+	}
+
 	return ret;
 }
 
@@ -133,17 +248,23 @@ int do_setup_ddr(struct device *dev)
 		};
 	static int fw_load_done;
 	int load_default = 0;
-	char fname[20];
+	char fname[40];
 
-	if (fw_load_done)
+	if ((fw_load_done)&&(psh_recovery == 0))
 		return 0;
 
 #ifdef VPROG2_SENSOR
 	intel_scu_ipc_msic_vprog2(1);
 	msleep(500);
 #endif
-	snprintf(fname, 20, "psh.bin.%04x.%04x", (int)spid.platform_family_id,
-			(int)spid.hardware_id);
+	snprintf(fname, 40, "psh.bin.%04x.%04x.%04x.%04x.%04x.%04x",
+				(int)spid.customer_id,
+				(int)spid.vendor_id,
+				(int)spid.manufacturer_id,
+				(int)spid.platform_family_id,
+				(int)spid.product_line_id,
+				(int)spid.hardware_id);
+
 again:
 	if (!request_firmware(&fw_entry, fname, dev)) {
 		if (!fw_entry)
@@ -182,7 +303,7 @@ again:
 	}
 	ia_lbuf_read_reset(ia_data->lbuf);
 	*(unsigned long *)(&cmd_user.param) = ddr_phy;
-	return ia_send_cmd(ia_data, &cmd_user, 7);
+	return psh_recovery?recovery_send_cmd(ia_data, &cmd_user, 7):ia_send_cmd(ia_data, &cmd_user, 7);
 }
 
 static void psh2ia_channel_handle(u32 msg, u32 param, void *data)
@@ -342,7 +463,7 @@ static int psh_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		dev_err(&pdev->dev, "fail to register hwmon device\n");
 		goto hwmon_err;
 	}
-
+	plt_priv->dev = &pdev->dev;
 	ia_data->platform_priv = plt_priv;
 
 	ret = intel_psh_ipc_bind(PSH_RECV_CH0, psh2ia_channel_handle, pdev);

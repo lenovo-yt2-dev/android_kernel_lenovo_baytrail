@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_PRBS_H
 #define __IA_CSS_PRBS_H
 
+/** @file
+ * This file contains support for Pseudo Random Bit Sequence (PRBS) inputs
+ */
+
 /** Enumerate the PRBS IDs.
  */
 enum ia_css_prbs_id {
@@ -35,7 +39,7 @@ enum ia_css_prbs_id {
  *
  * Seed the for the Pseudo Random Bit Sequence.
  *
- * This interface is deprecated, it is not portable -> move to input system API
+ * @deprecated{This interface is deprecated, it is not portable -> move to input system API}
  */
 struct ia_css_prbs_config {
 	enum ia_css_prbs_id	id;

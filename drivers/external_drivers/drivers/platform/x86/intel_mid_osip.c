@@ -39,6 +39,9 @@
 #include <asm/intel_scu_ipcutil.h>
 #include <asm/intel_mid_rpmsg.h>
 #include <asm/intel-mid.h>
+#include <asm/intel_scu_pmic.h>
+
+#include "reboot_target.h"
 
 /* change to "loop0" and use losetup for safe testing */
 #define EMMC_OSIP_BLKDEVICE "mmcblk0"
@@ -53,13 +56,6 @@
 #define CPUID_MASK		0xffff0
 
 #define DRV_VERSION	"1.00"
-
-/* OSIP entries */
-enum {
-	ANDROID_OS_NUM,
-	RECOVERY_OS_NUM,
-	FASTBOOT_OS_NUM
-};
 
 struct OSII {                   /* os image identifier */
 	uint16_t os_rev_minor;
@@ -232,6 +228,31 @@ bd_put:
 	return 0;
 }
 
+/* find OSII index for a given OS attribute */
+
+static int get_osii_index_cb(struct OSIP_header *osip, void *data)
+{
+	int attr = *(int *)data;
+	int i;
+
+	*(int *)data = 0;
+	for (i = 0; i < osip->num_pointers; i++) {
+		if ((osip->desc[i].attribute & ~0x1) == (attr & ~0x1) && i < MAX_OSII) {
+			*(int *)data = i;
+			break;
+		}
+	}
+	return 0;
+}
+static int get_osii_index(int attribute)
+{
+	int data = attribute;
+
+	access_osip_record(get_osii_index_cb, (void *)(&data));
+	return data;
+}
+
+#ifdef CONFIG_INTEL_SCU_IPC
 /*
    OSHOB - OS Handoff Buffer
    OSNIB - OS No Init Buffer
@@ -244,9 +265,7 @@ bd_put:
 
 static int osip_invalidate(struct OSIP_header *osip, void *data)
 {
-	/* data is directly used as an unsigned int */
-	unsigned int id = (unsigned int)data;
-
+	unsigned int id = (unsigned int)(uintptr_t)data;
 	osip->desc[id].ddr_load_address = 0;
 	osip->desc[id].entry_point = 0;
 	return 1;
@@ -254,9 +273,7 @@ static int osip_invalidate(struct OSIP_header *osip, void *data)
 
 static int osip_restore(struct OSIP_header *osip, void *data)
 {
-	/* data is directly used as an unsigned int */
-	unsigned int id = (unsigned int)data;
-
+	unsigned int id = (unsigned int)(uintptr_t)data;
 	/* hardcoding addresses. According to the FAS, this is how
 	   the OS image blob has to be loaded, and where is the
 	   bootstub entry point.
@@ -264,21 +281,8 @@ static int osip_restore(struct OSIP_header *osip, void *data)
 	osip->desc[id].ddr_load_address = 0x1100000;
 	osip->desc[id].entry_point = 0x1101000;
 	return 1;
-}
 
-int osip_invalidate_main(void)
-{
-	return access_osip_record(osip_invalidate, ANDROID_OS_NUM);
 }
-EXPORT_SYMBOL(osip_invalidate_main);
-
-int osip_restore_main(void)
-{
-	return access_osip_record(osip_restore, ANDROID_OS_NUM);
-}
-EXPORT_SYMBOL(osip_restore_main);
-
-#ifdef CONFIG_INTEL_SCU_IPC
 
 /* Cold off sequence is initiated 4 sec after power button long press starts.    */
 /* In case of force shutdown, we delay cold off IPC sending by 5 seconds to make */
@@ -286,125 +290,86 @@ EXPORT_SYMBOL(osip_restore_main);
 /* down for 8 seconds */
 #define FORCE_SHUTDOWN_DELAY_IN_MSEC 5000
 
-static int osip_reboot_notifier_call(struct notifier_block *notifier,
+#define PMIC_USBIDCTRL_ADDR 0x19
+
+static int osip_shutdown_notifier_call(struct notifier_block *notifier,
 				     unsigned long what, void *data)
 {
 	int ret = NOTIFY_DONE;
-	int ret_ipc;
 	char *cmd = (char *)data;
+
+	if (what == SYS_HALT || what == SYS_POWER_OFF) {
+		pr_info("%s: notified [%s] command\n", __func__, cmd);
+		pr_info("%s(): sys power off ...\n", __func__);
+
+		if (get_force_shutdown_occured()) {
+			/* BZ 174011 software workaround: clear USBIDCTRL to avoid reboot */
+			ret = intel_scu_ipc_iowrite8(PMIC_USBIDCTRL_ADDR, 0x00);
+			if (ret)
+				pr_err("%s(): PMIC USBIDCTRL clear failed\n", __func__);
+			pr_warn("[SHTDWN] %s: Force shutdown occured, delaying ...\n",
+				__func__);
+			mdelay(FORCE_SHUTDOWN_DELAY_IN_MSEC);
+		}
+		else
+			pr_warn("[SHTDWN] %s, Not in force shutdown\n",
+				__func__);
+		/*
+		* PNW and CLVP depend on watchdog driver to
+		* send COLD OFF message to SCU.
+		* TNG and ANN use COLD_OFF IPC message to shut
+		* down the system.
+		*/
+		if ((intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_TANGIER) ||
+				(intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE)) {
+			pr_err("[SHTDWN] %s, executing COLD_OFF...\n", __func__);
+			ret = rpmsg_send_generic_simple_command(RP_COLD_OFF, 0);
+			if (ret)
+				pr_err("%s(): COLD_OFF ipc failed\n", __func__);
+		}
+	}
+	/* Reboot actions will be handled by osip_reboot_target_call */
+	return NOTIFY_DONE;
+}
+
+static int osip_reboot_target_call(const char *target, int id)
+{
+	int ret_ipc;
 #ifdef DEBUG
 	u8 rbt_reason;
 #endif
 
-	pr_info("%s: notified [%s] command\n", __func__, cmd);
+	pr_info("%s: notified [%s] target\n", __func__, target);
 
-	if (what != SYS_RESTART) {
-		if (what == SYS_HALT || what == SYS_POWER_OFF) {
-			pr_info("%s(): sys power off ...\n", __func__);
-
-			if (get_force_shutdown_occured()) {
-				pr_warn("[SHTDWN] %s: Force shutdown occured, delaying ...\n",
-					__func__);
-				mdelay(FORCE_SHUTDOWN_DELAY_IN_MSEC);
-			}
-			else
-				pr_warn("[SHTDWN] %s, Not in force shutdown\n",
-					__func__);
-			/*
-			* PNW and CLVP depend on watchdog driver to
-			* send COLD OFF message to SCU.
-			* TNG and ANN use COLD_OFF IPC message to shut
-			* down the system.
-			*/
-			if ((intel_mid_identify_cpu() ==
-					INTEL_MID_CPU_CHIP_TANGIER) ||
-					(intel_mid_identify_cpu() ==
-					INTEL_MID_CPU_CHIP_ANNIEDALE)) {
-				pr_err("[SHTDWN] %s, executing COLD_OFF...\n",
-								__func__);
-				ret = rpmsg_send_generic_simple_command(
-							RP_COLD_OFF, 0);
-				if (ret)
-					pr_err("%s(): COLD_OFF ipc failed\n",
-								__func__);
-			}
-		} else {
-			pr_warn("[SHTDWN] %s, invalid value\n", __func__);
-		}
-
-		return NOTIFY_DONE;
-	}
-
-	if (data && 0 == strncmp(cmd, "recovery", 9)) {
-		pr_warn("[SHTDWN] %s, invalidating osip and rebooting into "
-			"Recovery\n", __func__);
+	pr_warn("[REBOOT] %s, rebooting into %s\n", __func__, target);
 #ifdef DEBUG
+	if (id == SIGNED_RECOVERY_ATTR)
 		intel_scu_ipc_read_osnib_rr(&rbt_reason);
 #endif
-		ret_ipc = intel_scu_ipc_write_osnib_rr(SIGNED_RECOVERY_ATTR);
-		if (ret_ipc < 0)
-			pr_err("%s cannot write Recovery reboot reason in OSNIB\n",
-				__func__);
-		osip_invalidate_main();
-		ret = NOTIFY_OK;
-	} else if (data && 0 == strncmp(cmd, "bootloader", 11)) {
-		pr_warn("[SHTDWN] %s, rebooting into Fastboot\n", __func__);
-		ret_ipc = intel_scu_ipc_write_osnib_rr(SIGNED_POS_ATTR);
-		if (ret_ipc < 0)
-			pr_err("%s cannot write Fastboot reboot reason in OSNIB\n",
-				__func__);
-		ret = NOTIFY_OK;
-	} else if (data && 0 == strncmp(cmd, "charging", 9)) {
-		pr_warn("[SHTDWN] %s: rebooting into Charging\n", __func__);
-		ret_ipc = intel_scu_ipc_write_osnib_rr(SIGNED_COS_ATTR);
-		if (ret_ipc < 0)
-			pr_err("%s cannot write Fastboot reboot reason in OSNIB\n",
-				__func__);
-		ret = NOTIFY_OK;
-	} else if (data && 0 == strncmp(cmd, "factory", 8)) {
-		pr_warn("[SHTDWN] %s: rebooting into Factory\n", __func__);
-		ret_ipc = intel_scu_ipc_write_osnib_rr(SIGNED_FACTORY_ATTR);
-		if (ret_ipc < 0)
-			pr_err("%s cannot write Fastboot reboot reason in OSNIB\n",
-				__func__);
-		ret = NOTIFY_OK;
-	} else {
-		/* By default, reboot to Android. */
-		pr_warn("[SHTDWN] %s, restoring OSIP and rebooting into "
-			"Android\n", __func__);
-		ret_ipc = intel_scu_ipc_write_osnib_rr(SIGNED_MOS_ATTR);
-		if (ret_ipc < 0)
-			pr_err("%s cannot write Android reboot reason in OSNIB\n",
-				 __func__);
-		osip_restore_main();
-		ret = NOTIFY_OK;
+
+	ret_ipc = intel_scu_ipc_write_osnib_rr(id);
+	if (ret_ipc < 0)
+		pr_err("%s cannot write %s reboot reason in OSNIB\n",
+			__func__, target);
+	if (id == SIGNED_MOS_ATTR || id == SIGNED_POS_ATTR) {
+		/* If device is already in RECOVERY we must be able */
+		/* to reboot in MOS if given target is MOS or POS.  */
+		pr_warn("[REBOOT] %s, restoring OSIP\n", __func__);
+		access_osip_record(osip_restore, (void *)(get_osii_index(SIGNED_MOS_ATTR)));
 	}
-	return ret;
-
+	if (id == SIGNED_RECOVERY_ATTR && ret_ipc >= 0) {
+		pr_warn("[REBOOT] %s, invalidating osip\n", __func__);
+		access_osip_record(osip_invalidate, (void *)(get_osii_index(SIGNED_MOS_ATTR)));
+	}
+	return NOTIFY_DONE;
 }
 
-#ifdef DEBUG
-/* to test without reboot...
-echo -n fastboot >/sys/module/intel_mid_osip/parameters/test
-*/
-static int osip_test_write(const char *val, struct kernel_param *kp)
-{
-	osip_reboot_notifier_call(NULL, SYS_RESTART, (void *)val);
-	return 0;
-}
+static struct notifier_block osip_shutdown_notifier = {
+	.notifier_call = osip_shutdown_notifier_call,
+};
 
-static int osip_test_read(char *buffer, struct kernel_param *kp)
-{
-	return 0;
-}
-
-module_param_call(test, osip_test_write,
-		osip_test_read, NULL, 0644);
-
-#endif
-
-static struct notifier_block osip_reboot_notifier = {
-	.notifier_call = osip_reboot_notifier_call,
+static struct reboot_target osip_reboot_target = {
+	.set_reboot_target = osip_reboot_target_call,
 };
 #endif
 
@@ -416,7 +381,8 @@ static struct notifier_block osip_reboot_notifier = {
 #define OSIP_MAX_CMDLINE_SECTOR ((OSIP_MAX_CMDLINE_SIZE >> 9) + 1)
 
 /* Size used by signature is not the same for valleyview */
-#define OSIP_SIGNATURE_SIZE 		0x1E0
+#define OSIP_SIGNATURE_SIZE_MDFLD	0x1E0
+#define OSIP_SIGNATURE_SIZE 		0x2D8
 #define OSIP_VALLEYVIEW_SIGNATURE_SIZE 	0x400
 
 struct cmdline_priv {
@@ -487,7 +453,11 @@ int open_cmdline(struct inode *i, struct file *f)
 	if (!(p->attribute & 1))
 		/* even number: signed add size of signature header. */
 #ifdef CONFIG_INTEL_SCU_IPC
+#ifdef CONFIG_X86_MDFLD
+		p->cmdline += OSIP_SIGNATURE_SIZE_MDFLD;
+#else
 		p->cmdline += OSIP_SIGNATURE_SIZE;
+#endif
 #else
 		p->cmdline += OSIP_VALLEYVIEW_SIGNATURE_SIZE;
 #endif
@@ -645,6 +615,7 @@ static const struct file_operations osip_decode_fops = {
 	.llseek         = seq_lseek,
 	.release        = single_release,
 };
+
 static struct dentry *osip_dir;
 static void create_debugfs_files(void)
 {
@@ -653,15 +624,15 @@ static void create_debugfs_files(void)
 	/* /sys/kernel/debug/osip/cmdline */
 	(void) debugfs_create_file("cmdline",
 				S_IFREG | S_IRUGO | S_IWUSR | S_IWGRP,
-				osip_dir, (void *)0, &osip_cmdline_fops);
+				osip_dir, (void *)(get_osii_index(SIGNED_MOS_ATTR)), &osip_cmdline_fops);
 	/* /sys/kernel/debug/osip/cmdline_ros */
 	(void) debugfs_create_file("cmdline_ros",
 				S_IFREG | S_IRUGO | S_IWUSR | S_IWGRP,
-				osip_dir, (void *)1, &osip_cmdline_fops);
+				osip_dir, (void *)(get_osii_index(SIGNED_RECOVERY_ATTR)), &osip_cmdline_fops);
 	/* /sys/kernel/debug/osip/cmdline_pos */
 	(void) debugfs_create_file("cmdline_pos",
 				S_IFREG | S_IRUGO | S_IWUSR | S_IWGRP,
-				osip_dir, (void *)2, &osip_cmdline_fops);
+				osip_dir, (void *)(get_osii_index(SIGNED_POS_ATTR)), &osip_cmdline_fops);
 	/* /sys/kernel/debug/osip/decode */
 	(void) debugfs_create_file("decode",
 				S_IFREG | S_IRUGO,
@@ -683,8 +654,11 @@ static void remove_debugfs_files(void)
 static int osip_init(void)
 {
 #ifdef CONFIG_INTEL_SCU_IPC
-	pr_info("%s: reboot_notifier registered\n", __func__);
-	if (register_reboot_notifier(&osip_reboot_notifier))
+	pr_info("%s: shutdown_notifier registered\n", __func__);
+	if (register_reboot_notifier(&osip_shutdown_notifier))
+		pr_warning("osip: unable to register shutdown notifier");
+	pr_info("%s: reboot_target registered\n", __func__);
+	if (reboot_target_register(&osip_reboot_target))
 		pr_warning("osip: unable to register reboot notifier");
 
 #endif
@@ -695,8 +669,10 @@ static int osip_init(void)
 static void osip_exit(void)
 {
 #ifdef CONFIG_INTEL_SCU_IPC
-	pr_info("%s: reboot_notifier unregistered\n", __func__);
-	unregister_reboot_notifier(&osip_reboot_notifier);
+	pr_info("%s: shutdown_notifier unregistered\n", __func__);
+	unregister_reboot_notifier(&osip_shutdown_notifier);
+	pr_info("%s: reboot_target unregistered\n", __func__);
+	reboot_target_unregister(&osip_reboot_target);
 
 #endif
 	remove_debugfs_files();

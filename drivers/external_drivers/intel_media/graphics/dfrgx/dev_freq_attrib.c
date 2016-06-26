@@ -70,7 +70,7 @@ static ssize_t store_dynamic_turbo_state(struct device *dev,
 
 	ret = sscanf(buf, "%d", &dt_state);
 
-	DFRGX_DPF(DFRGX_DEBUG_HIGH, "%s:  count = %u, ret = %u , state = %d\n",
+	DFRGX_DPF(DFRGX_DEBUG_HIGH, "%s:  count = %zu, ret = %u , state = %d\n",
 				__func__, count, ret, dt_state);
 	if (ret != 1)
 		goto out;
@@ -119,7 +119,7 @@ static ssize_t store_profiling_state(struct device *dev,
 
 	ret = sscanf(buf, "%d", &profiling_state);
 
-	DFRGX_DPF(DFRGX_DEBUG_HIGH, "%s: count = %u, ret = %u , state = %d\n",
+	DFRGX_DPF(DFRGX_DEBUG_HIGH, "%s: count = %zu, ret = %u , state = %d\n",
 				__func__, count, ret, profiling_state);
 	if (ret != 1)
 		goto out;
@@ -208,7 +208,7 @@ static ssize_t store_turbo_profile(struct device *dev,
 
 	ret = sscanf(buf, "%d %d", &low_th, &high_th);
 
-	DFRGX_DPF(DFRGX_DEBUG_HIGH, "%s: count = %u, ret = %u\n",
+	DFRGX_DPF(DFRGX_DEBUG_HIGH, "%s: count = %zu, ret = %u\n",
 				__func__, count, ret);
 	if (ret != 2)
 		goto out;

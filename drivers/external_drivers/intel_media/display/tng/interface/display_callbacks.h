@@ -30,6 +30,7 @@
 #include <displayclass_interface.h>
 #include "img_types.h"
 #include "psb_drm.h"
+#include "psb_gtt.h"
 
 struct psb_framebuffer;
 
@@ -54,34 +55,50 @@ void DCCBFlipSprite(struct drm_device *dev,
 			struct intel_dc_sprite_ctx *ctx);
 void DCCBFlipPrimary(struct drm_device *dev,
 			struct intel_dc_primary_ctx *ctx);
+void DCCBFlipCursor(struct drm_device *dev,
+			struct intel_dc_cursor_ctx *ctx);
 void DCCBSetupZorder(struct drm_device *dev,
 			struct intel_dc_plane_zorder *zorder,
 			int pipe);
 void DCCBWaitForDbiFifoEmpty(struct drm_device *dev, int pipe);
+void DCCBAvoidFlipInVblankInterval(struct drm_device *dev, int pipe);
+int DCCBEnterMaxfifoMode(struct drm_device *dev, int mode);
+void DCCBExitMaxfifoMode(struct drm_device *dev);
 int DCCBUpdateDbiPanel(struct drm_device *dev, int pipe);
 int DCCBOverlayDisableAndWait(struct drm_device *dev, u32 ctx,
 			int index);
+void DCCBOverlayWaitDisableDone(struct drm_device *dev, int index, int pipe);
+void DCCBOverlayWaitFlipDone(struct drm_device *dev, int index, int pipe);
 int DCCBOverlayEnable(struct drm_device *dev, u32 ctx,
 			int index, int enabled);
 int DCCBSpriteEnable(struct drm_device *dev, u32 ctx,
 			int index, int enabled);
 int DCCBPrimaryEnable(struct drm_device *dev, u32 ctx,
 			int index, int enabled);
+int DCCBCursorDisable(struct drm_device *dev, int index);
+void DCCBEnablePrimaryWA(struct drm_device *dev, int index);
 void DCCBFlipDSRCb(struct drm_device *dev);
 void DCCBUnblankDisplay(struct drm_device *dev);
 int DCCBgttMapMemory(struct drm_device *dev,
-		     unsigned int hHandle,
+		     unsigned long hHandle,
 		     unsigned int ui32TaskId,
 		     IMG_SYS_PHYADDR *pPages,
 		     unsigned int ui32PagesNum, unsigned int *ui32Offset);
 int DCCBgttUnmapMemory(struct drm_device *dev,
-		       unsigned int hHandle, unsigned int ui32TaskId);
+		       unsigned long hHandle, unsigned int ui32TaskId);
+int DCCBgttCleanupMemoryOnTask(struct drm_device *dev,
+				unsigned int ui32TaskId);
 bool DCChangeSwapChainProperty(unsigned long *psSwapChainGTTOffset,
 			int pipe);
 u32 DCCBGetPipeCount(void);
+void DCCBSetPipeToOvadd(u32 *ovadd, int pipe);
 bool DCCBIsSuspended(struct drm_device *dev);
 int DCCBIsPipeActive(struct drm_device *dev, int pipe);
 
 void DCCBDsrForbid(struct drm_device *dev, int pipe);
 void DCCBDsrAllow(struct drm_device *dev, int pipe);
+int DCCBUpdateCursorPos(struct drm_device *dev, int pipe, uint32_t pos);
+
+int DCCBgetGttMapping(struct drm_device *dev, unsigned int tgid, unsigned long key, struct psb_gtt_mem_mapping **map);
+int DCCBputGttMapping(struct drm_device *dev, unsigned int tgid, unsigned long key);
 #endif				/* __DC_CALLBACKS_H__ */

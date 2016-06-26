@@ -281,7 +281,7 @@ IMG_EXPORT PVRSRV_ERROR SGXSubmitTransferKM(IMG_HANDLE hDevHandle, PVRSRV_TRANSF
 		}
 
 #if defined(PVR_ANDROID_NATIVE_WINDOW_HAS_SYNC)
-		if (ui32RealDstSyncNum < SGX_MAX_TRANSFER_SYNC_OPS - 2 && psKick->iFenceFd > 0)
+		if (ui32RealDstSyncNum <= (SGX_MAX_DST_SYNCS_TQ - 1) && psKick->iFenceFd > 0)
 		{
 			IMG_HANDLE ahSyncInfo[SGX_MAX_SRC_SYNCS_TA];
 			PVRSRV_DEVICE_SYNC_OBJECT *apsDevSyncs = &psSharedTransferCmd->asDstSyncs[ui32RealDstSyncNum];

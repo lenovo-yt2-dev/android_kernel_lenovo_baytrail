@@ -17,6 +17,8 @@
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
+#include <acpi/acpi.h>
+#include <acpi/acpi_bus.h>
 #include <linux/acpi.h>
 #include <linux/acpi_gpio.h>
 #include <linux/efi.h>
@@ -25,10 +27,14 @@
 #include <asm/intel-mid.h>
 #include <asm/intel_mid_hsu.h>
 #include <linux/intel_mid_gps.h>
+#include <linux/lnw_gpio.h>
+
 
 #define DRIVER_NAME "intel_mid_gps"
 
-#define ACPI_DEVICE_ID_BCM4752 "BCM4752"
+#define ACPI_DEVICE_ID_BCM4752  "BCM4752"
+#define ACPI_DEVICE_ID_BCM47521 "BCM47521"
+#define ACPI_DEVICE_ID_BCM47531 "BCM47531"
 
 struct device *tty_dev = NULL;
 struct wake_lock hostwake_lock;
@@ -180,7 +186,8 @@ static int intel_mid_gps_init(struct platform_device *pdev)
 {
 	int ret;
 	struct intel_mid_gps_platform_data *pdata = dev_get_drvdata(&pdev->dev);
-	struct device *parent, *grand_parent;
+	struct kset *sysdev;
+	struct kobject *plat;
 
 	/* we need to rename the sysfs entry to match the one created with SFI,
 	   and we are sure that there is always one GPS per platform */
@@ -196,15 +203,18 @@ static int intel_mid_gps_init(struct platform_device *pdev)
 			"Failed to create intel_mid_gps sysfs interface\n");
 
 	/* With ACPI device tree, GPS is UART child, we need to create symlink at
-	   /sys/devices/platform/ level (user libgps is expecting this).
-	   To be removed when GPIO sysfs path will not be used from user space */
+	   /sys/devices/platform/ level (user libgps is expecting this). */
 	if (ACPI_HANDLE(&pdev->dev)) {
-		parent = pdev->dev.parent;
-		grand_parent = (parent == NULL ? NULL : parent->parent);
-		if (parent != NULL && grand_parent != NULL) {
-			ret = sysfs_create_link(&grand_parent->kobj, &pdev->dev.kobj, DRIVER_NAME);
-			if (ret)
-				pr_err("%s: failed to create symlink\n", __func__);
+		sysdev = pdev->dev.kobj.kset;
+		if (sysdev) {
+			plat = kset_find_obj(sysdev, "platform");
+			if (plat) {
+				ret = sysfs_create_link(plat,
+					&pdev->dev.kobj, DRIVER_NAME);
+				if (ret)
+					dev_err(&pdev->dev,
+					"%s: symlink creation failed\n", __func__);
+			}
 		}
 	}
 
@@ -218,6 +228,9 @@ static int intel_mid_gps_init(struct platform_device *pdev)
 					__func__, pdata->gpio_reset, ret);
 			goto error_gpio_reset_request;
 		}
+
+		/* Force GPIO muxmode */
+		lnw_gpio_set_alt(pdata->gpio_reset, LNW_GPIO);
 
 		/* set gpio direction */
 		ret = gpio_direction_output(pdata->gpio_reset, pdata->reset);
@@ -239,6 +252,9 @@ static int intel_mid_gps_init(struct platform_device *pdev)
 			goto error_gpio_enable_request;
 		}
 
+		/* Force GPIO muxmode */
+		lnw_gpio_set_alt(pdata->gpio_enable, LNW_GPIO);
+
 		/* set gpio direction */
 		ret = gpio_direction_output(pdata->gpio_enable, pdata->enable);
 		if (ret < 0) {
@@ -259,6 +275,9 @@ static int intel_mid_gps_init(struct platform_device *pdev)
 					__func__, pdata->gpio_hostwake, ret);
 			goto error_gpio_hostwake_request;
 		}
+
+		/* Force GPIO muxmode */
+		lnw_gpio_set_alt(pdata->gpio_hostwake, LNW_GPIO);
 
 		/* set gpio direction */
 		ret = gpio_direction_input(pdata->gpio_hostwake);
@@ -328,37 +347,28 @@ static int intel_mid_gps_probe(struct platform_device *pdev)
 	if (ACPI_HANDLE(&pdev->dev)) {
 		/* create a new platform data that will be
 		   populated with gpio data from ACPI table */
-		struct acpi_gpio_info info;
+		unsigned long long port;
 		pdata = kzalloc(sizeof(struct intel_mid_gps_platform_data),
 			GFP_KERNEL);
 
 		if (!pdata)
 			return -ENOMEM;
 
-		if (!strncmp(dev_name(&pdev->dev),
-				ACPI_DEVICE_ID_BCM4752,
-				strlen(ACPI_DEVICE_ID_BCM4752))) {
-			pdata->has_reset = 0;  /* Unavailable */
-			pdata->has_enable = 1; /* Available */
-		}
+		pdata->gpio_reset = acpi_get_gpio_by_name(&pdev->dev,"RSET", NULL);
+		pdata->gpio_enable = acpi_get_gpio_by_name(&pdev->dev,"ENAB", NULL);
+		pdata->gpio_hostwake = acpi_get_gpio_by_name(&pdev->dev,"HSTW", NULL);
 
-		/* Check below if EDK Bios (EFI RS enabled) or FDK Ifwi
-		 as we have to maintain both ACPI tables for now */
-		if (efi_enabled(EFI_RUNTIME_SERVICES))
-			pdata->gpio_enable = pdata->has_enable ?
-				acpi_get_gpio_by_index(&pdev->dev, 0, &info)
-				: -EINVAL;
+		pr_info("%s enable: %d, reset: %d, hostwake: %d\n", __func__,
+			pdata->gpio_enable, pdata->gpio_reset, pdata->gpio_hostwake);
+
+		if (ACPI_FAILURE(acpi_evaluate_integer((acpi_handle)ACPI_HANDLE(&pdev->dev),
+						       "UART", NULL, &port)))
+			dev_err(&pdev->dev, "Error evaluating acpi table, no HSU port\n");
 		else {
-			pdata->gpio_reset = pdata->has_reset ?
-				acpi_get_gpio_by_index(&pdev->dev, 0, &info)
-				: -EINVAL;
-			pdata->gpio_enable = pdata->has_enable ?
-				acpi_get_gpio_by_index(&pdev->dev, 1, &info)
-				: -EINVAL;
+			pdata->hsu_port = (unsigned int)port;
+			pr_info("GPS HSU port read from ACPI = %d\n", pdata->hsu_port);
 		}
-		pdata->gpio_hostwake = -EINVAL;
 
-		pr_info("%s enable: %d, reset: %d\n", __func__, pdata->gpio_enable, pdata->gpio_reset);
 		platform_set_drvdata(pdev, pdata);
 	} else {
 		platform_set_drvdata(pdev, pdev->dev.platform_data);
@@ -404,7 +414,9 @@ static void intel_mid_gps_shutdown(struct platform_device *pdev)
 #ifdef CONFIG_ACPI
 static struct acpi_device_id acpi_gps_id_table[] = {
 	/* ACPI IDs here */
-	{ACPI_DEVICE_ID_BCM4752},
+	{ ACPI_DEVICE_ID_BCM4752,  0 },
+	{ ACPI_DEVICE_ID_BCM47521, 0 },
+	{ ACPI_DEVICE_ID_BCM47531, 0 },
 	{ }
 };
 

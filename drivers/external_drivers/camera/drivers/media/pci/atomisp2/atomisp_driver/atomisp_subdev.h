@@ -30,12 +30,10 @@
 #include "atomisp_compat.h"
 #include "atomisp_v4l2.h"
 
-#ifdef CSS20
 #include "ia_css.h"
-#else /* CSS20 */
-#include "sh_css.h"
-#endif /* CSS20 */
 
+/* EXP_ID's ranger is 1 ~ 250 */
+#define ATOMISP_MAX_EXP_ID     (250)
 enum atomisp_subdev_input_entity {
 	ATOMISP_SUBDEV_INPUT_NONE,
 	ATOMISP_SUBDEV_INPUT_MEMORY,
@@ -64,8 +62,9 @@ struct atomisp_in_fmt_conv {
 	enum v4l2_mbus_pixelcode code;
 	uint8_t bpp; /* bits per pixel */
 	uint8_t depth; /* uncompressed */
-	enum atomisp_css_stream_format in_sh_fmt;
+	enum atomisp_css_stream_format atomisp_in_fmt;
 	enum atomisp_css_bayer_order bayer_order;
+	enum ia_css_stream_format css_stream_fmt;
 };
 
 struct atomisp_sub_device;
@@ -78,6 +77,14 @@ struct atomisp_video_pipe {
 	struct videobuf_queue outq;
 	struct list_head activeq;
 	struct list_head activeq_out;
+	/*
+	 * the buffers waiting for per-frame parameters, this is only valid
+	 * in per-frame setting mode.
+	 */
+	struct list_head buffers_waiting_for_param;
+	/* the link list to store per_frame parameters */
+	struct list_head per_frame_params;
+
 	unsigned int buffers_in_css;
 
 	/* irq_lock is used to protect video buffer state change operations and
@@ -91,6 +98,18 @@ struct atomisp_video_pipe {
 	uint32_t sh_fmt;
 
 	struct atomisp_sub_device *asd;
+
+	/*
+	 * This frame_config_id is got from CSS when dequueues buffers from CSS,
+	 * it is used to indicate which parameter it has applied.
+	 */
+	unsigned int frame_config_id[VIDEO_MAX_FRAME];
+	/*
+	 * This config id is set when camera HAL enqueues buffer, it has a
+	 * non-zero value to indicate which parameter it needs to applu
+	 */
+	unsigned int frame_request_config_id[VIDEO_MAX_FRAME];
+	struct atomisp_css_params_with_list *frame_params[VIDEO_MAX_FRAME];
 };
 
 struct atomisp_pad_format {
@@ -107,7 +126,62 @@ enum atomisp_flash_state {
 	ATOMISP_FLASH_DONE
 };
 
+/*
+ * This structure is used to cache the CSS parameters, it aligns to
+ * struct ia_css_isp_config but without un-supported and deprecated parts.
+ */
 struct atomisp_css_params {
+	struct ia_css_wb_config   wb_config;
+	struct ia_css_cc_config   cc_config;
+	struct ia_css_tnr_config  tnr_config;
+	struct ia_css_ecd_config  ecd_config;
+	struct ia_css_ynr_config  ynr_config;
+	struct ia_css_fc_config   fc_config;
+	struct ia_css_formats_config formats_config;
+	struct ia_css_cnr_config  cnr_config;
+	struct ia_css_macc_config macc_config;
+	struct ia_css_ctc_config  ctc_config;
+	struct ia_css_aa_config   aa_config;
+	struct ia_css_aa_config   baa_config;
+	struct ia_css_ce_config   ce_config;
+	struct ia_css_ob_config   ob_config;
+	struct ia_css_dp_config   dp_config;
+	struct ia_css_de_config   de_config;
+	struct ia_css_gc_config   gc_config;
+	struct ia_css_nr_config   nr_config;
+	struct ia_css_ee_config   ee_config;
+	struct ia_css_anr_config  anr_config;
+	struct ia_css_3a_config   s3a_config;
+	struct ia_css_xnr_config  xnr_config;
+	struct ia_css_dz_config   dz_config;
+	struct ia_css_cc_config yuv2rgb_cc_config;
+	struct ia_css_cc_config rgb2yuv_cc_config;
+	struct ia_css_macc_table  macc_table;
+	struct ia_css_gamma_table gamma_table;
+	struct ia_css_ctc_table   ctc_table;
+
+	struct ia_css_xnr_table   xnr_table;
+	struct ia_css_rgb_gamma_table r_gamma_table;
+	struct ia_css_rgb_gamma_table g_gamma_table;
+	struct ia_css_rgb_gamma_table b_gamma_table;
+
+	struct ia_css_vector      motion_vector;
+	struct ia_css_anr_thres   anr_thres;
+
+	struct ia_css_dvs_6axis_config *dvs_6axis;
+	struct ia_css_dvs2_coefficients *dvs2_coeff;
+	struct ia_css_shading_table *shading_table;
+	struct ia_css_morph_table   *morph_table;
+
+	/*
+	 * Used to store the user pointer address of the frame. driver needs to
+	 * translate to ia_css_frame * and then set to CSS.
+	 */
+	void		*output_frame;
+	uint32_t	isp_config_id;
+};
+
+struct atomisp_subdev_params {
 	/* FIXME: Determines whether raw capture buffer are being passed to
 	 * user space. Unimplemented for now. */
 	int online_process;
@@ -126,114 +200,35 @@ struct atomisp_css_params {
 
 	/* Current grid info */
 	struct atomisp_css_grid_info curr_grid_info;
+	enum atomisp_css_pipe_id s3a_enabled_pipe;
 
 	int s3a_output_bytes;
-	bool s3a_buf_data_valid;
 
 	bool dis_proj_data_valid;
 
-	/* current configurations */
-	/* Dead Pixel config */
-	struct atomisp_css_dp_config   dp_config;
-	/* White Balance config */
-	struct atomisp_css_wb_config   wb_config;
-	/* Color Correction config */
-	struct atomisp_css_cc_config   cc_config;
-	/* Noise Reduction config */
-	struct atomisp_css_nr_config   nr_config;
-	/* Edge Enhancement config */
-	struct atomisp_css_ee_config   ee_config;
-	/* Objective Black config */
-	struct atomisp_css_ob_config   ob_config;
-	/* Demosaic config */
-	struct atomisp_css_de_config   de_config;
-	struct atomisp_css_ce_config   ce_config;
-	/* Gamma Correction config */
-	struct atomisp_css_gc_config   gc_config;
-	/* Temporal Noise Reduction */
-	struct atomisp_css_tnr_config  tnr_config;
-	/* 3A Statistics config */
-	struct atomisp_css_3a_config   s3a_config;
-	struct atomisp_css_gamma_table gamma_table;
-	struct atomisp_css_ctc_table   ctc_table;
-	struct atomisp_css_macc_table  macc_table;
-
-#ifdef CSS20
-	struct atomisp_css_ctc_config	ctc_config;
-	struct atomisp_css_cnr_config	cnr_config;
-	struct atomisp_css_macc_config	macc_config;
-	/* Eigen Color Demosaicing */
-	struct atomisp_css_ecd_config	ecd_config;
-	/* Y(Luma) Noise Reduction */
-	struct atomisp_css_ynr_config	ynr_config;
-	/* Fringe Control */
-	struct atomisp_css_fc_config	fc_config;
-	/* Anti-Aliasing */
-	struct atomisp_css_aa_config	aa_config;
-	/* Bayer Anti-Aliasing */
-	struct atomisp_css_aa_config	baa_config;
-	/* Advanced Noise Reduction */
-	struct atomisp_css_anr_config	anr_config;
-	/* eXtra Noise Reduction */
-	struct atomisp_css_xnr_config	xnr_config;
-	/* Color Correction config */
-	struct atomisp_css_cc_config	yuv2rgb_cc_config;
-	/* Color Correction config */
-	struct atomisp_css_cc_config	rgb2yuv_cc_config;
-	struct atomisp_css_xnr_table   xnr_table;
-	struct atomisp_css_rgb_gamma_table	r_gamma_table;
-	struct atomisp_css_rgb_gamma_table	g_gamma_table;
-	struct atomisp_css_rgb_gamma_table	b_gamma_table;
-	struct atomisp_css_anr_thres	anr_thres;
-
 	struct ia_css_dz_config   dz_config;  /**< Digital Zoom */
 	struct ia_css_capture_config   capture_config;
-	struct ia_css_dvs_coefficients dvs_coefs;
-	struct ia_css_vector  motion_vector;
 
 	struct atomisp_css_isp_config config;
 
-	/* Intermediate buffers used to communicate data between
-	   CSS and user space. These are needed to perform the
-	   copy_to_user. */
+	/* current configurations */
+	struct atomisp_css_params css_param;
+
+	/*
+	 * Intermediate buffers used to communicate data between
+	 * CSS and user space.
+	 */
 	struct ia_css_3a_statistics *s3a_user_stat;
-	struct ia_css_dvs2_coefficients *dvs_coeff;
+
+	void *metadata_user[ATOMISP_METADATA_TYPE_NUM];
+	uint32_t metadata_width_size;
+
 	struct ia_css_dvs2_statistics *dvs_stat;
-	struct ia_css_dvs_6axis_config *dvs_6axis;
 	uint32_t exp_id;
 	int  dvs_hor_coef_bytes;
 	int  dvs_ver_coef_bytes;
 	int  dvs_ver_proj_bytes;
 	int  dvs_hor_proj_bytes;
-#else /* CSS20 */
-	struct sh_css_3a_output *s3a_output_buf;
-	/* DIS Coefficients */
-	short *dis_hor_coef_buf;
-	int    dis_hor_coef_bytes;
-	short *dis_ver_coef_buf;
-	int    dis_ver_coef_bytes;
-	/* DIS projections */
-	int *dis_ver_proj_buf;
-	int  dis_ver_proj_bytes;
-	int *dis_hor_proj_buf;
-	int  dis_hor_proj_bytes;
-
-	/* default configurations */
-	struct atomisp_css_dp_config   *default_dp_config;
-	struct atomisp_css_wb_config   *default_wb_config;
-	struct atomisp_css_cc_config   *default_cc_config;
-	struct atomisp_css_nr_config   *default_nr_config;
-	struct atomisp_css_ee_config   *default_ee_config;
-	struct atomisp_css_ob_config   *default_ob_config;
-	struct atomisp_css_de_config   *default_de_config;
-	struct atomisp_css_ce_config   *default_ce_config;
-	struct atomisp_css_gc_config   *default_gc_config;
-	struct atomisp_css_tnr_config  *default_tnr_config;
-	struct atomisp_css_3a_config   *default_3a_config;
-	struct atomisp_css_macc_table  *default_macc_table;
-	struct atomisp_css_ctc_table   *default_ctc_table;
-	struct atomisp_css_gamma_table *default_gamma_table;
-#endif /* CSS20 */
 
 	/* Flash */
 	int num_flash_frames;
@@ -244,6 +239,14 @@ struct atomisp_css_params {
 	struct atomisp_cont_capture_conf offline_parm;
 	/* Flag to check if driver needs to update params to css */
 	bool css_update_params_needed;
+};
+
+struct atomisp_css_params_with_list {
+	/* parameters for CSS */
+	struct atomisp_css_params params;
+	/* userspace parameters, in order to know which parameters need to update */
+	struct atomisp_parameters us_params;
+	struct list_head list;
 };
 
 struct atomisp_sub_device {
@@ -266,28 +269,47 @@ struct atomisp_sub_device {
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct v4l2_ctrl *fmt_auto;
 	struct v4l2_ctrl *run_mode;
+	struct v4l2_ctrl *depth_mode;
 	struct v4l2_ctrl *vfpp;
 	struct v4l2_ctrl *continuous_mode;
 	struct v4l2_ctrl *continuous_raw_buffer_size;
 	struct v4l2_ctrl *continuous_viewfinder;
+	struct v4l2_ctrl *enable_raw_buffer_lock;
+	struct v4l2_ctrl *disable_dz;
 
-	struct atomisp_css_params params;
+	struct atomisp_subdev_params params;
 
-#ifdef CSS20
 	struct atomisp_stream_env stream_env[ATOMISP_INPUT_STREAM_NUM];
-#endif
+
 	struct v4l2_pix_format dvs_envelop;
 	unsigned int s3a_bufs_in_css[CSS_PIPE_ID_NUM];
 	unsigned int dis_bufs_in_css;
 
+	unsigned int metadata_bufs_in_css
+		[ATOMISP_INPUT_STREAM_NUM][CSS_PIPE_ID_NUM];
+	/* The list of free and available metadata buffers for CSS */
+	struct list_head metadata[ATOMISP_METADATA_TYPE_NUM];
+	/* The list of metadata buffers which have been en-queued to CSS */
+	struct list_head metadata_in_css[ATOMISP_METADATA_TYPE_NUM];
+	/* The list of metadata buffers which are ready for userspace to get */
+	struct list_head metadata_ready[ATOMISP_METADATA_TYPE_NUM];
+
+	/* The list of free and available s3a stat buffers for CSS */
 	struct list_head s3a_stats;
+	/* The list of s3a stat buffers which have been en-queued to CSS */
+	struct list_head s3a_stats_in_css;
+	/* The list of s3a stat buffers which are ready for userspace to get */
+	struct list_head s3a_stats_ready;
+
 	struct list_head dis_stats;
+	struct list_head dis_stats_in_css;
+	spinlock_t dis_stats_lock;
 
 	struct atomisp_css_frame *vf_frame; /* TODO: needed? */
 	struct atomisp_css_frame *raw_output_frame;
 	enum atomisp_frame_status frame_status[VIDEO_MAX_FRAME];
 
-	/* This field specifies which MIPI input port is selected. */
+	/* This field specifies which camera (v4l2 input) is selected. */
 	int input_curr;
 	/* This field specifies which sensor is being selected when there
 	   are multiple sensors connected to the same MIPI port. */
@@ -298,6 +320,7 @@ struct atomisp_sub_device {
 	atomic_t sequence_temp;
 
 	unsigned int streaming; /* Hold both mutex and lock to change this */
+	bool stream_prepared; /* whether css stream is created */
 
 	/* subdev index: will be used to show which subdev is holding the
 	 * resource, like which camera is used by which subdev
@@ -313,6 +336,16 @@ struct atomisp_sub_device {
 	unsigned int latest_preview_exp_id; /* CSS ZSL/SDV raw buffer id */
 
 	unsigned int mipi_frame_size;
+
+	bool copy_mode; /* CSI2+ use copy mode */
+	bool copy_mode_format_conv; /* CSI2+ copy with format conversion */
+	bool yuvpp_mode;	/* CSI2+ yuvpp pipe */
+
+	int raw_buffer_bitmap[ATOMISP_MAX_EXP_ID/32 + 1]; /* Record each Raw Buffer lock status */
+	spinlock_t raw_buffer_bitmap_lock;
+
+	bool high_speed_mode; /* Indicate whether now is a high speed mode */
+	int pending_capture_request; /* Indicates the number of pending capture requests. */
 };
 
 extern const struct atomisp_in_fmt_conv atomisp_in_fmt_conv[];
@@ -322,11 +355,15 @@ enum v4l2_mbus_pixelcode atomisp_subdev_uncompressed_code(
 bool atomisp_subdev_is_compressed(enum v4l2_mbus_pixelcode code);
 const struct atomisp_in_fmt_conv *atomisp_find_in_fmt_conv(
 	enum v4l2_mbus_pixelcode code);
+const struct atomisp_in_fmt_conv *atomisp_find_in_fmt_conv_by_atomisp_in_fmt(
+	enum atomisp_css_stream_format atomisp_in_fmt);
 const struct atomisp_in_fmt_conv *atomisp_find_in_fmt_conv_compressed(
 	enum v4l2_mbus_pixelcode code);
 bool atomisp_subdev_format_conversion(struct atomisp_sub_device *asd,
 				      unsigned int source_pad);
 uint16_t atomisp_subdev_source_pad(struct video_device *vdev);
+bool atomisp_subdev_copy_format_conversion(struct atomisp_sub_device *asd,
+					   unsigned int source_pad);
 
 /* Get pointer to appropriate format */
 struct v4l2_mbus_framefmt
@@ -346,6 +383,8 @@ void atomisp_subdev_set_ffmt(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh,
 			     struct v4l2_mbus_framefmt *ffmt);
 
 int atomisp_update_run_mode(struct atomisp_sub_device *asd);
+
+void atomisp_subdev_cleanup_pending_events(struct atomisp_sub_device *asd);
 
 void atomisp_subdev_unregister_entities(struct atomisp_sub_device *asd);
 int atomisp_subdev_register_entities(struct atomisp_sub_device *asd,

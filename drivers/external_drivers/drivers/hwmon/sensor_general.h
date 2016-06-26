@@ -74,8 +74,12 @@ struct sensor_data {
 	int private[PRIVATE_MAX_SIZE];
 };
 
+typedef int (*p_extern_c)(struct sensor_data *);
+
 int sensor_register_rawdata_proc(struct sensor_rawdata_proc *);
 int sensor_unregister_rawdata_proc(struct sensor_rawdata_proc *);
+int sensor_register_extern_c(p_extern_c p);
+int sensor_unregister_extern_c(p_extern_c p);
 
 #ifdef CONFIG_GENERAL_SENSOR_DEBUG
 
@@ -114,7 +118,6 @@ static inline void dbg_dump(char *buf, int len)
 	}
 	printk(KERN_DEBUG "\n");
 }
-
 
 #else
 

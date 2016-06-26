@@ -1,4 +1,5 @@
-/* Release Version: irci_master_20140212_0006 */
+/* Release Version: irci_master_20141125_0453 */
+/* Release Version: irci_master_20141125_0453 */
 /*
  * Support for Intel Camera Imaging ISP subsystem.
  *
@@ -20,34 +21,23 @@
  *
  */
 
-#ifndef _IA_CSS_TYPES_H_
-#define _IA_CSS_TYPES_H_
+#ifndef _IA_CSS_TYPES_H
+#define _IA_CSS_TYPES_H
 
-/*! \file */
-
-/** @file ia_css_types.h
+/** @file
  * This file contains types used for the ia_css parameters.
  * These types are in a separate file because they are expected
  * to be used in software layers that do not access the CSS API
  * directly but still need to forward parameters for it.
  */
 
-/* This code is also used by Silicon Hive in a simulation environment
- * Therefore, the following macro is used to differentiate when this
- * code is being included from within the Linux kernel source
- */
+#include <type_support.h>
 
-#ifdef __KERNEL__
-#include <linux/kernel.h>
-#else
-#include <stdint.h>
-#endif
 #if defined(IS_ISP_2500_SYSTEM)
 #if defined(__HOST__)
-#include "components_types.host.h"                /* Skylake kernel settings structs */
+#include "components/include/components_types.host.h"                /* Skylake kernel settings structs */
 #endif
 #endif
-
 
 #include "ia_css_frac.h"
 
@@ -60,6 +50,7 @@
 #include "isp/kernels/dp/dp_1.0/ia_css_dp_types.h"
 #include "isp/kernels/de/de_1.0/ia_css_de_types.h"
 #include "isp/kernels/de/de_2/ia_css_de2_types.h"
+#include "isp/kernels/fc/fc_1.0/ia_css_formats_types.h"
 #include "isp/kernels/fpn/fpn_1.0/ia_css_fpn_types.h"
 #include "isp/kernels/gc/gc_1.0/ia_css_gc_types.h"
 #include "isp/kernels/gc/gc_2/ia_css_gc2_types.h"
@@ -67,11 +58,15 @@
 #include "isp/kernels/ob/ob_1.0/ia_css_ob_types.h"
 #include "isp/kernels/s3a/s3a_1.0/ia_css_s3a_types.h"
 #include "isp/kernels/sc/sc_1.0/ia_css_sc_types.h"
+#include "isp/kernels/sdis/sdis_1.0/ia_css_sdis_types.h"
+#include "isp/kernels/sdis/sdis_2/ia_css_sdis2_types.h"
 #include "isp/kernels/tnr/tnr_1.0/ia_css_tnr_types.h"
 #include "isp/kernels/wb/wb_1.0/ia_css_wb_types.h"
 #include "isp/kernels/xnr/xnr_1.0/ia_css_xnr_types.h"
+#include "isp/kernels/xnr/xnr_3.0/ia_css_xnr3_types.h"
 #include "isp/kernels/ynr/ynr_1.0/ia_css_ynr_types.h"
 #include "isp/kernels/ynr/ynr_2/ia_css_ynr2_types.h"
+#include "isp/kernels/output/output_1.0/ia_css_output_types.h"
 
 #define IA_CSS_VERSION_MAJOR    2
 #define IA_CSS_VERSION_MINOR    0
@@ -79,12 +74,20 @@
 
 #define IA_CSS_MORPH_TABLE_NUM_PLANES  6
 
-/** Number of DVS coefficient types */
-#define IA_CSS_DVS_NUM_COEF_TYPES      6
-#define IA_CSS_DVS_COEF_TYPES_ON_DMEM  2
-#define IA_CSS_DVS2_NUM_COEF_TYPES     4
+/* Min and max exposure IDs. These macros are here to allow
+ * the drivers to get this information. Changing these macros
+ * constitutes a CSS API change. */
+#define IA_CSS_ISYS_MIN_EXPOSURE_ID 1   /**< Minimum exposure ID */
+#define IA_CSS_ISYS_MAX_EXPOSURE_ID 250 /**< Maximum exposure ID */
 
-/* Virtual address within the CSS address space. */
+/* opaque types */
+struct ia_css_isp_parameters;
+struct ia_css_pipe;
+struct ia_css_memory_offsets;
+struct ia_css_config_memory_offsets;
+struct ia_css_state_memory_offsets;
+
+/** Virtual address within the CSS address space. */
 typedef uint32_t ia_css_ptr;
 
 /** Generic resolution structure.
@@ -108,60 +111,124 @@ struct ia_css_vector {
 
 /** CSS data descriptor */
 struct ia_css_data {
-	ia_css_ptr address; /* CSS virtual address */
-	uint32_t   size;    /* Disabled if 0 */
+	ia_css_ptr address; /**< CSS virtual address */
+	uint32_t   size;    /**< Disabled if 0 */
 };
 
 /** Host data descriptor */
 struct ia_css_host_data {
-	char      *address; /* Host address */
-	uint32_t   size;    /* Disabled if 0 */
+	char      *address; /**< Host address */
+	uint32_t   size;    /**< Disabled if 0 */
 };
 
 /** ISP data descriptor */
 struct ia_css_isp_data {
-	uint32_t   address; /* ISP address */
-	uint32_t   size;    /* Disabled if 0 */
+	uint32_t   address; /**< ISP address */
+	uint32_t   size;    /**< Disabled if 0 */
 };
 
-/** DVS statistics grid
- *
- *  ISP block: SDVS1 (DIS/DVS Support for DIS/DVS ver.1 (2-axes))
- *             SDVS2 (DVS Support for DVS ver.2 (6-axes))
- *  ISP1: SDVS1 is used.
- *  ISP2: SDVS2 is used.
- */
-struct ia_css_dvs_grid_info {
-	uint32_t enable;        /**< DVS statistics enabled.
-					0:disabled, 1:enabled */
-	uint32_t width;		/**< Width of DVS grid table.
-					(= Horizontal number of grid cells
-					in table, which cells have effective
-					statistics.)
-					For DVS1, this is equal to
-					 the number of vertical statistics. */
-	uint32_t aligned_width; /**< Stride of each grid line.
-					(= Horizontal number of grid cells
-					in table, which means
-					the allocated width.) */
-	uint32_t height;	/**< Height of DVS grid table.
-					(= Vertical number of grid cells
-					in table, which cells have effective
-					statistics.)
-					For DVS1, This is equal to
-					the number of horizontal statistics. */
-	uint32_t aligned_height;/**< Stride of each grid column.
-					(= Vertical number of grid cells
-					in table, which means
-					the allocated height.) */
-	uint32_t bqs_per_grid_cell; /**< Grid cell size in BQ(Bayer Quad) unit.
-					(1BQ means {Gr,R,B,Gb}(2x2 pixels).)
-					For DVS1, valid value is 64.
-					For DVS2, valid value is only 64,
-					currently. */
-	uint32_t num_hor_coefs;	/**< Number of horizontal coefficients. */
-	uint32_t num_ver_coefs;	/**< Number of vertical coefficients. */
+/** Shading Correction types. */
+enum ia_css_shading_correction_type {
+	IA_CSS_SHADING_CORRECTION_TYPE_1 /**< Shading Correction 1.0 (pipe 1.0 on ISP2300, pipe 2.2 on ISP2400) */
+
+	/**< More shading correction types can be added in the future. */
 };
+
+/** Shading Correction information. */
+struct ia_css_shading_info {
+	enum ia_css_shading_correction_type type; /**< Shading Correction type. */
+
+	union {	/** Shading Correction information of each Shading Correction types. */
+
+		/** Shading Correction information of Shading Correction Type 1.
+		 *
+		 *  This structure contains the information necessary to generate
+		 *  the shading table required in the isp.
+		 *  This structure is filled in the css,
+		 *  and the driver needs to get it to generate the shading table.
+		 *
+		 *  Before the shading correction is applied, NxN-filter and/or scaling
+		 *  are applied in the isp, depending on the isp binaries.
+		 *  Then, these should be considered in generating the shading table.
+		 *    - Bad pixels on left/top sides generated by NxN-filter
+		 *      (Bad pixels are NOT considered currently,
+		 *      because they are subtle.)
+		 *    - Down-scaling/Up-scaling factor
+		 *
+		 *  Shading correction is applied to the area
+		 *  which has real sensor data and margin.
+		 *  Then, the shading table should cover the area including margin.
+		 *  This structure has this information.
+		 *    - Origin coordinate of bayer (real sensor data)
+		 *      on the shading table
+		 *
+		 *  ISP block: SC1
+		 *  ISP1: SC1 is used.
+		 *  ISP2: SC1 is used.
+		 */
+		struct {
+			uint32_t enable;	/**< Shading correction enabled.
+						     0:disabled, 1:enabled */
+			uint32_t num_hor_grids;	/**< Number of data points per line
+						     per color on shading table. */
+			uint32_t num_ver_grids;	/**< Number of lines of data points
+						     per color on shading table. */
+			uint32_t bqs_per_grid_cell; /**< Grid cell size
+						in BQ(Bayer Quad) unit.
+						(1BQ means {Gr,R,B,Gb}(2x2 pixels).)
+						Valid values are 8,16,32,64. */
+			uint32_t bayer_scale_hor_ratio_in;
+			uint32_t bayer_scale_hor_ratio_out;
+			/**< Horizontal ratio of bayer scaling
+			between input width and output width, for the scaling
+			which should be done before shading correction.
+			  output_width = input_width * bayer_scale_hor_ratio_out
+						/ bayer_scale_hor_ratio_in */
+			uint32_t bayer_scale_ver_ratio_in;
+			uint32_t bayer_scale_ver_ratio_out;
+			/**< Vertical ratio of bayer scaling
+			between input height and output height, for the scaling
+			which should be done before shading correction.
+			  output_height = input_height * bayer_scale_ver_ratio_out
+						/ bayer_scale_ver_ratio_in */
+			uint32_t sc_bayer_origin_x_bqs_on_shading_table;
+			/**< X coordinate (in bqs) of bayer origin on shading table.
+			This indicates the left-most pixel of bayer
+			(not include margin) inputted to the shading correction.
+			This corresponds to the left-most pixel of bayer
+			inputted to isp from sensor. */
+			uint32_t sc_bayer_origin_y_bqs_on_shading_table;
+			/**< Y coordinate (in bqs) of bayer origin on shading table.
+			This indicates the top pixel of bayer
+			(not include margin) inputted to the shading correction.
+			This corresponds to the top pixel of bayer
+			inputted to isp from sensor. */
+		} type_1;
+
+		/**< More structures can be added here when more shading correction types will be added
+		     in the future. */
+	} info;
+};
+
+/** Default Shading Correction information. */
+#define DEFAULT_SHADING_INFO \
+{ \
+	IA_CSS_SHADING_CORRECTION_TYPE_1,	/* type */ \
+	{					/* info */ \
+		{ \
+			0,	/* enable */ \
+			0,	/* num_hor_grids */ \
+			0,	/* num_ver_grids */ \
+			0,	/* bqs_per_grid_cell */ \
+			1,	/* bayer_scale_hor_ratio_in */ \
+			1,	/* bayer_scale_hor_ratio_out */ \
+			1,	/* bayer_scale_ver_ratio_in */ \
+			1,	/* bayer_scale_ver_ratio_out */ \
+			0,	/* sc_bayer_origin_x_bqs_on_shading_table */ \
+			0	/* sc_bayer_origin_y_bqs_on_shading_table */ \
+		} \
+	} \
+}
 
 /** structure that describes the 3A and DIS grids */
 struct ia_css_grid_info {
@@ -179,6 +246,16 @@ struct ia_css_grid_info {
 	enum ia_css_vamem_type vamem_type;
 };
 
+/** defaults for ia_css_grid_info structs */
+#define DEFAULT_GRID_INFO \
+{ \
+	0,				/* isp_in_width */ \
+	0,				/* isp_in_height */ \
+	DEFAULT_3A_GRID_INFO,		/* s3a_grid */ \
+	DEFAULT_DVS_GRID_INFO,		/* dvs_grid */ \
+	IA_CSS_VAMEM_TYPE_1		/* vamem_type */ \
+}
+
 /** Morphing table, used for geometric distortion and chromatic abberration
  *  correction (GDCAC, also called GDC).
  *  This table describes the imperfections introduced by the lens, the
@@ -186,7 +263,7 @@ struct ia_css_grid_info {
  */
 struct ia_css_morph_table {
 	uint32_t enable; /**< To disable GDC, set this field to false. The
-		          coordinates fields can be set to NULL in this case. */
+			  coordinates fields can be set to NULL in this case. */
 	uint32_t height; /**< Table height */
 	uint32_t width;  /**< Table width */
 	uint16_t *coordinates_x[IA_CSS_MORPH_TABLE_NUM_PLANES];
@@ -197,6 +274,7 @@ struct ia_css_morph_table {
 
 struct ia_css_dvs_6axis_config {
 	unsigned int exp_id;
+	/**< Exposure ID, see ia_css_event_public.h for more detail */
 	uint32_t width_y;
 	uint32_t height_y;
 	uint32_t width_uv;
@@ -208,16 +286,42 @@ struct ia_css_dvs_6axis_config {
 };
 
 /**
+ * This specifies the coordinates (x,y)
+ */
+struct ia_css_point {
+	int32_t x; /**< x coordinate */
+	int32_t y; /**< y coordinate */
+};
+
+/**
+ * This specifies the region
+ */
+struct ia_css_region {
+	struct ia_css_point origin; /**< Starting point coordinates for the region */
+	struct ia_css_resolution resolution; /**< Region resolution */
+};
+
+/**
  * Digital zoom:
  * This feature is currently available only for video, but will become
  * available for preview and capture as well.
  * Set the digital zoom factor, this is a logarithmic scale. The actual zoom
  * factor will be 64/x.
  * Setting dx or dy to 0 disables digital zoom for that direction.
+ * New API change for Digital zoom:(added struct ia_css_region zoom_region)
+ * zoom_region specifies the origin of the zoom region and width and
+ * height of that region.
+ * origin : This is the coordinate (x,y) within the effective input resolution
+ * of the stream. where, x >= 0 and y >= 0. (0,0) maps to the upper left of the
+ * effective input resolution.
+ * resolution : This is resolution of zoom region.
+ * where, x + width <= effective input width
+ * y + height <= effective input height
  */
 struct ia_css_dz_config {
-	uint32_t dx;
-	uint32_t dy;
+	uint32_t dx; /**< Horizontal zoom factor */
+	uint32_t dy; /**< Vertical zoom factor */
+	struct ia_css_region zoom_region; /**< region for zoom */
 };
 
 /** The still capture mode, this can be RAW (simply copy sensor input to DDR),
@@ -236,6 +340,15 @@ struct ia_css_capture_config {
 	uint32_t enable_xnr;	       /**< Enable/disable XNR */
 	uint32_t enable_raw_output;
 };
+
+/** default settings for ia_css_capture_config structs */
+#define DEFAULT_CAPTURE_CONFIG \
+{ \
+	IA_CSS_CAPTURE_MODE_PRIMARY,	/* mode (capture) */ \
+	false,				/* enable_xnr */ \
+	false				/* enable_raw_output */ \
+}
+
 
 /** ISP filter configuration. This is a collection of configurations
  *  for each of the ISP filters (modules).
@@ -264,6 +377,8 @@ struct ia_css_isp_config {
 							[YNR2&YEE2, 2only] */
 	struct ia_css_fc_config   *fc_config;	/**< Fringe Control
 							[FC2, 2only] */
+	struct ia_css_formats_config   *formats_config;	/**< Formats Control for main output
+							[FORMATS, 1&2] */
 	struct ia_css_cnr_config  *cnr_config;	/**< Chroma Noise Reduction
 							[CNR2, 2only] */
 	struct ia_css_macc_config *macc_config;	/**< MACC
@@ -272,7 +387,7 @@ struct ia_css_isp_config {
 							[CTC2, 2only] */
 	struct ia_css_aa_config   *aa_config;	/**< YUV Anti-Aliasing
 							[AA2, 2only]
-						        (not used currently) */
+							(not used currently) */
 	struct ia_css_aa_config   *baa_config;	/**< Bayer Anti-Aliasing
 							[BAA2, 1&2] */
 	struct ia_css_ce_config   *ce_config;	/**< Chroma Enhancement
@@ -321,6 +436,16 @@ struct ia_css_isp_config {
 	struct ia_css_dvs2_coefficients *dvs2_coefs; /**< DVS 2.0 coefficients */
 	struct ia_css_capture_config   *capture_config;
 	struct ia_css_anr_thres   *anr_thres;
+	/** @deprecated{Old shading settings, see bugzilla bz675 for details} */
+	struct ia_css_shading_settings *shading_settings;
+	struct ia_css_xnr3_config *xnr3_config; /**< eXtreme Noise Reduction v3 */
+	/** comment from Lasse: Be aware how this feature will affect coordinate
+	 *  normalization in different parts of the system. (e.g. face detection,
+	 *  touch focus, 3A statistics and windows of interest, shading correction,
+	 *  DVS, GDC) from IQ tool level and application level down-to ISP FW level.
+	 *  the risk for regression is not in the individual blocks, but how they
+	 *  integrate together. */
+	struct ia_css_output_config   *output_config;	/**< Main Output Mirroring, flipping */
 
 	struct ia_css_2500_lin_kernel_config     *lin_2500_config;       /**< Skylake: Linearization config */
 	struct ia_css_2500_obgrid_kernel_config  *obgrid_2500_config;    /**< Skylake: OBGRID config */
@@ -328,7 +453,10 @@ struct ia_css_isp_config {
 	struct ia_css_2500_shd_kernel_config     *shd_2500_config;       /**< Skylake: shading config */
 	struct ia_css_2500_dm_kernel_config      *dm_2500_config;        /**< Skylake: demosaic config */
 	struct ia_css_2500_rgbpp_kernel_config   *rgbpp_2500_config;     /**< Skylake: RGBPP config */
-	struct ia_css_2500_yuvp1_kernel_config   *yuvp1_2500_config;     /**< Skylake: yuvp1 config */
+	struct ia_css_2500_dvs_statistics_kernel_config *dvs_stat_2500_config; /**< Skylake: DVS STAT config */
+	struct ia_css_2500_lace_stat_kernel_config *lace_stat_2500_config; /**< Skylake: LACE STAT config */
+	struct ia_css_2500_yuvp1_b0_kernel_config   *yuvp1_b0_2500_config;     /**< Skylake: yuvp1 config for B0*/
+	struct ia_css_2500_yuvp1_c0_kernel_config   *yuvp1_c0_2500_config;     /**< Skylake: yuvp1 config for C0*/
 	struct ia_css_2500_yuvp2_kernel_config   *yuvp2_2500_config;     /**< Skylake: yuvp2 config */
 	struct ia_css_2500_tnr_kernel_config     *tnr_2500_config;       /**< Skylake: TNR config */
 	struct ia_css_2500_dpc_kernel_config     *dpc_2500_config;       /**< Skylake: DPC config */
@@ -340,70 +468,12 @@ struct ia_css_isp_config {
 	struct ia_css_2500_bds_kernel_config     *bds_2500_config;       /**< Skylake: bayer downscaler config */
 	struct ia_css_2500_dvs_kernel_config     *dvs_2500_config;       /**< Skylake: digital video stabilization config */
 	struct ia_css_2500_res_mgr_config        *res_mgr_2500_config;
+	struct ia_css_formats_config             *formats_config_display;/**< Formats control for viewfinder/display output (optional)
+										[OSYS, n/a] */
+	struct ia_css_output_config              *output_config_display; /**< Viewfinder/display output mirroring, flipping (optional) */
+
+	struct ia_css_frame	*output_frame;	/**< Output frame the config is to be applied to (optional) */
+	uint32_t			isp_config_id;	/**< Unique ID to track which config was actually applied to a particular frame */
 };
 
-/** DVS 1.0 Coefficients.
- *  This structure describes the coefficients that are needed for the dvs statistics.
- */
-
-struct ia_css_dvs_coefficients {
-	struct ia_css_dvs_grid_info grid;/**< grid info contains the dimensions of the dvs grid */
-	int16_t *hor_coefs;	/**< the pointer to int16_t[grid.num_hor_coefs * IA_CSS_DVS_NUM_COEF_TYPES]
-				     containing the horizontal coefficients */
-	int16_t *ver_coefs;	/**< the pointer to int16_t[grid.num_ver_coefs * IA_CSS_DVS_NUM_COEF_TYPES]
-				     containing the vertical coefficients */
-};
-
-/** DVS 1.0 Statistics.
- *  This structure describes the statistics that are generated using the provided coefficients.
- */
-
-struct ia_css_dvs_statistics {
-	struct ia_css_dvs_grid_info grid;/**< grid info contains the dimensions of the dvs grid */
-	int32_t *hor_proj;	/**< the pointer to int16_t[grid.height * IA_CSS_DVS_NUM_COEF_TYPES]
-				     containing the horizontal projections */
-	int32_t *ver_proj;	/**< the pointer to int16_t[grid.width * IA_CSS_DVS_NUM_COEF_TYPES]
-				     containing the vertical projections */
-};
-
-/** DVS 2.0 Coefficient types. This structure contains 4 pointers to
- *  arrays that contain the coeffients for each type.
- */
-struct ia_css_dvs2_coef_types {
-	int16_t *odd_real; /**< real part of the odd coefficients*/
-	int16_t *odd_imag; /**< imaginary part of the odd coefficients*/
-	int16_t *even_real;/**< real part of the even coefficients*/
-	int16_t *even_imag;/**< imaginary part of the even coefficients*/
-};
-
-/** DVS 2.0 Coefficients. This structure describes the coefficients that are needed for the dvs statistics.
- *  e.g. hor_coefs.odd_real is the pointer to int16_t[grid.num_hor_coefs] containing the horizontal odd real 
- *  coefficients.
- */
-struct ia_css_dvs2_coefficients {
-	struct ia_css_dvs_grid_info grid;        /**< grid info contains the dimensions of the dvs grid */
-	struct ia_css_dvs2_coef_types hor_coefs; /**< struct with pointers that contain the horizontal coefficients */
-	struct ia_css_dvs2_coef_types ver_coefs; /**< struct with pointers that contain the vertical coefficients */
-};
-
-/** DVS 2.0 Statistic types. This structure contains 4 pointers to
- *  arrays that contain the statistics for each type.
- */
-struct ia_css_dvs2_stat_types {
-	int32_t *odd_real; /**< real part of the odd statistics*/
-	int32_t *odd_imag; /**< imaginary part of the odd statistics*/
-	int32_t *even_real;/**< real part of the even statistics*/
-	int32_t *even_imag;/**< imaginary part of the even statistics*/
-};
-
-/** DVS 2.0 Statistics. This structure describes the statistics that are generated using the provided coefficients.
- *  e.g. hor_prod.odd_real is the pointer to int16_t[grid.aligned_height][grid.aligned_width] containing 
- *  the horizontal odd real statistics. Valid statistics data area is int16_t[0..grid.height-1][0..grid.width-1]
- */
-struct ia_css_dvs2_statistics {
-	struct ia_css_dvs_grid_info grid;       /**< grid info contains the dimensions of the dvs grid */
-	struct ia_css_dvs2_stat_types hor_prod; /**< struct with pointers that contain the horizontal statistics */
-	struct ia_css_dvs2_stat_types ver_prod; /**< struct with pointers that contain the vertical statistics */
-};
-
-#endif /* _IA_CSS_TYPES_H_ */
+#endif /* _IA_CSS_TYPES_H */

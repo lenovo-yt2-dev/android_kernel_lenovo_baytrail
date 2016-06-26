@@ -454,24 +454,24 @@ static void csc_to_12bit_register_value(int64_t csc, u16 * reg_val)
 	 * Convert the absolute value to register value.
 	 *
 	 */
-	integer = temp_32_2 / 1000;
-	remain = temp_32_2 % 1000;
+	integer = temp_32_2 / 1024;
+	remain = temp_32_2 % 1024;
 
-	if (sign) {
-		*reg_val = 0;
-		remain = (remain * 1024) / 1000;
-		*reg_val |= remain;
-	} else {
-		*reg_val = BIT11;
-		remain = (remain * 1024) / 1000;
-		*reg_val |= remain;
-	}
+        *reg_val = 0;
+        remain = (remain * 1024) / 1024;
+        *reg_val |= remain;
 
-	if (integer > 1)
-		DRM_ERROR("Invalid parameters\n");
+        if (integer)
+                *reg_val |= BIT10;
 
-	if (integer)
-		*reg_val |= BIT10;
+        if (!sign) {
+                (*reg_val) = ~(*reg_val);
+                (*reg_val)++;
+                (*reg_val) &= 0xFFF;
+        }
+
+        if (integer > 1)
+                DRM_ERROR("Invalid parameters\n");
 }
 
 /**

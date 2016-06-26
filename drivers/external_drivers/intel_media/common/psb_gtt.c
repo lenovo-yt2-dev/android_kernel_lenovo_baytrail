@@ -1117,11 +1117,11 @@ int psb_gtt_unmap_meminfo(struct drm_device *dev, IMG_HANDLE hKernelMemInfo)
 {
 	return psb_gtt_unmap_common(dev,
 				psb_get_tgid(),
-				(unsigned int)hKernelMemInfo);
+				(unsigned long)hKernelMemInfo);
 }
 
 int psb_gtt_map_vaddr(struct drm_device *dev,
-			uint32_t vaddr,
+			unsigned long vaddr,
 			uint32_t size,
 			uint32_t page_align,
 			uint32_t *offset)
@@ -1209,7 +1209,7 @@ int psb_gtt_map_meminfo_ioctl(struct drm_device *dev, void *data,
 	uint32_t buffer_id = arg->bcd_buffer_id;
 	uint32_t *buffer_count = &arg->bcd_buffer_count;
 	uint32_t *buffer_stride = &arg->bcd_buffer_stride;
-	uint32_t vaddr = arg->vaddr;
+	unsigned long vaddr = arg->vaddr;
 	uint32_t size = arg->size;
 	uint32_t type = arg->type;
 

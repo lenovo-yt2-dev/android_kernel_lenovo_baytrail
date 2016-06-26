@@ -19,7 +19,12 @@
  *
  */
 
+#include "system_global.h"
+
+#ifdef USE_INPUT_SYSTEM_VERSION_2
+
 #include "ia_css_ifmtr.h"
+#include <math_support.h>
 #include "sh_css_internal.h"
 #include "input_formatter.h"
 #include "assert_support.h"
@@ -54,8 +59,8 @@ unsigned int ia_css_ifmtr_lines_needed_for_bayer_order(
 		const struct ia_css_stream_config *config)
 {
 	assert(config != NULL);
-	if ((IA_CSS_BAYER_ORDER_BGGR == config->bayer_order)
-	    || (IA_CSS_BAYER_ORDER_GBRG == config->bayer_order))
+	if ((IA_CSS_BAYER_ORDER_BGGR == config->input_config.bayer_order)
+	    || (IA_CSS_BAYER_ORDER_GBRG == config->input_config.bayer_order))
 		return 1;
 
 	return 0;
@@ -65,8 +70,8 @@ unsigned int ia_css_ifmtr_columns_needed_for_bayer_order(
 		const struct ia_css_stream_config *config)
 {
 	assert(config != NULL);
-	if ((IA_CSS_BAYER_ORDER_RGGB == config->bayer_order)
-	    || (IA_CSS_BAYER_ORDER_GBRG == config->bayer_order))
+	if ((IA_CSS_BAYER_ORDER_RGGB == config->input_config.bayer_order)
+	    || (IA_CSS_BAYER_ORDER_GBRG == config->input_config.bayer_order))
 		return 1;
 
 	return 0;
@@ -105,19 +110,24 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 	/* Index is equal to the CSI-2 port used. */
 	enum ia_css_csi2_port port;
 
-	assert(binary != NULL);
-	cropped_height = binary->in_frame_info.res.height;
-	cropped_width = binary->in_frame_info.res.width;
-	/* This should correspond to the input buffer definition for ISP
-	 * binaries in input_buf.isp.h */
-	if (binary->info->sp.enable.continuous && binary->info->sp.mode != IA_CSS_BINARY_MODE_COPY)
+	if (binary) {
+		cropped_height = binary->in_frame_info.res.height;
+		cropped_width = binary->in_frame_info.res.width;
+		/* This should correspond to the input buffer definition for
+		ISP binaries in input_buf.isp.h */
+		if (binary->info->sp.enable.continuous && binary->info->sp.pipeline.mode != IA_CSS_BINARY_MODE_COPY)
+			buffer_width = MAX_VECTORS_PER_INPUT_LINE_CONT * ISP_VEC_NELEMS;
+		else
+			buffer_width = binary->info->sp.input.max_width;
+		input_format = binary->input_format;
+	} else {
+		/* sp raw copy pipe (IA_CSS_PIPE_MODE_COPY): binary is NULL */
+		cropped_height = config->input_config.input_res.height;
+		cropped_width = config->input_config.input_res.width;
 		buffer_width = MAX_VECTORS_PER_INPUT_LINE_CONT * ISP_VEC_NELEMS;
-	else
-		buffer_width = binary->info->sp.max_input_width;
-	input_format = binary->input_format;
+		input_format = config->input_config.format;
+	}
 	two_ppc = config->pixels_per_clock == 2;
-
-
 	if (config->mode == IA_CSS_INPUT_MODE_SENSOR
 	    || config->mode == IA_CSS_INPUT_MODE_BUFFERED_SENSOR) {
 		port = config->source.port.port;
@@ -144,7 +154,11 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 		return err;
 
 	if (config->left_padding == -1)
-		left_padding = binary->left_padding;
+		if (!binary)
+			/* sp raw copy pipe: set left_padding value */
+			left_padding = 0;
+		else
+			left_padding = binary->left_padding;
 	else
 		left_padding = 2*ISP_VEC_NELEMS - config->left_padding;
 
@@ -197,6 +211,7 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 		break;
 	case IA_CSS_STREAM_FORMAT_YUV420_8:
 	case IA_CSS_STREAM_FORMAT_YUV420_10:
+	case IA_CSS_STREAM_FORMAT_YUV420_16:
 		if (two_ppc) {
 			vmem_increment = 1;
 			deinterleaving = 1;
@@ -223,6 +238,7 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 		break;
 	case IA_CSS_STREAM_FORMAT_YUV422_8:
 	case IA_CSS_STREAM_FORMAT_YUV422_10:
+	case IA_CSS_STREAM_FORMAT_YUV422_16:
 		if (two_ppc) {
 			vmem_increment = 1;
 			deinterleaving = 1;
@@ -273,33 +289,26 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 	case IA_CSS_STREAM_FORMAT_RAW_10:
 	case IA_CSS_STREAM_FORMAT_RAW_12:
 		if (two_ppc) {
+			int crop_col = (start_column % 2) == 1;
 			vmem_increment = 2;
 			deinterleaving = 1;
 			width_a = width_b = cropped_width / 2;
 
-			/* When two_ppc is enabled, if_a and if_b gets separate
-			 * bayer components. Therefore, it is not possible to
-			 * correct the bayer order to GRBG in horizontal direction
-			 * by shifting start_column.
-			 * Instead, if_a and if_b output (VMEM) addresses should be
-			 * swapped for this purpose.
+			/* When two_ppc is enabled AND we need to crop one extra
+			 * column, if_a crops by one extra and we swap the
+			 * output offsets to interleave the bayer pattern in
+			 * the correct order.
 			 */
-			if ((start_column % 2) == 1) {
-				/* Swap buffer start address */
-				buf_offset_a = 1;
-				buf_offset_b = 0;
-			} else {
-				buf_offset_a = 0;
-				buf_offset_b = 1;
-			}
-			start_column /= 2;
-			start_column_b = start_column;
+			buf_offset_a   = crop_col ? 1 : 0;
+			buf_offset_b   = crop_col ? 0 : 1;
+			start_column_b = start_column / 2;
+			start_column   = start_column / 2 + crop_col;
 		} else {
 			vmem_increment = 1;
 			deinterleaving = 2;
-			if (config->continuous &&
-			    binary->info->sp.mode == IA_CSS_BINARY_MODE_COPY) {
-				/* No deinterleaving for sp copy */
+			if ((!binary) || (config->continuous && binary
+				&& binary->info->sp.pipeline.mode == IA_CSS_BINARY_MODE_COPY)) {
+				/* !binary -> sp raw copy pipe, no deinterleaving */
 				deinterleaving = 1;
 			}
 			width_a = cropped_width;
@@ -307,7 +316,8 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 			num_vectors = CEIL_MUL(num_vectors, deinterleaving);
 		}
 		buffer_height *= 2;
-		if (config->continuous)
+		if ((!binary) || config->continuous)
+			/* !binary -> sp raw copy pipe */
 			buffer_height *= 2;
 		vectors_per_line = CEIL_DIV(cropped_width, ISP_VEC_NELEMS);
 		vectors_per_line = CEIL_MUL(vectors_per_line, deinterleaving);
@@ -378,7 +388,9 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 	vectors_per_buffer = buffer_height * buffer_width / ISP_VEC_NELEMS;
 
 	if (config->mode == IA_CSS_INPUT_MODE_TPG &&
-	    binary->info->sp.mode == IA_CSS_BINARY_MODE_VIDEO) {
+	    ((binary && binary->info->sp.pipeline.mode == IA_CSS_BINARY_MODE_VIDEO) ||
+	    (!binary))) {
+		/* !binary -> sp raw copy pipe */
 		/* workaround for TPG in video mode */
 		start_line = 0;
 		start_column = 0;
@@ -399,7 +411,8 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 	    buffer_width * bits_per_pixel / 8 - line_width;
 	if_a_config.is_yuv420_format =
 	    (input_format == IA_CSS_STREAM_FORMAT_YUV420_8)
-	    || (input_format == IA_CSS_STREAM_FORMAT_YUV420_10);
+	    || (input_format == IA_CSS_STREAM_FORMAT_YUV420_10)
+	    || (input_format == IA_CSS_STREAM_FORMAT_YUV420_16);
 	if_a_config.block_no_reqs = (config->mode != IA_CSS_INPUT_MODE_SENSOR);
 
 	if (two_ppc) {
@@ -427,7 +440,8 @@ enum ia_css_err ia_css_ifmtr_configure(struct ia_css_stream_config *config,
 		    buffer_width * bits_per_pixel / 8 - line_width;
 		if_b_config.is_yuv420_format =
 		    input_format == IA_CSS_STREAM_FORMAT_YUV420_8
-		    || input_format == IA_CSS_STREAM_FORMAT_YUV420_10;
+		    || input_format == IA_CSS_STREAM_FORMAT_YUV420_10
+		    || input_format == IA_CSS_STREAM_FORMAT_YUV420_16;
 		if_b_config.block_no_reqs =
 		    (config->mode != IA_CSS_INPUT_MODE_SENSOR);
 
@@ -467,13 +481,12 @@ static void ifmtr_set_if_blocking_mode(
 	assert(N_INPUT_FORMATTER_ID <= (sizeof(block) / sizeof(block[0])));
 
 #if !defined(IS_ISP_2400_SYSTEM)
-#error "ifmtr_set_if_blocking_mode: ISP_SYSTEM must be one of \
-	{IS_ISP_2400_SYSTEM}"
+#error "ifmtr_set_if_blocking_mode: ISP_SYSTEM must be one of {IS_ISP_2400_SYSTEM}"
 #endif
 
 	block[INPUT_FORMATTER0_ID] = (bool)config_a->block_no_reqs;
 	if (NULL != config_b)
-	  block[INPUT_FORMATTER1_ID] = (bool)config_b->block_no_reqs;
+		block[INPUT_FORMATTER1_ID] = (bool)config_b->block_no_reqs;
 
 	/* TODO: next could cause issues when streams are started after
 	 * eachother. */
@@ -495,7 +508,7 @@ static enum ia_css_err ifmtr_start_column(
 		unsigned int bin_in,
 		unsigned int *start_column)
 {
-	unsigned int in = config->input_res.width, start,
+	unsigned int in = config->input_config.input_res.width, start,
 	    for_bayer = ia_css_ifmtr_columns_needed_for_bayer_order(config);
 
 	if (bin_in + 2 * for_bayer > in)
@@ -521,7 +534,7 @@ static enum ia_css_err ifmtr_input_start_line(
 		unsigned int bin_in,
 		unsigned int *start_line)
 {
-	unsigned int in = config->input_res.height, start,
+	unsigned int in = config->input_config.input_res.height, start,
 	    for_bayer = ia_css_ifmtr_lines_needed_for_bayer_order(config);
 
 	if (bin_in + 2 * for_bayer > in)
@@ -542,3 +555,5 @@ static enum ia_css_err ifmtr_input_start_line(
 	*start_line = start;
 	return IA_CSS_SUCCESS;
 }
+
+#endif

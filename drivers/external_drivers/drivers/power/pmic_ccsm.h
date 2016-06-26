@@ -53,6 +53,7 @@
 
 #define PMIC_BZONE_LOW 0
 #define PMIC_BZONE_HIGH 5
+#define PMIC_BZONE_UNKNOWN 7
 
 #define IRQLVL1_ADDR			0x01
 #define IRQLVL1_MASK_ADDR		0x0c
@@ -105,20 +106,27 @@
 #define VDCINDETCTRL_ADDR		0x51
 
 #define CHRGRIRQ1_ADDR			0x08
+#define CHRGRIRQ1_SUSBIDGNDDET_MASK	D4
+#define CHRGRIRQ1_SUSBIDFLTDET_MASK	D3
 #define CHRGRIRQ1_SUSBIDDET_MASK	D3
 #define CHRGRIRQ1_SBATTDET_MASK		D2
 #define CHRGRIRQ1_SDCDET_MASK		D1
 #define CHRGRIRQ1_SVBUSDET_MASK		D0
 #define MCHGRIRQ1_ADDR			0x13
+#define MCHRGRIRQ1_SUSBIDGNDDET_MASK	D4
+#define MCHRGRIRQ1_SUSBIDFLTDET_MASK	D3
 #define MCHRGRIRQ1_SUSBIDDET_MASK	D3
 #define MCHRGRIRQ1_SBATTDET_MAS		D2
 #define MCHRGRIRQ1_SDCDET_MASK		D1
 #define MCHRGRIRQ1_SVBUSDET_MASK	D0
 #define SCHGRIRQ1_ADDR			0x4F
+#define SCHRGRIRQ1_SUSBIDGNDDET_MASK	(D3|D4)
 #define SCHRGRIRQ1_SUSBIDDET_MASK	D3
 #define SCHRGRIRQ1_SBATTDET_MASK	D2
 #define SCHRGRIRQ1_SDCDET_MASK		D1
 #define SCHRGRIRQ1_SVBUSDET_MASK	D0
+#define SHRT_GND_DET			(0x01 << 3)
+#define SHRT_FLT_DET			(0x01 << 4)
 
 #define PMIC_CHRGR_INT0_MASK		0xB1
 #define PMIC_CHRGR_CCSM_INT0_MASK	0xB0
@@ -189,7 +197,7 @@
 #define CHRTTADDR_ADDR		0x56
 #define CHRTTDATA_ADDR		0x57
 
-#define USBSRCDET_RETRY_CNT		4
+#define USBSRCDET_RETRY_CNT		5
 #define USBSRCDET_SLEEP_TIME		200
 #define USBSRCDETSTATUS_ADDR		0x5D
 #define USBSRCDET_SUSBHWDET_MASK	(D0|D1)
@@ -199,9 +207,30 @@
 #define USBSRCDET_SUSBHWDET_DETSUCC	(0x01 << 1)
 #define USBSRCDET_SUSBHWDET_DETFAIL	(0x03 << 0)
 
-/* Register on I2C-dev2-0x6E */
+#define USBPHYCTRL_ADDR			0x30
+#define USBPHYCTRL_CHGDET_N_POL_MASK	D1
+#define USBPHYCTRL_USBPHYRSTB_MASK	D0
+
+/* Registers on I2C-dev2-0x6E */
 #define USBPATH_ADDR		0x011C
 #define USBPATH_USBSEL_MASK	D3
+
+#define HVDCPDET_SLEEP_TIME		2000
+
+#define DBG_USBBC1_ADDR			0x01B7
+#define DBG_USBBC1_SWCTRL_EN_MASK	D7
+#define DBG_USBBC1_EN_CMP_DM_MASK	D2
+#define DBG_USBBC1_EN_CMP_DP_MASK	D1
+#define DBG_USBBC1_EN_CHG_DET_MASK	D0
+
+#define DBG_USBBC2_ADDR			0x01B8
+#define DBG_USBBC2_EN_VDMSRC_MASK	D1
+#define DBG_USBBC2_EN_VDPSRC_MASK	D0
+
+#define DBG_USBBCSTAT_ADDR		0x01B9
+#define DBG_USBBCSTAT_VDATDET_MASK	D2
+#define DBG_USBBCSTAT_CMP_DM_MASK	D1
+#define DBG_USBBCSTAT_CMP_DP_MASK	D0
 
 #define TT_I2CDADDR_ADDR		0x00
 #define TT_CHGRINIT0OS_ADDR		0x01
@@ -304,6 +333,15 @@ struct interrupt_info {
 	void (*stat_handle) (bool);
 };
 
+enum pmic_charger_aca_type {
+	RID_UNKNOWN = 0,
+	RID_A,
+	RID_B,
+	RID_C,
+	RID_FLOAT,
+	RID_GND,
+};
+
 enum pmic_charger_cable_type {
 	PMIC_CHARGER_TYPE_NONE = 0,
 	PMIC_CHARGER_TYPE_SDP,
@@ -330,6 +368,7 @@ struct pmic_chrgr_drv_context {
 	enum pmic_charger_cable_type charger_type;
 	/* ShadyCove-WA for VBUS removal detect issue */
 	bool vbus_connect_status;
+	bool otg_mode_enabled;
 	struct ps_batt_chg_prof *sfi_bcprof;
 	struct ps_pse_mod_prof *actual_bcprof;
 	struct ps_pse_mod_prof *runtime_bcprof;
@@ -339,6 +378,7 @@ struct pmic_chrgr_drv_context {
 	struct work_struct evt_work;
 	struct mutex evt_queue_lock;
 	struct wake_lock wakelock;
+	struct wake_lock otg_wa_wakelock;
 };
 
 struct pmic_event {

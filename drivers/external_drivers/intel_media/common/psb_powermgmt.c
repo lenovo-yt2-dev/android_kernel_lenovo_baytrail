@@ -52,6 +52,7 @@
 #include <linux/earlysuspend.h>
 #endif /* if SUPPORT_EARLY_SUSPEND */
 
+#include <asm/intel-mid.h>
 #include <linux/mutex.h>
 #include <linux/gpio.h>
 #include <linux/early_suspend_sysfs.h>
@@ -328,6 +329,12 @@ void ospm_apm_power_down_msvdx(struct drm_device *dev, int force_off)
 {
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct msvdx_private *msvdx_priv = dev_priv->msvdx_private;
+#ifdef CONFIG_SLICE_HEADER_PARSING
+    unsigned long irq_flags;
+    int frame_finished = 0;
+    int seq_flag = 0, shp_ctx_count = 0;
+    struct psb_video_ctx *pos, *n;
+#endif
 
 	mutex_lock(&g_ospm_mutex);
 	if (force_off)
@@ -346,6 +353,25 @@ void ospm_apm_power_down_msvdx(struct drm_device *dev, int force_off)
 		PSB_DEBUG_PM("g_videodec_access_count has been set.\n");
 		goto out;
 	}
+
+#ifdef CONFIG_SLICE_HEADER_PARSING
+    spin_lock_irqsave(&dev_priv->video_ctx_lock, irq_flags);
+    list_for_each_entry_safe(pos, n, &dev_priv->video_ctx, head) {
+        if (pos->slice_extract_flag) {
+            shp_ctx_count++;
+            seq_flag = (pos->frame_end_seq == (msvdx_priv->msvdx_current_sequence & (~0xf))) ? 1 : 0;
+            if(seq_flag && pos->frame_boundary) {
+                frame_finished = 1;
+                break;
+            }
+        }
+    }
+    spin_unlock_irqrestore(&dev_priv->video_ctx_lock, irq_flags);
+    
+    if (shp_ctx_count != 0 && !frame_finished)
+        goto out;
+
+#endif
 
 #ifdef CONFIG_MDFD_VIDEO_DECODE
 	if (psb_check_msvdx_idle(dev))
@@ -521,6 +547,17 @@ static void mdfld_adjust_display_fifo(struct drm_device *dev)
 		}
 
 		REG_WRITE(MI_ARB, 0x0);
+
+		/*
+		* enable bit 29 for BUNIT.DEBUG0 register
+		* This gives slightly more priority to urgent ISOCH traffic
+		* (which applies to Display and Camera) over BE (best effort)
+		* in memory controller arbiter, to lower the chance that
+		* display memory request being blocked for long time which
+		* may cause display controller crash.
+		*/
+		temp = intel_mid_msgbus_read32(3, 0x30);
+		intel_mid_msgbus_write32(3, 0x30, temp | (1 << 29));
 	}
 
 	temp = REG_READ(DSPARB);
@@ -601,8 +638,14 @@ disable these MSIC power rails permanently.  */
 		intel_scu_ipc_iowrite8(MSIC_VCC330CNT, VCC330_OFF);
 	}
 	if (IS_CTP(dev)) {
+//ASUS_BSP Louis +++
+#ifdef CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY
+		//do nothing
+#else
 		/* turn off HDMI power rails */
 		intel_scu_ipc_iowrite8(MSIC_VCC330CNT, VCC330_OFF);
+#endif
+//ASUS_BSP Louis ---
 	}
 #endif
 	mdfld_adjust_display_fifo(dev);
@@ -2181,6 +2224,7 @@ void ospm_runtime_pm_forbid(struct drm_device *dev)
 int psb_runtime_suspend(struct device *dev)
 {
 	pm_message_t state;
+	struct drm_psb_private *dev_priv = gpDrmDevice->dev_private;
 	int ret = 0;
 
 	state.event = 0;
@@ -2196,13 +2240,18 @@ int psb_runtime_suspend(struct device *dev)
 	else
 		ret = ospm_power_suspend(gpDrmDevice->pdev, state);
 
+	if (!ret)
+		pm_qos_remove_request(&dev_priv->s0ix_qos);
 	return ret;
 }
 
 int psb_runtime_resume(struct device *dev)
 {
+	struct drm_psb_private *dev_priv = gpDrmDevice->dev_private;
 	PSB_DEBUG_ENTRY("\n");
 
+	pm_qos_add_request(&dev_priv->s0ix_qos,
+			PM_QOS_CPU_DMA_LATENCY, CSTATE_EXIT_LATENCY_S0i1 - 1);
 	/* Nop for GFX */
 	return 0;
 }

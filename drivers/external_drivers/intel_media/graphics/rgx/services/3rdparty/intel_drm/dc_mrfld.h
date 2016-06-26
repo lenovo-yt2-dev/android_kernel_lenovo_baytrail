@@ -84,6 +84,17 @@ typedef struct {
 	DC_MRFLD_SURF_CUSTOM sContext[MAX_CONTEXT_COUNT];
 } DC_MRFLD_BUFFER;
 
+struct plane_state {
+	int type;
+	int index;
+	int attached_pipe;
+	bool active;
+	bool flip_active;
+	bool disabled;
+	u32 extra_power_island;
+	bool powered_off;
+};
+
 /*Display Controller Device*/
 typedef struct {
 	IMG_HANDLE hSrvHandle;
@@ -112,14 +123,30 @@ typedef struct {
 	IMG_UINT32 ui32PlanePipeMapping[DC_PLANE_MAX][MAX_PLANE_INDEX];
 	IMG_UINT32 ui32ExtraPowerIslandsStatus;
 
+	struct plane_state plane_states[DC_PLANE_MAX][MAX_PLANE_INDEX];
+
+	/* Timer to retire blocked flips */
+        struct timer_list sFlipTimer;
+        struct work_struct flip_retire_work;
+
 } DC_MRFLD_DEVICE;
 
 typedef struct {
 	DC_MRFLD_DEVICE *psDevice;
 } DC_MRFLD_DISPLAY_CONTEXT;
 
+struct flip_plane {
+	struct list_head list;
+	int type;
+	int index;
+	int attached_pipe;
+	DC_MRFLD_BUFFER *flip_buf;
+	DC_MRFLD_SURF_CUSTOM  *flip_ctx;
+};
+
 struct DC_MRFLD_PIPE_INFO {
 	IMG_UINT32 uiSwapInterval;
+	struct list_head flip_planes;
 };
 
 /*flip status*/
@@ -133,6 +160,7 @@ enum DC_MRFLD_FLIP_STATUS {
 typedef struct {
 	struct list_head sFlips[MAX_PIPE_NUM];
 	IMG_UINT32 eFlipStates[MAX_PIPE_NUM];
+	IMG_UINT32 uiVblankCounters[MAX_PIPE_NUM];
 	struct DC_MRFLD_PIPE_INFO asPipeInfo[MAX_PIPE_NUM];
 	IMG_BOOL bActivePipes[MAX_PIPE_NUM];
 	IMG_UINT32 uiNumBuffers;
@@ -140,7 +168,10 @@ typedef struct {
 	IMG_HANDLE hConfigData;
 	IMG_UINT32 uiSwapInterval;
 	IMG_UINT32 uiPowerIslands;
-	DC_MRFLD_BUFFER asBuffers[0];
+	IMG_UINT32 uiPrimaryFlip;
+	IMG_UINT32 uiOverlayFlip;
+	IMG_UINT32 uiSpriteFlip;
+	DC_MRFLD_BUFFER *pasBuffers[0];
 } DC_MRFLD_FLIP;
 
 /*exported functions*/

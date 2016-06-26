@@ -24,15 +24,15 @@ config SENSORS_L3G4200D_POLL
 #	tristate "ST Accel Sensor Driver"
 #	depends on I2C
 #	select INPUT_POLLDEV
-#	default y
+#	default n
 #	help
 #	  Say Yes here to enable the ST LIS3DH accelerometer support
 #	  conected through I2C.
 #
 #	  ST LIS3DH is a 3-axis linear accelerometer with digital output.
 #
-#         This driver can also be built as a module. If so, the module
-#          will be called lis3dh_acc.
+#      This driver can also be built as a module. If so, the module
+#      will be called lis3dh_acc.
 
 config SENSORS_LPS331AP
 	tristate "LPS331AP pressure sensor Driver"
@@ -132,6 +132,7 @@ config PS_STM8T143
        help
           STM8T143 proxmity sensor Driver
           Say y here to enable.
+
 config INPUT_CAPELLA_CM36671
       tristate "CM36671 proximity sensor"
       depends on I2C
@@ -141,7 +142,7 @@ config INPUT_CAPELLA_CM36671
 
 config SENSORS_KIONIX
 	bool "kionix acceloremetor sensor"
-	default n
+	default y
 	help
 	   STM8T143 proxmity sensor Driver
            Say y here to enable.

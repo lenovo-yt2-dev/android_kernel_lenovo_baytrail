@@ -22,6 +22,10 @@
 #ifndef __IA_CSS_XNR_TYPES_H
 #define __IA_CSS_XNR_TYPES_H
 
+/** @file
+* CSS-API header file for Extra Noise Reduction (XNR) parameters.
+*/
+
 /** XNR table.
  *
  *  NOTE: The driver does not need to set this table,
@@ -41,10 +45,12 @@
 
 /** Number of elements in the xnr table. */
 #define IA_CSS_VAMEM_1_XNR_TABLE_SIZE_LOG2      6
+/** Number of elements in the xnr table. */
 #define IA_CSS_VAMEM_1_XNR_TABLE_SIZE           (1U<<IA_CSS_VAMEM_1_XNR_TABLE_SIZE_LOG2)
 
 /** Number of elements in the xnr table. */
 #define IA_CSS_VAMEM_2_XNR_TABLE_SIZE_LOG2      6
+/** Number of elements in the xnr table. */
 #define IA_CSS_VAMEM_2_XNR_TABLE_SIZE	        (1U<<IA_CSS_VAMEM_2_XNR_TABLE_SIZE_LOG2)
 
 /**< IA_CSS_VAMEM_TYPE_1(ISP2300) or

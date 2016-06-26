@@ -357,11 +357,17 @@ void intel_mid_msgbus_write32_vxd(u8 port, u32 addr, u32 data)
 
 static int __init vxd_driver_load()
 {
-	struct drm_i915_private *i915_dev_priv = i915_drm_dev->dev_private;
+	struct drm_i915_private *i915_dev_priv;
 	struct drm_psb_private *dev_priv;
 	struct ttm_bo_device *bdev;
 	int ret = -ENOMEM;
 	uint32_t pwr_sts;
+
+	/* Check if DRM device is loaded first */
+	if (!i915_drm_dev)
+		return -ENODEV;
+
+	i915_dev_priv = i915_drm_dev->dev_private;
 
 	dev_priv = kzalloc(sizeof(*dev_priv), GFP_KERNEL);
 	if (dev_priv == NULL)
@@ -425,7 +431,7 @@ static int __init vxd_driver_load()
 	ret = ttm_bo_device_init(bdev,
 				 dev_priv->bo_global_ref.ref.object,
 				 &psb_ttm_bo_driver,
-				 DRM_PSB_FILE_PAGE_OFFSET, false);
+				 DRM_PSB_FILE_PAGE_OFFSET, true);
 	if (unlikely(ret != 0))
 		goto out_err;
 	dev_priv->has_bo_device = 1;
@@ -665,7 +671,7 @@ long vxd_ioctl(struct file *filp,
 			mutex_unlock(&drm_global_mutex);
 		}
 
-		if (cmd & IOC_OUT) {
+		if ((cmd & IOC_OUT) && kdata) {
 			if (copy_to_user((void __user *)arg, kdata,
 					 usize) != 0)
 				retcode = -EFAULT;

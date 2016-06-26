@@ -144,6 +144,14 @@ typedef union _PVR_TL_TEST_CMD_IN_
 /* Has to be the largest test IN structure */
 #define PVR_TL_TEST_PARAM_MAX_SIZE  (sizeof(PVR_TL_TEST_CMD_IN)+4)
 
+#define PVR_TL_TEST_CMD_SET_PWR_STATE              22
+#define PVR_TL_TEST_CMD_GET_PWR_STATE              23
+#define PVR_TL_TEST_CMD_SET_DWT_PWR_CHANGE_COUNTER 24
+#define PVR_TL_TEST_CMD_GET_DWT_PWR_CHANGE_COUNTER 25
+
+#define PVR_TL_TEST_PWR_STATE_ON  1
+#define PVR_TL_TEST_PWR_STATE_OFF 0
+
 
 #if defined (__cplusplus)
 }

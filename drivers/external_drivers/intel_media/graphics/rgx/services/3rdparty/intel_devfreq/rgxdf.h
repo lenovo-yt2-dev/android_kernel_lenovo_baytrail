@@ -62,6 +62,22 @@ int rgx_is_device_powered(void);
 /*!
 ******************************************************************************
 
+ @Function	RGXGetDRMDeviceID
+
+ @Description
+
+	Returns device ID of DMR device.
+
+ @None
+
+ @Return   unsigned int  : device ID
+
+******************************************************************************/
+unsigned int RGXGetDRMDeviceID(void);
+
+/*!
+******************************************************************************
+
  @Function	RGXUpdateClockSpeed
 
  @Description

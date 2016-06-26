@@ -148,16 +148,15 @@ static void ttm_tt_free_user_pages(struct ttm_buffer_object *bo)
 	}
 
 */
-	pages = kzalloc(bo->num_pages * sizeof(struct page *), GFP_KERNEL);
-	if (unlikely(pages == NULL)) {
-		printk(KERN_ERR "TTM bo free: kzalloc failed\n");
-		return ;
-	}
-
+	/* The following potentially big allocation SHALL never fail or some memory
+	  will leak increasing the memory pressure!
+	*/
+	pages = kzalloc(bo->num_pages * sizeof(struct page *), GFP_KERNEL | __GFP_NOFAIL);
 	ret = drm_prime_sg_to_page_addr_arrays(bo->sg, pages,
 						 NULL, bo->num_pages);
 	if (ret) {
-		printk(KERN_ERR "sg to pages: kzalloc failed\n");
+		printk(KERN_ERR "sg to pages failed\n");
+		kfree(pages);
 		return ;
 	}
 
@@ -484,6 +483,15 @@ int ttm_pl_ub_create_ioctl(struct ttm_object_file *tfile,
 	size_t acc_size = ttm_bo_acc_size(bdev, req->size,
 		sizeof(struct ttm_buffer_object));
 #endif
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 3, 0))
+	unsigned int page_nr = 0;
+	struct vm_area_struct *vma = NULL;
+	struct sg_table *sg = NULL;
+	unsigned long num_pages = 0;
+	struct page **pages = 0;
+	unsigned long before_flags;
+#endif
+
 	if (req->user_address & ~PAGE_MASK) {
 		printk(KERN_ERR "User pointer buffer need page alignment\n");
 		return -EFAULT;
@@ -531,16 +539,12 @@ int ttm_pl_ub_create_ioctl(struct ttm_object_file *tfile,
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 3, 0))
 		/* Handle frame buffer allocated in user space, Convert
 		  user space virtual address into pages list */
-		unsigned int page_nr = 0;
-		struct vm_area_struct *vma = NULL;
-		struct sg_table *sg = NULL;
-		unsigned long num_pages = 0;
-		struct page **pages = 0;
-
 		num_pages = (req->size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 		pages = kzalloc(num_pages * sizeof(struct page *), GFP_KERNEL);
 		if (unlikely(pages == NULL)) {
 			printk(KERN_ERR "kzalloc pages failed\n");
+			ttm_mem_global_free(mem_glob, acc_size);
+			kfree(user_bo);
 			return -ENOMEM;
 		}
 
@@ -550,9 +554,11 @@ int ttm_pl_ub_create_ioctl(struct ttm_object_file *tfile,
 			up_read(&current->mm->mmap_sem);
 			kfree(pages);
 			printk(KERN_ERR "find_vma failed\n");
+			ttm_mem_global_free(mem_glob, acc_size);
+			kfree(user_bo);
 			return -EFAULT;
 		}
-		unsigned long before_flags = vma->vm_flags;
+		before_flags = vma->vm_flags;
 		if (vma->vm_flags & (VM_IO | VM_PFNMAP))
 			vma->vm_flags = vma->vm_flags & ((~VM_IO) & (~VM_PFNMAP));
 		page_nr = get_user_pages(current, current->mm,
@@ -567,12 +573,16 @@ int ttm_pl_ub_create_ioctl(struct ttm_object_file *tfile,
 			kfree(pages);
 			pages = 0;
 			printk(KERN_ERR "get_user_pages err.\n");
+			ttm_mem_global_free(mem_glob, acc_size);
+			kfree(user_bo);
 			return -ENOMEM;
 		}
 		sg = drm_prime_pages_to_sg(pages, num_pages);
 		if (unlikely(sg == NULL)) {
 			kfree(pages);
 			printk(KERN_ERR "drm_prime_pages_to_sg err.\n");
+			ttm_mem_global_free(mem_glob, acc_size);
+			kfree(user_bo);
 			return -ENOMEM;
 		}
 		kfree(pages);
@@ -646,6 +656,8 @@ out:
 out_err:
 	ttm_bo_unref(&tmp);
 	ttm_bo_unref(&bo);
+	ttm_mem_global_free(mem_glob, acc_size);
+	kfree(user_bo);
 	return ret;
 }
 

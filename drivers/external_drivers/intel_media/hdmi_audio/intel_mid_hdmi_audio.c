@@ -49,12 +49,12 @@
 #define MAX_PB_STREAMS		1
 #define MAX_CAP_STREAMS		0
 #define HDMI_AUDIO_DRIVER	"hdmi-audio"
-static DEFINE_MUTEX(had_mutex);
+DEFINE_MUTEX(had_mutex);
 
 /*standard module options for ALSA. This module supports only one card*/
 static int hdmi_card_index = SNDRV_DEFAULT_IDX1;
 static char *hdmi_card_id = SNDRV_DEFAULT_STR1;
-static struct snd_intelhad *had_data;
+struct snd_intelhad *had_data;
 
 module_param(hdmi_card_index, int, 0444);
 MODULE_PARM_DESC(hdmi_card_index,
@@ -626,6 +626,9 @@ void had_build_channel_allocation_map(struct snd_intelhad *intelhaddata)
 	int i = 0, c = 0;
 	int spk_mask = 0;
 	struct snd_pcm_chmap_elem *chmap;
+	uint8_t eld_high, eld_high_mask = 0xF0;
+	uint8_t high_msb;
+
 	chmap = kzalloc(sizeof(*chmap), GFP_KERNEL);
 	if (chmap == NULL) {
 		pr_err("kzalloc returned null in %s\n", __func__);
@@ -637,6 +640,27 @@ void had_build_channel_allocation_map(struct snd_intelhad *intelhaddata)
 
 	pr_debug("eeld.speaker_allocation_block = %x\n",
 			intelhaddata->eeld.speaker_allocation_block);
+
+	/* WA: Fix the max channel supported to 8 */
+
+	/* Sink may support more than 8 channels, if eld_high has more than
+	 * one bit set. SOC supports max 8 channels.
+	 * Refer eld_speaker_allocation_bits, for sink speaker allocation */
+
+	/* if 0x2F < eld < 0x4F fall back to 0x2f, else fall back to 0x4F */
+	eld_high = intelhaddata->eeld.speaker_allocation_block & eld_high_mask;
+	if ((eld_high & (eld_high -1)) && (eld_high > 0x1F)) {
+		/* eld_high & (eld_high-1): if more than 1 bit set */
+		/* 0x1F: 7 channels */
+		for (i = 1; i < 4; i++) {
+			high_msb = eld_high & (0x80 >> i);
+			if (high_msb) {
+				intelhaddata->eeld.speaker_allocation_block &=
+					high_msb | 0xF;
+				break;
+			}
+		}
+	}
 
 	for (i = 0; i < ARRAY_SIZE(eld_speaker_allocation_bits); i++) {
 		if (intelhaddata->eeld.speaker_allocation_block & (1 << i))
@@ -1264,6 +1288,7 @@ static int snd_intelhad_close(struct snd_pcm_substream *substream)
 		return 0;
 	}
 
+	mutex_lock(&had_mutex);
 	intelhaddata->stream_info.buffer_rendered = 0;
 	intelhaddata->stream_info.buffer_ptr = 0;
 	intelhaddata->stream_info.str_id = 0;
@@ -1272,6 +1297,7 @@ static int snd_intelhad_close(struct snd_pcm_substream *substream)
 	/* Check if following drv_status modification is required - VA */
 	if (intelhaddata->drv_status != HAD_DRV_DISCONNECTED)
 		intelhaddata->drv_status = HAD_DRV_CONNECTED;
+	mutex_unlock(&had_mutex);
 	kfree(runtime->private_data);
 	runtime->private_data = NULL;
 	ospm_power_using_hw_end(OSPM_DISPLAY_ISLAND);
@@ -1447,10 +1473,10 @@ static int snd_intelhad_pcm_prepare(struct snd_pcm_substream *substream)
 		goto prep_end;
 	}
 
-	pr_debug("period_size=%d\n",
+	pr_debug("period_size=%zd\n",
 				frames_to_bytes(runtime, runtime->period_size));
 	pr_debug("periods=%d\n", runtime->periods);
-	pr_debug("buffer_size=%d\n", snd_pcm_lib_buffer_bytes(substream));
+	pr_debug("buffer_size=%zu\n", snd_pcm_lib_buffer_bytes(substream));
 	pr_debug("rate=%d\n", runtime->rate);
 	pr_debug("channels=%d\n", runtime->channels);
 
@@ -1741,6 +1767,7 @@ static int hdmi_audio_probe(struct platform_device *devptr)
 	struct had_callback_ops ops_cb;
 	struct snd_intelhad *intelhaddata;
 	struct had_pvt_data *had_stream;
+	char *version = NULL; /* HDMI ops/Register set version.*/
 
 	pr_debug("Enter %s\n", __func__);
 
@@ -1791,7 +1818,7 @@ static int hdmi_audio_probe(struct platform_device *devptr)
 	retval = snd_pcm_new(card, INTEL_HAD, PCM_INDEX, MAX_PB_STREAMS,
 						MAX_CAP_STREAMS, &pcm);
 	if (retval)
-		goto err;
+		goto free_card;
 
 	/* setup private data which can be retrieved when required */
 	pcm->private_data = intelhaddata;
@@ -1809,34 +1836,34 @@ static int hdmi_audio_probe(struct platform_device *devptr)
 			SNDRV_DMA_TYPE_DEV, card->dev,
 			HAD_MAX_BUFFER, HAD_MAX_BUFFER);
 	if (retval)
-		goto err;
+		goto free_card;
 
 	/* internal function call to register device with ALSA */
 	retval = snd_intelhad_create(intelhaddata, card);
 	if (retval)
-		goto err;
+		goto free_prealloc;
 
 	card->private_data = &intelhaddata;
 	retval = snd_card_register(card);
 	if (retval)
-		goto err;
+		goto free_prealloc;
 
 	/* IEC958 controls */
 	retval = snd_ctl_add(card, snd_ctl_new1(&had_control_iec958_mask,
 						intelhaddata));
 	if (retval < 0)
-		goto err;
+		goto free_prealloc;
 	retval = snd_ctl_add(card, snd_ctl_new1(&had_control_iec958,
 						intelhaddata));
 	if (retval < 0)
-		goto err;
+		goto free_prealloc;
 
 	init_channel_allocations();
 
 	/* Register channel map controls */
 	retval = had_register_chmap_ctls(intelhaddata, pcm);
 	if (retval < 0)
-		goto err;
+		goto free_prealloc;
 
 	intelhaddata->dev = &devptr->dev;
 	pm_runtime_set_active(intelhaddata->dev);
@@ -1846,17 +1873,22 @@ static int hdmi_audio_probe(struct platform_device *devptr)
 	retval = mid_hdmi_audio_register(&had_interface, intelhaddata);
 	if (retval) {
 		pr_err("registering with display driver failed %#x\n", retval);
-		snd_card_free(card);
-		goto free_hadstream;
+		goto err;
 	}
 	if (INTEL_MID_BOARD(1, PHONE, BYT) ||
-		INTEL_MID_BOARD(1, TABLET, BYT) ||
-		INTEL_MID_BOARD(1, PHONE, CHT) ||
-		INTEL_MID_BOARD(1, TABLET, CHT)) {
+		INTEL_MID_BOARD(1, TABLET, BYT)) {
 		intelhaddata->hw_silence = 1;
 		/* PIPE B is used for HDMI*/
 		intelhaddata->audio_reg_base = 0x65800;
 		intelhaddata->ops = &had_ops_v2;
+		version = "v2";
+	} else if (INTEL_MID_BOARD(1, PHONE, CHT) ||
+			INTEL_MID_BOARD(1, TABLET, CHT)) {
+		intelhaddata->hw_silence = 1;
+		/* PIPE C is used for HDMI*/
+		intelhaddata->audio_reg_base = 0x65900;
+		intelhaddata->ops = &had_ops_v2;
+		version = "v2";
 	} else if (INTEL_MID_BOARD(1, PHONE, MRFL) ||
 			INTEL_MID_BOARD(1, TABLET, MRFL) ||
 			INTEL_MID_BOARD(1, PHONE, MOFD) ||
@@ -1864,20 +1896,28 @@ static int hdmi_audio_probe(struct platform_device *devptr)
 		intelhaddata->hw_silence = 1;
 		intelhaddata->audio_reg_base = 0x69000;
 		intelhaddata->ops = &had_ops_v1;
+		version = "v1";
 	} else{
 		intelhaddata->hw_silence = 0;
 		intelhaddata->audio_reg_base = 0x69000;
 		intelhaddata->ops = &had_ops_v1;
+		version = "v1";
 	}
+	had_debugfs_init(intelhaddata, version);
 	return retval;
+
 err:
-	snd_card_free(card);
-unlock_mutex:
-	mutex_unlock(&had_mutex);
-free_hadstream:
-	kfree(had_stream);
 	pm_runtime_disable(intelhaddata->dev);
 	intelhaddata->dev = NULL;
+free_prealloc:
+	snd_pcm_lib_preallocate_free_for_all(pcm);
+free_card:
+	snd_card_free(card);
+unlock_mutex:
+	if (mutex_is_locked(&had_mutex))
+		mutex_unlock(&had_mutex);
+free_hadstream:
+	kfree(had_stream);
 free_haddata:
 	kfree(intelhaddata);
 	intelhaddata = NULL;
@@ -1909,6 +1949,7 @@ static int hdmi_audio_remove(struct platform_device *devptr)
 		had_set_caps(HAD_SET_DISABLE_AUDIO, NULL);
 	}
 	snd_card_free(intelhaddata->card);
+	had_debugfs_exit(intelhaddata);
 	kfree(intelhaddata->private_data);
 	kfree(intelhaddata);
 	return 0;

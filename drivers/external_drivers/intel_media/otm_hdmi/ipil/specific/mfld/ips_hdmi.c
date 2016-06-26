@@ -68,6 +68,7 @@
 #include <linux/interrupt.h>
 #include <linux/types.h>
 
+#include "psb_powermgmt.h"
 #include "otm_hdmi.h"
 #include "hdmi_internal.h"
 #include "ips_hdmi.h"
@@ -350,6 +351,9 @@ void ips_disable_hdmi(hdmi_device_t *dev)
 		return;
 	}
 
+	if (!ospm_power_using_hw_begin(OSPM_DISPLAY_ISLAND, OSPM_UHB_ONLY_IF_ON)) {
+		return;
+	}
 	/* Disable display plane */
 	temp = hdmi_read32(IPS_DSPBCNTR);
 	if ((temp & IPIL_DSP_PLANE_ENABLE) != 0) {
@@ -377,6 +381,7 @@ void ips_disable_hdmi(hdmi_device_t *dev)
 		}
 	}
 
+	ospm_power_using_hw_end(OSPM_DISPLAY_ISLAND);
 }
 
 /**

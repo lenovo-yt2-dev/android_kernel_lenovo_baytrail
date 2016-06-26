@@ -28,4 +28,5 @@ config TOUCHSCREEN_ATMEL_MXT_FORK
 	  module will be called atmel_mxt_ts.
 
 source "drivers/external_drivers/drivers/input/touchscreen/rmi4/Kconfig"
-source "drivers/external_drivers/drivers/input/touchscreen/synaptics_dsx/Kconfig"
+#source "drivers/external_drivers/drivers/input/touchscreen/synaptics_dsx/Kconfig"
+source "drivers/external_drivers/drivers/input/touchscreen/gt9xx/Kconfig"

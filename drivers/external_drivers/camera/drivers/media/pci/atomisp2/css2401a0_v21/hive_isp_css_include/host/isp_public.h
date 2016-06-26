@@ -22,14 +22,7 @@
 #ifndef __ISP_PUBLIC_H_INCLUDED__
 #define __ISP_PUBLIC_H_INCLUDED__
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
-#include <stddef.h>		/* size_t */
-#include <stdbool.h>		/* bool */
-#include <stdint.h>		/* uint32_t */
-#endif
-
+#include <type_support.h>
 #include "system_types.h"
 
 /*! Enable or disable the program complete irq signal of ISP[ID]
@@ -188,5 +181,13 @@ STORAGE_CLASS_ISP_H uint32_t isp_dmem_load_uint32(
 STORAGE_CLASS_ISP_H uint32_t isp_2w_cat_1w(
 	const uint16_t		x0,
 	const uint16_t		x1);
+
+unsigned isp_is_ready(isp_ID_t ID);
+
+unsigned isp_is_sleeping(isp_ID_t ID);
+
+void isp_start(isp_ID_t ID);
+
+void isp_wake(isp_ID_t ID);
 
 #endif /* __ISP_PUBLIC_H_INCLUDED__ */

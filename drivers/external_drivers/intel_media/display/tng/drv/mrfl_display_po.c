@@ -315,8 +315,13 @@ static void hdmi_sprite_enable(struct pci_dev *pdev, int sprite, int size_h,
         iowrite32(0x80800000, io_base + 0x70400);
 
         /* Disable clock gating */
-        iowrite32(0xffffffff, io_base + 0x70500);
-        iowrite32(0xffffffff, io_base + 0x70504);
+	/* Disabling clock gating is not needed. Not sure why it
+	 * was put here. If this code executes, it causes display
+	 * controller not doing clock gating and preventing S0i1-Display
+	 * from working properly
+	 */
+        //iowrite32(0xffffffff, io_base + 0x70500);
+        //iowrite32(0xffffffff, io_base + 0x70504);
 
 	/* Sprite Control Register (Sprite B) */
 

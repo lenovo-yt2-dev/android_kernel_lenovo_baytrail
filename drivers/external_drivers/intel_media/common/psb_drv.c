@@ -43,6 +43,13 @@
 #include "mdfld_csc.h"
 #include "mdfld_dsi_pkg_sender.h"
 #include "mdfld_dsi_dbi.h"
+
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+#include "mdfld_dsi_dpi.h"
+#endif
+//ASUS_BSP: [DDS] ---
+
 #include "pvr_drm_shared.h"
 #include "psb_powermgmt.h"
 
@@ -66,6 +73,9 @@
 #include "img_types.h"
 #include "pvr_bridge.h"
 #include "linkage.h"
+#include <linux/HWVersion.h>
+
+extern int Read_HW_ID(void);
 
 struct workqueue_struct *te_wq;
 struct workqueue_struct *vsync_wq;
@@ -107,6 +117,20 @@ int csc_number = 6;
 #ifdef CONFIG_CTP_DPST
 int dpst_level = 3;
 #endif
+
+int asus_panel_id = 0x0;
+
+//ASUS_BSP: Louis +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+int panel_id = 0;
+int hpd = 0;
+int panel_turn_on = DDS_NONE;
+#endif
+
+#ifdef CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY
+bool esd_thread_enable = true;
+#endif
+
 int drm_hdmi_hpd_auto;
 int default_hdmi_scaling_mode = DRM_MODE_SCALE_CENTER;
 
@@ -129,6 +153,10 @@ extern struct platform_driver jdi_r63311_lcd_driver;
 
 #ifdef CONFIG_SUPPORT_TMD_MIPI_600X1024_DISPLAY
 extern struct platform_driver tmd_lcd_driver;
+#endif
+
+#ifdef CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY
+extern struct platform_driver pf450cl_vid_lcd_driver;
 #endif
 
 static int psb_probe(struct pci_dev *pdev, const struct pci_device_id *ent);
@@ -161,6 +189,15 @@ MODULE_PARM_DESC(dpst_level, "dpst aggressive level: 0~5");
 #endif
 MODULE_PARM_DESC(hdmi_hpd_auto, "HDMI hot-plug auto test flag");
 MODULE_PARM_DESC(default_hdmi_scaling_mode, "Default HDMI scaling mode");
+
+MODULE_PARM_DESC(asus_panel_id, "ASUS panel ID");
+
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+MODULE_PARM_DESC(panel_id, "panel_id");
+MODULE_PARM_DESC(hpd, "hpd");
+#endif
+//ASUS_BSP: [DDS] ---
 
 module_param_named(debug, drm_psb_debug, int, 0600);
 module_param_named(psb_enable_cabc, drm_psb_enable_cabc, int, 0600);
@@ -196,6 +233,18 @@ module_param_named(dpst_level, dpst_level, int, 0600);
 module_param_named(hdmi_hpd_auto, drm_hdmi_hpd_auto, int, 0600);
 module_param_named(default_hdmi_scaling_mode, default_hdmi_scaling_mode,
 					int, 0600);
+module_param_named(asus_panel_id, asus_panel_id, int, 0644);
+
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+module_param_named(panel_id, panel_id, int, 0644);
+module_param_named(hpd, hpd, int, 0644);
+module_param_named(panel_turn_on, panel_turn_on, int, 0644);
+#endif
+//ASUS_BSP: [DDS] ---
+#ifdef CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY
+module_param_named(esd_thread_enable, esd_thread_enable, bool, 0644);
+#endif
 
 #ifndef MODULE
 /* Make ospm configurable via cmdline firstly, and others can be enabled if needed. */
@@ -385,6 +434,14 @@ MODULE_DEVICE_TABLE(pci, pciidlist);
 	DRM_IOWR(DRM_PSB_VSYNC_SET + DRM_COMMAND_BASE,		\
 			struct drm_psb_vsync_set_arg)
 
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+#define DRM_IOCTL_PSB_PANEL_SWITCH \
+	DRM_IOWR(DRM_PSB_PANEL_SWITCH + DRM_COMMAND_BASE,		\
+			uint32_t)
+#endif
+//ASUS_BSP: [DDS] ---
+
 /* GET DC INFO IOCTL */
 #define DRM_IOCTL_PSB_GET_DC_INFO \
 	DRM_IOR(DRM_PSB_GET_DC_INFO + DRM_COMMAND_BASE,		\
@@ -497,6 +554,14 @@ static int psb_stolen_memory_ioctl(struct drm_device *dev, void *data,
 				   struct drm_file *file_priv);
 static int psb_vsync_set_ioctl(struct drm_device *dev, void *data,
 				 struct drm_file *file_priv);
+
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+static int psb_panel_switch_ioctl(struct drm_device *dev, void *data,
+				 struct drm_file *file_priv);
+#endif
+//ASUS_BSP: [DDS] ---
+
 static int psb_get_dc_info_ioctl(struct drm_device *dev, void *data,
 				 struct drm_file *file_priv);
 static int psb_register_rw_ioctl(struct drm_device *dev, void *data,
@@ -734,6 +799,11 @@ static struct drm_ioctl_desc psb_ioctls[] = {
 	PSB_IOCTL_DEF(DRM_IOCTL_PSB_SET_CSC, psb_set_csc_ioctl, DRM_AUTH),
 	PSB_IOCTL_DEF(DRM_IOCTL_PSB_VSYNC_SET, psb_vsync_set_ioctl,
 	DRM_AUTH | DRM_UNLOCKED),
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+	PSB_IOCTL_DEF(DRM_IOCTL_PSB_PANEL_SWITCH, psb_panel_switch_ioctl,DRM_AUTH | DRM_UNLOCKED),
+#endif
+//ASUS_BSP: [DDS] ---
 	PSB_IOCTL_DEF(DRM_IOCTL_PSB_GET_DC_INFO, psb_get_dc_info_ioctl,
 	DRM_AUTH | DRM_UNLOCKED),
 
@@ -1307,6 +1377,70 @@ out_err:
 	return ret;
 }
 
+static void mdfld_free_overlay_backbuf(struct drm_device *dev)
+{
+	struct drm_psb_private *dev_priv = psb_priv(dev);
+	int i;
+
+	for (i = 0; i < OVERLAY_BACKBUF_NUM; i++) {
+		if (dev_priv->overlay_backbuf[i]) {
+			ttm_bo_kunmap(&dev_priv->overlay_kmap[i]);
+			ttm_bo_unref(&dev_priv->overlay_backbuf[i]);
+		}
+	}
+}
+
+static int mdfld_init_overlay_backbuf(struct drm_device *dev)
+{
+	struct ttm_buffer_object *overlay_buf;
+	struct drm_psb_private *dev_priv = psb_priv(dev);
+	struct ttm_bo_device *bdev = &dev_priv->bdev;
+	int i, ret;
+
+	for (i = 0; i < OVERLAY_BACKBUF_NUM; i++) {
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 8, 0))
+		ret = ttm_buffer_object_create(bdev, 4096, ttm_bo_type_kernel,
+				TTM_PL_FLAG_TT | TTM_PL_FLAG_WC |
+				TTM_PL_FLAG_NO_EVICT,
+				16, 0, 0, NULL, &overlay_buf);
+#else
+		ret = ttm_buffer_object_create(bdev, 4096, ttm_bo_type_kernel,
+				TTM_PL_FLAG_TT | TTM_PL_FLAG_WC |
+				TTM_PL_FLAG_NO_EVICT,
+				16, 0, NULL, &overlay_buf);
+#endif
+
+		if (ret < 0) {
+			DRM_ERROR("failed to alloc back buf %d, ret:%d\n",
+				  i, ret);
+			goto fail;
+		}
+
+		DRM_INFO("overlay backbuf:%d gpu offset:%#lx\n",
+				i, overlay_buf->offset);
+
+		ret = ttm_bo_kmap(overlay_buf, 0, overlay_buf->num_pages,
+					&dev_priv->overlay_kmap[i]);
+		if (ret) {
+			DRM_ERROR("fail to map overlay buf %d\n", i);
+			ttm_bo_unref(&overlay_buf);
+			goto fail;
+		}
+		dev_priv->overlay_backbuf[i] = overlay_buf;
+	}
+
+	mutex_init(&dev_priv->ov_ctrl_lock);
+	dev_priv->ov_ctrl_blk = kzalloc(sizeof(struct overlay_ctrl_blk) *
+					INTEL_OVERLAY_PLANE_NUM, GFP_KERNEL);
+	if (!dev_priv->ov_ctrl_blk)
+		goto fail;
+
+	return 0;
+fail:
+	mdfld_free_overlay_backbuf(dev);
+	return ret;
+}
+
 static int psb_driver_unload(struct drm_device *dev)
 {
 	struct drm_psb_private *dev_priv =
@@ -1325,6 +1459,8 @@ static int psb_driver_unload(struct drm_device *dev)
 
 	destroy_workqueue(te_wq);
 	destroy_workqueue(vsync_wq);
+	mdfld_free_overlay_backbuf(dev);
+	kfree(dev_priv->ov_ctrl_blk);
 
 	if (dev_priv) {
 		/* psb_watchdog_takedown(dev_priv); */
@@ -1755,8 +1891,15 @@ static int psb_driver_load(struct drm_device *dev, unsigned long chipset)
 			pr_err(": unable to create TE workqueue\n");
 			goto out_err;
 		}
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+		INIT_WORK(&dev_priv->reset_panel_work,
+				mdfld_reset_same_dpi_panel_work);
+#else
 		INIT_WORK(&dev_priv->reset_panel_work,
 				mdfld_reset_panel_handler_work);
+#endif
+//ASUS_BSP: [DDS] ---
 
 		INIT_WORK(&dev_priv->vsync_event_work, mdfld_vsync_event_work);
 
@@ -1780,6 +1923,8 @@ static int psb_driver_load(struct drm_device *dev, unsigned long chipset)
 #ifdef CONFIG_SUPPORT_HDMI
 	INIT_WORK(&dev_priv->hdmi_audio_wq, hdmi_do_audio_wq);
 #endif
+
+	mdfld_init_overlay_backbuf(dev);
 
 	/*Intel drm driver load is done, continue doing pvr load*/
 	DRM_DEBUG("Pvr driver load\n");
@@ -2933,7 +3078,7 @@ static void overlay_wait_flip(struct drm_device *dev)
 
 fliped:
 	if (!retry)
-		DRM_ERROR("OVADD flip timeout!\n");
+		DRM_DEBUG("OVADD flip timeout!\n");
 }
 
 /*wait for vblank*/
@@ -3222,9 +3367,9 @@ void psb_flip_abnormal_debug_info(struct drm_device *dev)
 		interval = cpu_clock(0) -
 			dev_priv->vsync_te_irq_ts[pipe];
 		nanosec_rem = do_div(interval, 1000000000);
-		if (nanosec_rem > 200000000) {
-			DRM_INFO("pipe %d vsync te missing %dms !\n\n",
-				 pipe, nanosec_rem/1000000);
+		if (interval > 0 || nanosec_rem > 200000000) {
+			DRM_INFO("pipe %d vsync te missing %lldms !\n\n",
+				 pipe, interval * 1000 + nanosec_rem/1000000);
 			dev_priv->vsync_te_working[pipe] = false;
 			if (pipe == 0)
 				atomic_set(&dev_priv->mipi_flip_abnormal, 1);
@@ -3259,6 +3404,30 @@ static int psb_get_dc_info_ioctl(struct drm_device *dev, void *data,
 
 	return 0;
 }
+
+//ASUS_BSP: [DDS] +++
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+static int psb_panel_switch_ioctl(struct drm_device *dev, void *data,
+				 struct drm_file *file_priv)
+{
+	uint32_t *connected = data;
+	struct drm_psb_private *dev_priv =
+		(struct drm_psb_private *) dev->dev_private;
+
+	DRM_INFO("[DISPLAY] [DDS] %s: Enter, connected =%d\n", __func__, *connected);
+
+	//if(*connected){
+	//	panel_id = 1; //800x1280
+	//}
+	//else{
+	//	panel_id = 0; //480x800
+	//}
+	//printk("psb_panel_switch_ioctl : panel_id = %d\n",panel_id);
+	mdfld_reset_dpi_panel(dev_priv, *connected);
+	return 0;
+}
+#endif
+//ASUS_BSP: [DDS] ---
 
 static int psb_vsync_set_ioctl(struct drm_device *dev, void *data,
 				 struct drm_file *file_priv)
@@ -3338,8 +3507,11 @@ static int psb_vsync_set_ioctl(struct drm_device *dev, void *data,
 				psb_fp->dsr_blocked = true;
 
 				if (get_panel_mode(dev) ==
-						MDFLD_DSI_ENCODER_DPI)
+						MDFLD_DSI_ENCODER_DPI) {
 					psb_enable_vblank(dev, pipe);
+					dev_priv->vblank_disable_cnt = 0;
+					dev_priv->vsync_enabled = true;
+				}
 				break;
 			case 1:
 				psb_enable_vblank(dev, pipe);
@@ -3354,8 +3526,14 @@ static int psb_vsync_set_ioctl(struct drm_device *dev, void *data,
 			case 2:
 				psb_fp = psb_fpriv(file_priv);
 				if (get_panel_mode(dev) ==
-						MDFLD_DSI_ENCODER_DPI)
-					psb_disable_vblank(dev, pipe);
+						MDFLD_DSI_ENCODER_DPI) {
+					/* Do not disable vblank immediately,
+					 * we may have pending flip item,
+					 * and flip watchdog may be fired
+					 * mistakenly.
+					 */
+					dev_priv->vsync_enabled = false;
+				}
 
 				mdfld_dsi_dsr_allow(dsi_config);
 				psb_fp->dsr_blocked = false;
@@ -3516,6 +3694,18 @@ static int psb_register_rw_ioctl(struct drm_device *dev, void *data,
 			if (arg->display_read_mask & REGRWBITS_DISPLAY_ALL)
 				psb_display_reg_dump(dev);
 		}
+	}
+
+	if (arg->overlay_write_mask == OVSTATUS_REGRBIT_OVR_UPDT ) {
+		int index = arg->overlay.backbuf_index;
+
+		mutex_lock(&dev_priv->ov_ctrl_lock);
+		ret = copy_from_user(dev_priv->ov_ctrl_blk + index,
+				(void __user *)arg->overlay.backbuf_addr,
+				sizeof(struct overlay_ctrl_blk));
+		mutex_unlock(&dev_priv->ov_ctrl_lock);
+		mutex_unlock(&dev_priv->overlay_lock);
+		return ret;
 	}
 
 	if (arg->overlay_write_mask != 0) {
@@ -5009,6 +5199,9 @@ static int __init psb_init(void)
 	ret = platform_driver_register(&tmd_lcd_driver);
 #endif
 
+#ifdef CONFIG_SUPPORT_OTM8018B_MIPI_480X854_DISPLAY
+    ret = platform_driver_register(&pf450cl_vid_lcd_driver);
+#endif
 	return ret;
 }
 

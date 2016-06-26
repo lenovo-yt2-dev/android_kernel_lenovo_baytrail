@@ -70,12 +70,17 @@ unsigned int ia_css_util_input_format_bpp(
 	case IA_CSS_STREAM_FORMAT_RGB_888:
 	case IA_CSS_STREAM_FORMAT_RAW_8:
 	case IA_CSS_STREAM_FORMAT_BINARY_8:
+	case IA_CSS_STREAM_FORMAT_EMBEDDED:
 		rval = 8;
 		break;
 	case IA_CSS_STREAM_FORMAT_YUV420_10:
 	case IA_CSS_STREAM_FORMAT_YUV422_10:
 	case IA_CSS_STREAM_FORMAT_RAW_10:
 		rval = 10;
+		break;
+	case IA_CSS_STREAM_FORMAT_YUV420_16:
+	case IA_CSS_STREAM_FORMAT_YUV422_16:
+		rval = 16;
 		break;
 	case IA_CSS_STREAM_FORMAT_RGB_444:
 		rval = 4;
@@ -144,9 +149,6 @@ enum ia_css_err ia_css_util_check_vf_out_info(
 	err = ia_css_util_check_vf_info(vf_info);
 	if (err != IA_CSS_SUCCESS)
 		return err;
-	if (vf_info->res.width > out_info->res.width ||
-	    vf_info->res.height > out_info->res.height)
-		return IA_CSS_ERR_INVALID_ARGUMENTS;
 	return IA_CSS_SUCCESS;
 }
 
@@ -177,27 +179,35 @@ bool ia_css_util_is_input_format_raw(enum ia_css_stream_format format)
 bool ia_css_util_is_input_format_yuv(enum ia_css_stream_format format)
 {
 	return format == IA_CSS_STREAM_FORMAT_YUV420_8_LEGACY ||
-	    format == IA_CSS_STREAM_FORMAT_YUV420_8 ||
+	    format == IA_CSS_STREAM_FORMAT_YUV420_8  ||
 	    format == IA_CSS_STREAM_FORMAT_YUV420_10 ||
-	    format == IA_CSS_STREAM_FORMAT_YUV422_8 ||
-	    format == IA_CSS_STREAM_FORMAT_YUV422_10;
+	    format == IA_CSS_STREAM_FORMAT_YUV420_16 ||
+	    format == IA_CSS_STREAM_FORMAT_YUV422_8  ||
+	    format == IA_CSS_STREAM_FORMAT_YUV422_10 ||
+	    format == IA_CSS_STREAM_FORMAT_YUV422_16;
 }
 
 enum ia_css_err ia_css_util_check_input(
 	const struct ia_css_stream_config * const stream_config,
-	bool must_be_raw)
+	bool must_be_raw,
+	bool must_be_yuv)
 {
 	assert(stream_config != NULL);
 
 	if (stream_config == NULL)
 		return IA_CSS_ERR_INVALID_ARGUMENTS;
 
-	if (stream_config->effective_res.width == 0 ||
-	    stream_config->effective_res.height == 0)
+#ifdef IS_ISP_2400_SYSTEM
+	if (stream_config->input_config.effective_res.width == 0 ||
+	    stream_config->input_config.effective_res.height == 0)
+		return IA_CSS_ERR_INVALID_ARGUMENTS;
+#endif
+	if (must_be_raw &&
+	    !ia_css_util_is_input_format_raw(stream_config->input_config.format))
 		return IA_CSS_ERR_INVALID_ARGUMENTS;
 
-	if (must_be_raw &&
-	    !ia_css_util_is_input_format_raw(stream_config->format))
+	if (must_be_yuv &&
+	    !ia_css_util_is_input_format_yuv(stream_config->input_config.format))
 		return IA_CSS_ERR_INVALID_ARGUMENTS;
 
 	return IA_CSS_SUCCESS;

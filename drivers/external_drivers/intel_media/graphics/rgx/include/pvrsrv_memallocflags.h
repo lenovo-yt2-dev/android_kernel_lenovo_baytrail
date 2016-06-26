@@ -216,7 +216,7 @@ typedef IMG_UINT32 PVRSRV_MEMALLOCFLAGS_T;
 	The defines are mutually exclusive.
 	
 	A helper macro, CPU_CACHE_MODE, is provided to obtain just the CPU cache
-	bit field from the flags. This should be used whenever the GPU cache mode
+	bit field from the flags. This should be used whenever the CPU cache mode
 	needs to be determined.
 */
 

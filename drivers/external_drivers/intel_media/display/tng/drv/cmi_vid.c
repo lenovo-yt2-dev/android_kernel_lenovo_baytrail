@@ -24,6 +24,7 @@
  * Faxing Lu
  */
 
+#include <asm/intel_scu_ipcutil.h>
 #include "displays/cmi_vid.h"
 
 static u8 cmi_set_extension[] = {0xb9, 0xff, 0x83, 0x92};
@@ -158,7 +159,7 @@ static int mdfld_dsi_cmi_ic_init(struct mdfld_dsi_config *dsi_config)
 		return -EIO;
 
 	mdfld_dsi_send_mcs_short_hs(sender,
-			write_ctrl_cabc, 0x2, STILL_IMAGE, 0);
+			write_ctrl_cabc, dsi_config->cabc_mode, 1, 0);
 	wait_timeout = jiffies + (HZ / 100);
 	while (time_before_eq(jiffies, wait_timeout))
 		cpu_relax();
@@ -431,22 +432,36 @@ power_on_err:
 	return err;
 }
 
+#define MSIC_VPROG2_MRFLD_CTRL          0xAD
+#define MSIC_B0_VPROG2_MRFLD_CTRL       0x141
+#define PMIC_ID_ADDR                    0x00
+#define PMIC_CHIP_ID_B0_VAL             0x08
+
 static void __vpro2_power_ctrl(bool on)
 {
-	u8 addr, value;
-	addr = 0xad;
-	if (intel_scu_ipc_ioread8(addr, &value))
-		DRM_ERROR("%s: %d: failed to read vPro2\n", __func__, __LINE__);
+        u8 value, addr = MSIC_VPROG2_MRFLD_CTRL;
+	int ret = 0xFF;
+	uint8_t pmic_id = 0;
 
-	/* Control vPROG2 power rail with 2.85v. */
-	if (on)
-		value |= 0x1;
-	else
-		value &= ~0x1;
+        ret  = intel_scu_ipc_ioread8(PMIC_ID_ADDR, &pmic_id);
+	if (!ret) {
+		if (PMIC_CHIP_ID_B0_VAL == pmic_id)
+			addr = MSIC_B0_VPROG2_MRFLD_CTRL;
 
-	if (intel_scu_ipc_iowrite8(addr, value))
-		DRM_ERROR("%s: %d: failed to write vPro2\n",
-				__func__, __LINE__);
+		if (intel_scu_ipc_ioread8(addr, &value))
+			DRM_ERROR("%s: %d: failed to read vPro2\n", __func__, __LINE__);
+
+		/* Control vPROG2 power rail with 2.85v. */
+		if (on)
+			value |= 0x1;
+		else
+			value &= ~0x1;
+
+		if (intel_scu_ipc_iowrite8(addr, value))
+			DRM_ERROR("%s: %d: failed to write vPro2\n",__func__, __LINE__);
+	} else {
+		DRM_ERROR("%s: %d: failed to read pmic id \n",__func__, __LINE__);
+	}
 }
 
 static int mdfld_dsi_cmi_power_off(struct mdfld_dsi_config *dsi_config)
@@ -492,7 +507,7 @@ static int mdfld_dsi_cmi_power_off(struct mdfld_dsi_config *dsi_config)
 	/* Wait for 3 frames after enter_sleep_mode. */
 	msleep(51);
 
-	__vpro2_power_ctrl(false);
+	intel_scu_ipc_msic_vprog2(false);
 
 	return 0;
 
@@ -514,7 +529,7 @@ static int mdfld_dsi_cmi_set_brightness(struct mdfld_dsi_config *dsi_config,
 		return -EINVAL;
 	}
 
-	duty_val = (255 * level) / 100;
+	duty_val = (255 * level) / 255;
 
 	mdfld_dsi_send_mcs_short_hs(sender, 0x51, duty_val, 1, 0);
 	wait_timeout = jiffies + (HZ / 100);
@@ -529,7 +544,7 @@ static int mdfld_dsi_cmi_panel_reset(struct mdfld_dsi_config *dsi_config)
 	static int mipi_reset_gpio;
 
 	PSB_DEBUG_ENTRY("\n");
-	__vpro2_power_ctrl(true);
+	intel_scu_ipc_msic_vprog2(true);
 	mdelay(1100);
 	mipi_reset_gpio = 190;
 	gpio_direction_output(mipi_reset_gpio, 0);

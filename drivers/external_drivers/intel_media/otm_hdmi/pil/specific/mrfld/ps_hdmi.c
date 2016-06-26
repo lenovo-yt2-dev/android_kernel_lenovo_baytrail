@@ -75,6 +75,8 @@
 #include <asm/intel_scu_pmic.h>
 #include <asm/intel-mid.h>
 #include "pwr_mgmt.h"
+#include "sepapp.h"
+#include "hdcp_api.h"
 
 /* Implementation of the Merrifield specific PCI driver for receiving
  * Hotplug and other device status signals.
@@ -98,10 +100,6 @@ static hdmi_context_t *g_context = NULL;
 #define PS_MSIC_HPD_GPIO_PIN_NAME "HDMI_HPD"
 #define PS_MSIC_LS_EN_GPIO_PIN_NAME "HDMI_LS_EN"
 #define PS_MSIC_CPD_HPD_GPIO_PIN 0x7F
-
-/* MOOREFIELD SPECIFIC */
-#define PMIC_GPIO0_CTRL_REG_OFST	0x7E
-#define PMIC_GPIO0_CFG_VAL	0x2A
 
 /* For Merrifield, it is required that SW pull up or pull down the
  * LS_OE GPIO pin based on cable status. This is needed before
@@ -128,6 +126,7 @@ static void __ps_gpio_configure_edid_read(void)
 		gpio_set_value(ctx->gpio_ls_en_pin, 0);
 	else
 		gpio_set_value(ctx->gpio_ls_en_pin, 1);
+
 	pr_debug("%s: MSIC_LS_OE pin = %d (%d)\n", __func__,
 		 gpio_get_value(ctx->gpio_ls_en_pin), new_pin_value);
 }
@@ -206,22 +205,9 @@ otm_hdmi_ret_t ps_hdmi_pci_dev_init(void *context, struct pci_dev *pdev)
 		goto exit;
 	}
 
-	/* on moorefield V0 platform, HDMI_LS_EN is driven from SHADYCOVE PMIC */
-	if (INTEL_MID_BOARD(2, PHONE, MOFD, V0, PRO)) {
-		pr_debug("configure MSIC GPIO0(HDMI_LS_EN) for MOOREFIELD V0 \
-				o/p=1 pu=50k pu/pd=enabled od=1 dir=ouptut\n");
-
-		result = intel_scu_ipc_iowrite8(PMIC_GPIO0_CTRL_REG_OFST, PMIC_GPIO0_CFG_VAL);
-
-		if(result != 0) {
-			pr_err("%s failed to configure GPIO0(HDMI_LS_EN)\n",__func__);
-			rc = OTM_HDMI_ERR_FAILED;
-			goto exit;
-		}
-	}
-
 	/* Set the GPIO based on cable status */
 	__ps_gpio_configure_edid_read();
+
 exit:
 	return rc;
 }
@@ -341,8 +327,15 @@ bool ps_hdmi_get_cable_status(void *context)
  */
 void ps_hdmi_update_security_hdmi_hdcp_status(bool hdcp, bool cable)
 {
-	/* Note: do nothing since not clear if mrfld needs this or not */
-	return;
+	uint8_t status = 0;
+	if (cable)
+		status |= 1 << 0;
+	if (hdcp)
+		status |= 1 << 1;
+
+	uint8_t bksv[5];
+	otm_hdmi_hdcp_get_bksv(bksv, 5);
+	sepapp_hdmi_status(status, bksv);
 }
 
 /**
@@ -392,7 +385,7 @@ int ps_hdmi_get_hpd_pin(void)
 void ps_hdmi_override_cable_status(bool state, bool auto_state)
 {
 	if (g_context == NULL)
-		return 0;
+		return;
 
 	g_context->override_cable_state = auto_state;
 

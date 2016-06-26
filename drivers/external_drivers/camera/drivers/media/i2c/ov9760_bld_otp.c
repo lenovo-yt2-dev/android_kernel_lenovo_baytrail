@@ -50,7 +50,7 @@ ov9760_read_otp(struct i2c_client *client, u16 len, u16 reg, u8 *val)
 {
 	struct i2c_msg msg[2];
 	u16 data[OV9760_SHORT_MAX];
-	int err, i;
+	int err;
 
 	if (!client->adapter) {
 		v4l2_err(client, "%s error, no client->adapter\n", __func__);
@@ -87,7 +87,7 @@ error:
 
 static u32 ov9760_otp_read(struct i2c_client *client, u8 *ov9760_data_ptr, u32 *ov9760_size)
 {
-	u16 bank,address,i,val,index=0;
+	u16 bank,index=0;
 	int ret;
 
 	for(index=0;index<OV9760_OTP_BANK_NUM;index++)

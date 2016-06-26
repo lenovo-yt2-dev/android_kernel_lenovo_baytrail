@@ -32,23 +32,23 @@
 
 #include "displays/sharp25x16_cmd.h"
 
-static u8 sharp_mode_set_data[5][3] = {
-			{0x10, 0x00, 0x2a},
+static int mipi_reset_gpio;
+
+static u8 sharp_mode_set_data[7][3] = {
+			{0x10, 0x00, 0x2f},
 			{0x10, 0x01, 0x01},
 			{0x10, 0x07, 0x00},
 			{0x70, 0x00, 0x70},
-			{0x00, 0x1f, 0x00}
+			{0x00, 0x1f, 0x00},
+			{0x20, 0x2e, 0x12},
+			{0x20, 0x2a, 0x0}
 			};
 static u8 sharp_clumn_addr_left[] = {
-			0x2a, 0x00, 0x00, 0x04, 0xff};
+			0x2a, 0x00, 0x00, 0x09, 0xff};
 static u8 sharp_page_addr_left[] = {
 			0x2b, 0x00, 0x00, 0x06, 0x3f};
-static u8 sharp_mode_set_dec_sel[3] =
-			{0x01, 0x1f, 0x00};
-static u8 sharp_clumn_addr_right[] = {
-			0x2a, 0x05, 0x00, 0x09, 0xff};
-static u8 sharp_page_addr_right[] = {
-			0x2b, 0x00, 0x00, 0x06, 0x3f};
+static u8 sharp_set_brightness[3] =
+			{0x20, 0x2a, 0x0};
 static
 int sharp25x16_cmd_drv_ic_init(struct mdfld_dsi_config *dsi_config)
 {
@@ -63,18 +63,18 @@ int sharp25x16_cmd_drv_ic_init(struct mdfld_dsi_config *dsi_config)
 		DRM_ERROR("Cannot get sender\n");
 		return -EINVAL;
 	}
-	for (i = 0; i < 5; i++) {
-		err = mdfld_dsi_send_gen_long_lp(sender, sharp_mode_set_data[i],
+	for (i = 0; i < 7; i++) {
+		err = mdfld_dsi_send_gen_long_hs(sender, sharp_mode_set_data[i],
 				3,
 				MDFLD_DSI_SEND_PACKAGE);
 		if (err) {
 			DRM_ERROR("%s: %d: Set Mode data\n", __func__, __LINE__);
 			goto ic_init_err;
 		}
-		REG_WRITE(MIPIA_LP_GEN_CTRL_REG, 5);
+		REG_WRITE(MIPIA_HS_GEN_CTRL_REG, 5);
 	}
 
-	err = mdfld_dsi_send_mcs_long_lp(sender,
+	err = mdfld_dsi_send_mcs_long_hs(sender,
 			sharp_clumn_addr_left,
 			5, MDFLD_DSI_SEND_PACKAGE);
 	if (err) {
@@ -82,8 +82,8 @@ int sharp25x16_cmd_drv_ic_init(struct mdfld_dsi_config *dsi_config)
 		__func__, __LINE__);
 		goto ic_init_err;
 	}
-	REG_WRITE(MIPIA_LP_GEN_CTRL_REG, 5);
-	err = mdfld_dsi_send_mcs_long_lp(sender,
+	REG_WRITE(MIPIA_HS_GEN_CTRL_REG, 5);
+	err = mdfld_dsi_send_mcs_long_hs(sender,
 			sharp_page_addr_left,
 			5, MDFLD_DSI_SEND_PACKAGE);
 	if (err) {
@@ -91,9 +91,9 @@ int sharp25x16_cmd_drv_ic_init(struct mdfld_dsi_config *dsi_config)
 		__func__, __LINE__);
 		goto ic_init_err;
 	}
-	REG_WRITE(MIPIA_LP_GEN_CTRL_REG, 5);
+	REG_WRITE(MIPIA_HS_GEN_CTRL_REG, 5);
 
-	err = mdfld_dsi_send_mcs_short_lp(sender,
+	err = mdfld_dsi_send_mcs_short_hs(sender,
 			set_tear_on, 0x00, 1,
 			MDFLD_DSI_SEND_PACKAGE);
 	if (err) {
@@ -128,19 +128,21 @@ void sharp25x16_cmd_controller_init(
 	hw_ctx->hs_tx_timeout = 0xFFFFFF;
 	hw_ctx->lp_rx_timeout = 0xFFFFFF;
 	hw_ctx->device_reset_timer = 0xffff;
-	hw_ctx->turn_around_timeout = 0x14;
-	hw_ctx->high_low_switch_count = 0x2B;
-	hw_ctx->clk_lane_switch_time_cnt =  0x2b0014;
-	hw_ctx->lp_byteclk = 0x6;
-	hw_ctx->dphy_param = 0x2a18681f;
+	hw_ctx->turn_around_timeout = 0x3f;
+	hw_ctx->high_low_switch_count = 0x40;
+	hw_ctx->clk_lane_switch_time_cnt = 0x16002d;
+	hw_ctx->lp_byteclk = 0x5;
+	hw_ctx->dphy_param = 0x3c1fc51f;
 	hw_ctx->eot_disable = 0x0;
-	hw_ctx->init_count = 0xf0;
+	hw_ctx->init_count = 0xfa0;
 	hw_ctx->dbi_bw_ctrl = 1024;
 	hw_ctx->hs_ls_dbi_enable = 0x0;
 	hw_ctx->dsi_func_prg = ((DBI_DATA_WIDTH_OPT2 << 13) |
 				dsi_config->lane_count);
 
-	hw_ctx->mipi = SEL_FLOPPED_HSTX	| PASS_FROM_SPHY_TO_AFE | 3;
+	hw_ctx->mipi = SEL_FLOPPED_HSTX	| PASS_FROM_SPHY_TO_AFE |
+		DUAL_LINK_ENABLE | DUAL_LINK_CAPABLE | TE_TRIGGER_GPIO_PIN |
+		DUAL_LINK_MODE_PIXEL_ALTER;
 	hw_ctx->video_mode_format = 0xf;
 
 }
@@ -178,6 +180,7 @@ int sharp25x16_cmd_power_on(
 		DRM_ERROR("Failed to get DSI packet sender\n");
 		return -EINVAL;
 	}
+	msleep(150);
 	err = mdfld_dsi_send_mcs_short_hs(sender,
 		set_address_mode, 0x0, 1,
 		MDFLD_DSI_SEND_PACKAGE);
@@ -186,8 +189,6 @@ int sharp25x16_cmd_power_on(
 		__func__, __LINE__);
 		goto power_err;
 	}
-//	usleep_range(20000, 20100);
-
 	err = mdfld_dsi_send_mcs_short_hs(sender,
 			set_pixel_format, 0x77, 1,
 			MDFLD_DSI_SEND_PACKAGE);
@@ -218,26 +219,6 @@ int sharp25x16_cmd_power_on(
 power_err:
 	return err;
 }
-
-static void __vpro2_power_ctrl(bool on)
-{
-	u8 addr, value;
-	addr = 0xad;
-	if (intel_scu_ipc_ioread8(addr, &value))
-		DRM_ERROR("%s: %d: failed to read vPro2\n",
-		__func__, __LINE__);
-
-	/* Control vPROG2 power rail with 2.85v. */
-	if (on)
-		value |= 0x1;
-	else
-		value &= ~0x1;
-
-	if (intel_scu_ipc_iowrite8(addr, value))
-		DRM_ERROR("%s: %d: failed to write vPro2\n",
-				__func__, __LINE__);
-}
-
 static int sharp25x16_cmd_power_off(
 		struct mdfld_dsi_config *dsi_config)
 {
@@ -260,8 +241,6 @@ static int sharp25x16_cmd_power_off(
 		__func__, __LINE__);
 		goto power_off_err;
 	}
-//	usleep_range(20000, 20100);
-
 	err = mdfld_dsi_send_mcs_short_hs(sender,
 			enter_sleep_mode, 0, 0,
 			MDFLD_DSI_SEND_PACKAGE);
@@ -270,8 +249,10 @@ static int sharp25x16_cmd_power_off(
 		__func__, __LINE__);
 		goto power_off_err;
 	}
-
-//	usleep_range(1000, 1500);
+	/* enable it after AOB re-work
+	* gpio_set_value_cansleep(mipi_reset_gpio, 0);
+	*/
+	msleep(100);
 	return 0;
 power_off_err:
 	err = -EIO;
@@ -283,6 +264,26 @@ int sharp25x16_cmd_set_brightness(
 		struct mdfld_dsi_config *dsi_config,
 		int level)
 {
+	struct mdfld_dsi_pkg_sender *sender =
+		mdfld_dsi_get_pkg_sender(dsi_config);
+	struct drm_device *dev = dsi_config->dev;
+	u8 duty_val = 0;
+
+	PSB_DEBUG_ENTRY("level = %d\n", level);
+
+	if (!sender) {
+		DRM_ERROR("Failed to get DSI packet sender\n");
+		return -EINVAL;
+	}
+	duty_val = (0xFF * level) / 255;
+	if (duty_val < 12)
+		duty_val = 0;
+	sharp_set_brightness[2] = duty_val;
+	mdfld_dsi_send_gen_long_hs(sender, sharp_set_brightness,
+				3,
+				MDFLD_DSI_SEND_PACKAGE);
+
+	REG_WRITE(MIPIA_HS_GEN_CTRL_REG, 5);
 	return 0;
 }
 
@@ -291,17 +292,27 @@ int sharp25x16_cmd_panel_reset(
 		struct mdfld_dsi_config *dsi_config)
 {
 	int ret = 0;
-	u8 *vaddr = NULL;
 
 	PSB_DEBUG_ENTRY("\n");
 	msleep(10);
+	if (mipi_reset_gpio == 0) {
+		ret = get_gpio_by_name("disp0_rst");
+		if (ret < 0) {
+			DRM_ERROR("Faild to get panel reset gpio, " \
+				  "use default reset pin\n");
+			return 0;
+		}
+		mipi_reset_gpio = ret;
+		ret = gpio_request(mipi_reset_gpio, "mipi_display");
+		if (ret) {
+			DRM_ERROR("Faild to request panel reset gpio\n");
+			return 0;
+		}
+	}
+	gpio_direction_output(mipi_reset_gpio, 0);
+	usleep_range(1000, 1500);
+	gpio_set_value_cansleep(mipi_reset_gpio, 1);
 
-	__vpro2_power_ctrl(true);
-	usleep_range(3000, 3500);
-	vaddr = ioremap(0xff0c2d00, 0x60);
-	iowrite32(0x3221, vaddr + 0x1c);
-	usleep_range(2000, 2500);
-	iounmap(vaddr);
 	return 0;
 }
 
@@ -309,6 +320,10 @@ static
 int sharp25x16_cmd_exit_deep_standby(
 		struct mdfld_dsi_config *dsi_config)
 {
+	PSB_DEBUG_ENTRY("\n");
+	gpio_set_value_cansleep(mipi_reset_gpio, 0);
+	usleep_range(1000, 1500);
+	gpio_set_value_cansleep(mipi_reset_gpio, 1);
 	return 0;
 }
 
@@ -352,8 +367,8 @@ void sharp25x16_cmd_get_panel_info(int pipe,
 	PSB_DEBUG_ENTRY("\n");
 
 	if (pipe == 0) {
-		pi->width_mm = PANEL_4DOT3_WIDTH;
-		pi->height_mm = PANEL_4DOT3_HEIGHT;
+		pi->width_mm = 217;
+		pi->height_mm = 136;
 	}
 }
 

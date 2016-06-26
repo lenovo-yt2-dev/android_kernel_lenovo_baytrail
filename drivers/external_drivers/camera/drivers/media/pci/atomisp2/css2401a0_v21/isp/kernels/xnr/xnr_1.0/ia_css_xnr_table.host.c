@@ -19,11 +19,8 @@
  *
  */
 
-#ifndef __KERNEL__
-#include <string.h>
-#else
-#include <linux/string.h>
-#endif
+#include <type_support.h>
+#include <string_support.h> /* memcpy */
 #include "system_global.h"
 #include "vamem.h"
 #include "ia_css_types.h"

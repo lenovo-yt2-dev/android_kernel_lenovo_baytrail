@@ -32,9 +32,10 @@
 #include "mdfld_dsi_dbi_dsr.h"
 /* FIXME may delete after MRFLD PO */
 #include "mrfld_display.h"
+#include "mdfld_csc.h"
 
 #define DRM_OUTPUT_POLL_PERIOD (10 * HZ)
-
+#define MAX_GAMMA                       0x10000
 /*MRFLD defines */
 static int mrfld_crtc_mode_set(struct drm_crtc *crtc,
 			       struct drm_display_mode *mode,
@@ -496,6 +497,360 @@ static void psb_intel_crtc_destroy(struct drm_crtc *crtc)
 	kfree(psb_intel_crtc);
 }
 
+/*
+ * set display controller side palette, it will influence
+ * brightness , saturation , contrast.
+ * KAI1
+*/
+int mdfld_intel_crtc_set_gamma(struct drm_device *dev,
+				struct gamma_setting *setting_data)
+{
+	struct drm_psb_private *dev_priv = NULL;
+	struct mdfld_dsi_hw_context *ctx = NULL;
+	struct mdfld_dsi_hw_registers *regs;
+	struct mdfld_dsi_config *dsi_config = NULL;
+	int ret = 0;
+	int pipe = 0;
+	u32 val = 0;
+	int i;
+
+	PSB_DEBUG_ENTRY("\n");
+
+	if (!dev || !setting_data) {
+		ret = -EINVAL;
+		return ret;
+	}
+
+	if (!(setting_data->type &
+		(GAMMA_SETTING|GAMMA_INITIA|GAMMA_REG_SETTING))) {
+		ret = -EINVAL;
+		return ret;
+	}
+	if ((setting_data->type == GAMMA_SETTING &&
+		setting_data->data_len != GAMMA_10_BIT_TABLE_COUNT) ||
+		(setting_data->type == GAMMA_REG_SETTING &&
+		setting_data->data_len != GAMMA_10_BIT_TABLE_COUNT)) {
+		ret = -EINVAL;
+		return ret;
+	}
+
+	dev_priv = dev->dev_private;
+	pipe = setting_data->pipe;
+
+	drm_psb_set_gamma_pipe = setting_data->pipe;
+
+	if (pipe == 0)
+		dsi_config = dev_priv->dsi_configs[0];
+	else if (pipe == 2)
+		dsi_config = dev_priv->dsi_configs[1];
+	else if (pipe == 1) {
+		PSB_DEBUG_ENTRY("/KAI1 palette no implement for HDMI\n"
+				"do it later\n");
+		return -EINVAL;
+	} else
+		return -EINVAL;
+
+	mutex_lock(&dev_priv->gamma_csc_lock);
+
+	ctx = &dsi_config->dsi_hw_context;
+	regs = &dsi_config->regs;
+
+	if (!ospm_power_using_hw_begin(OSPM_DISPLAY_ISLAND,
+					OSPM_UHB_FORCE_POWER_ON)) {
+		ret = -EAGAIN;
+		goto _fun_exit;
+	}
+
+	/*forbid dsr which will restore regs*/
+	mdfld_dsi_dsr_forbid(dsi_config);
+
+	/*enable gamma*/
+	if (drm_psb_enable_gamma && setting_data->enable_state) {
+		int i = 0, temp = 0;
+		u32 integer_part = 0, fraction_part = 0, even_part = 0,
+		    odd_part = 0;
+		u32 int_red_9_2 = 0, int_green_9_2 = 0, int_blue_9_2 = 0;
+		u32 int_red_1_0 = 0, int_green_1_0 = 0, int_blue_1_0 = 0;
+		u32 fra_red = 0, fra_green = 0, fra_blue = 0;
+		int j = 0;
+		/*here set r/g/b the same curve*/
+		for (i = 0; i <= 1024; i = i + 8) {
+			if (setting_data->type == GAMMA_INITIA) {
+				switch (setting_data->initia_mode) {
+				case GAMMA_05:
+					/* gamma 0.5 */
+					temp = 32 * int_sqrt(i * 10000);
+					printk(KERN_ALERT "gamma 0.5\n");
+					break;
+				case GAMMA_20:
+					/* gamma 2 */
+					temp = (i * i * 100) / 1024;
+					printk(KERN_ALERT "gamma 2\n");
+					break;
+				case GAMMA_05_20:
+					/*
+					 * 0 ~ 511 gamma 0.5
+					 * 512 ~1024 gamma 2
+					 */
+					if (i < 512)
+						temp = int_sqrt(i * 512 *
+								10000);
+					else
+						temp = (i - 512) * (i - 512) *
+							100 / 512  + 512 * 100;
+					printk(KERN_ALERT "gamma 0.5 + gamma 2\n");
+					break;
+				case GAMMA_20_05:
+					/*
+					 * 0 ~ 511 gamma 2
+					 * 512 ~1024 gamma 0.5
+					 */
+					if (i < 512)
+						temp = i * i * 100 / 512;
+					else
+						temp = int_sqrt((i - 512) *
+								512 * 10000)
+							+ 512 * 100;
+					printk(KERN_ALERT "gamma 2 + gamma 0.5\n");
+					break;
+				case GAMMA_10:
+					/* gamma 1 */
+					temp = i * 100;
+					printk(KERN_ALERT "gamma 1\n");
+					break;
+				default:
+					/* gamma 0.5 */
+					temp = 32 * int_sqrt(i *  10000);
+					printk(KERN_ALERT "gamma 0.5\n");
+					break;
+				}
+			} else {
+				temp = setting_data->gamma_tableX100[i / 8];
+			}
+
+			if (setting_data->type == GAMMA_REG_SETTING) {
+				if (i != 1024) {
+					ctx->palette[(i / 8) * 2] = 0;
+					ctx->palette[(i / 8) * 2 + 1] = temp;
+				} else {
+					ctx->gamma_red_max = MAX_GAMMA;
+					ctx->gamma_green_max = MAX_GAMMA;
+					ctx->gamma_blue_max = MAX_GAMMA;
+				}
+			} else {
+				if (temp < 0)
+					temp = 0;
+				if (temp > 1024 * 100)
+					temp = 1024 * 100;
+
+				integer_part = temp / 100;
+				fraction_part = (temp - integer_part * 100);
+				/*get r/g/b each channel*/
+				int_blue_9_2 = integer_part >> 2;
+				int_green_9_2 = int_blue_9_2 << 8;
+				int_red_9_2 = int_blue_9_2 << 16;
+				int_blue_1_0 = (integer_part & 0x3) << 6;
+				int_green_1_0 = int_blue_1_0 << 8;
+				int_red_1_0 = int_blue_1_0 << 16;
+				fra_blue = fraction_part*64/100;
+				fra_green = fra_blue << 8;
+				fra_red = fra_blue << 16;
+				/*get even and odd part*/
+				odd_part = int_red_9_2 | int_green_9_2 | int_blue_9_2;
+				even_part = int_red_1_0 | fra_red | int_green_1_0 |
+					fra_green | int_blue_1_0 | fra_blue;
+				if (i != 1024) {
+					ctx->palette[(i / 8) * 2] = even_part;
+					ctx->palette[(i / 8) * 2 + 1] = odd_part;
+				} else {
+					ctx->gamma_red_max = (integer_part << 6) |
+							(fraction_part);
+					ctx->gamma_green_max = (integer_part << 6) |
+							(fraction_part);
+					ctx->gamma_blue_max = (integer_part << 6) |
+							(fraction_part);
+					printk(KERN_ALERT
+							"max (red %x, green 0x%x, blue 0x%x)\n",
+						ctx->gamma_red_max,
+						ctx->gamma_green_max,
+						ctx->gamma_blue_max);
+				}
+			}
+
+			j = j + 8;
+		}
+		/* save palette (gamma) */
+                for (i = 0; i < 256; i++)
+                        gamma_setting_save[i] = ctx->palette[i];
+
+		drm_psb_set_gamma_success = 1;
+		drm_psb_set_gamma_pending = 1;
+	} else {
+		drm_psb_enable_gamma = 0;
+		drm_psb_set_gamma_success = 0;
+		drm_psb_set_gamma_pending = 0;
+		drm_psb_set_gamma_pipe = MDFLD_PIPE_MAX;
+
+                /*reset gamma setting*/
+                for (i = 0; i < 256; i++)
+                        gamma_setting_save[i] = 0;
+
+		/*disable */
+		val = REG_READ(regs->pipeconf_reg);
+		val &= ~(PIPEACONF_GAMMA);
+		REG_WRITE(regs->pipeconf_reg, val);
+		ctx->pipeconf = val;
+		REG_WRITE(regs->dspcntr_reg,
+				REG_READ(regs->dspcntr_reg) &
+				~(DISPPLANE_GAMMA_ENABLE));
+		ctx->dspcntr = REG_READ(regs->dspcntr_reg) & (~DISPPLANE_GAMMA_ENABLE);
+		REG_READ(regs->dspcntr_reg);
+	}
+
+	mdfld_dsi_dsr_update_panel_fb(dsi_config);
+	/*allow entering dsr*/
+	mdfld_dsi_dsr_allow(dsi_config);
+
+	ospm_power_using_hw_end(OSPM_DISPLAY_ISLAND);
+
+_fun_exit:
+	mutex_unlock(&dev_priv->gamma_csc_lock);
+	return ret;
+}
+
+/*
+ * set display controller side color conversion
+ * KAI1
+*/
+int mdfld_intel_crtc_set_color_conversion(struct drm_device *dev,
+					struct csc_setting *setting_data)
+{
+	struct drm_psb_private *dev_priv = NULL;
+	struct mdfld_dsi_hw_context *ctx = NULL;
+	struct mdfld_dsi_hw_registers *regs;
+	struct mdfld_dsi_config *dsi_config = NULL;
+	int ret = 0;
+	int i = 0;
+	int pipe = 0;
+	u32 val = 0;
+	/*Rx, Ry, Gx, Gy, Bx, By, Wx, Wy*/
+	/*sRGB color space*/
+	uint32_t chrom_input[8] = {	6400, 3300,
+		3000, 6000,
+		1500, 600,
+		3127, 3290 };
+	/* PR3 color space*/
+	uint32_t chrom_output[8] = { 6382, 3361,
+		2979, 6193,
+		1448, 478,
+		3000, 3236 };
+
+	PSB_DEBUG_ENTRY("\n");
+
+	if (!dev) {
+		ret = -EINVAL;
+		return ret;
+	}
+
+	if (!(setting_data->type &
+		(CSC_CHROME_SETTING | CSC_INITIA | CSC_SETTING | CSC_REG_SETTING))) {
+		ret = -EINVAL;
+		return ret;
+	}
+	if ((setting_data->type == CSC_SETTING &&
+		setting_data->data_len != CSC_COUNT) ||
+		(setting_data->type == CSC_CHROME_SETTING &&
+		setting_data->data_len != CHROME_COUNT) ||
+		(setting_data->type == CSC_REG_SETTING &&
+		setting_data->data_len != CSC_REG_COUNT)) {
+		ret = -EINVAL;
+		return ret;
+	}
+
+	dev_priv = dev->dev_private;
+	pipe = setting_data->pipe;
+
+	if (pipe == 0)
+		dsi_config = dev_priv->dsi_configs[0];
+	else if (pipe == 2)
+		dsi_config = dev_priv->dsi_configs[1];
+	else if (pipe == 1) {
+		PSB_DEBUG_ENTRY("/KAI1 color conversion no implement for HDMI\n"
+				"do it later\n");
+		return -EINVAL;
+	} else
+		return -EINVAL;
+
+	mutex_lock(&dev_priv->gamma_csc_lock);
+
+	ctx = &dsi_config->dsi_hw_context;
+	regs = &dsi_config->regs;
+
+	if (!ospm_power_using_hw_begin(OSPM_DISPLAY_ISLAND,
+					OSPM_UHB_FORCE_POWER_ON)) {
+		ret = -EAGAIN;
+		goto _fun_exit;
+	}
+
+	/*forbid dsr which will restore regs*/
+	mdfld_dsi_dsr_forbid(dsi_config);
+
+	if (drm_psb_enable_color_conversion && setting_data->enable_state) {
+		if (setting_data->type == CSC_INITIA) {
+			/*initialize*/
+			csc(dev, &chrom_input[0], &chrom_output[0], pipe);
+		} else if (setting_data->type == CSC_CHROME_SETTING) {
+			/*use chrome to caculate csc*/
+			memcpy(chrom_input, setting_data->data.chrome_data,
+					8 * sizeof(int));
+			memcpy(chrom_output, setting_data->data.chrome_data + 8,
+					8 * sizeof(int));
+			csc(dev, &chrom_input[0], &chrom_output[0], pipe);
+		} else if (setting_data->type == CSC_SETTING) {
+			/*use user space csc*/
+			csc_program_DC(dev, &setting_data->data.csc_data[0],
+					pipe);
+		} else if (setting_data->type == CSC_REG_SETTING) {
+			/*use user space csc regiseter setting*/
+			for (i = 0; i < 6; i++) {
+				REG_WRITE(regs->color_coef_reg + (i<<2), setting_data->data.csc_reg_data[i]);
+				ctx->color_coef[i] = setting_data->data.csc_reg_data[i];
+			}
+		}
+
+                /*save color_coef (chrome) */
+                for (i = 0; i < 6; i++)
+                        csc_setting_save[i] = REG_READ(regs->color_coef_reg + (i<<2));
+
+		/*enable*/
+		val = REG_READ(regs->pipeconf_reg);
+		val |= (PIPEACONF_COLOR_MATRIX_ENABLE);
+		REG_WRITE(regs->pipeconf_reg, val);
+		ctx->pipeconf = val;
+	} else {
+		drm_psb_enable_color_conversion = 0;
+
+                /*reset color_conversion color setting*/
+                for (i = 0; i < 6; i++)
+                        csc_setting_save[i] = 0;
+
+		/*disable*/
+		val = REG_READ(regs->pipeconf_reg);
+		val &= ~(PIPEACONF_COLOR_MATRIX_ENABLE);
+		REG_WRITE(regs->pipeconf_reg, val);
+		ctx->pipeconf = val;
+	}
+
+	mdfld_dsi_dsr_update_panel_fb(dsi_config);
+	/*allow entering dsr*/
+	mdfld_dsi_dsr_allow(dsi_config);
+
+	ospm_power_using_hw_end(OSPM_DISPLAY_ISLAND);
+
+_fun_exit:
+	mutex_unlock(&dev_priv->gamma_csc_lock);
+	return ret;
+}
 static const struct drm_crtc_helper_funcs mrfld_helper_funcs;
 const struct drm_crtc_funcs mdfld_intel_crtc_funcs;
 

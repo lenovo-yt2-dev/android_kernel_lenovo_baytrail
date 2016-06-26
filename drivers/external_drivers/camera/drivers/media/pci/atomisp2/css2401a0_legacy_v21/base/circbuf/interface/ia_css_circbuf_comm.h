@@ -24,6 +24,14 @@
 
 #include <type_support.h>  /* uint8_t, uint32_t */
 
+#define IA_CSS_CIRCBUF_PADDING 1 /* The circular buffer is implemented in lock-less manner, wherein
+				   * the head and tail can advance independently without any locks.
+				   * But to achieve this, an extra buffer element is required to detect
+				   * queue full & empty conditions, wherein the tail trails the head for
+				   * full and is equal to head for empty condition. This causes 1 buffer
+				   * not being available for use.
+				   */
+
 /****************************************************************
  *
  * Portable Data structures

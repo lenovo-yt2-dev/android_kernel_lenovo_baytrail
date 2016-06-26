@@ -19,13 +19,24 @@
  *
  */
 
-#ifndef __IA_CCS_PIPE_PUBLIC_H
-#define __IA_CCS_PIPE_PUBLIC_H
+#ifndef __IA_CSS_PIPE_PUBLIC_H
+#define __IA_CSS_PIPE_PUBLIC_H
+
+/** @file
+ * This file contains the public interface for CSS pipes.
+ */
 
 #include <type_support.h>
-#include "ia_css_types.h"
-#include "ia_css_frame_public.h"
-#include "ia_css_buffer.h"
+#include <ia_css_err.h>
+#include <ia_css_types.h>
+#include <ia_css_frame_public.h>
+#include <ia_css_buffer.h>
+
+enum {
+	IA_CSS_PIPE_OUTPUT_STAGE_0 = 0,
+	IA_CSS_PIPE_OUTPUT_STAGE_1,
+	IA_CSS_PIPE_MAX_OUTPUT_STAGE,
+};
 
 /** Enumeration of pipe modes. This mode can be used to create
  *  an image pipe for this mode. These pipes can be combined
@@ -40,15 +51,11 @@ enum ia_css_pipe_mode {
 	IA_CSS_PIPE_MODE_CAPTURE,	/**< Still capture pipe */
 	IA_CSS_PIPE_MODE_ACC,		/**< Accelerated pipe */
 	IA_CSS_PIPE_MODE_COPY,		/**< Copy pipe, only used for embedded/image data copying */
+	IA_CSS_PIPE_MODE_YUVPP,		/**< YUV post processing pipe, used for all use cases with YUV input,
+									for SoC sensor and external ISP */
 };
 /* Temporary define  */
-#define IA_CSS_PIPE_MODE_NUM (IA_CSS_PIPE_MODE_COPY + 1)
-
-struct ia_css_pipe;
-
-/* Temporary hack, hivecc fails to properly compile if this struct is
- * included. */
-#ifndef __HIVECC__
+#define IA_CSS_PIPE_MODE_NUM (IA_CSS_PIPE_MODE_YUVPP + 1)
 
 /**
  * Pipe configuration structure.
@@ -58,6 +65,8 @@ struct ia_css_pipe_config {
 	/**< mode, indicates which mode the pipe should use. */
 	unsigned int isp_pipe_version;
 	/**< pipe version, indicates which imaging pipeline the pipe should use. */
+	struct ia_css_resolution input_effective_res;
+	/**< input effective resolution */
 	struct ia_css_resolution bayer_ds_out_res;
 	/**< bayer down scaling */
 	struct ia_css_resolution capt_pp_in_res;
@@ -66,9 +75,9 @@ struct ia_css_pipe_config {
 	/**< bayer down scaling */
 	struct ia_css_resolution dvs_crop_out_res;
 	/**< dvs crop, video only, not in use yet. Use dvs_envelope below. */
-	struct ia_css_frame_info output_info;
+	struct ia_css_frame_info output_info[IA_CSS_PIPE_MAX_OUTPUT_STAGE];
 	/**< output of YUV scaling */
-	struct ia_css_frame_info vf_output_info;
+	struct ia_css_frame_info vf_output_info[IA_CSS_PIPE_MAX_OUTPUT_STAGE];
 	/**< output of VF YUV scaling */
 	struct ia_css_fw_info *acc_extension;
 	/**< Pipeline extension accelerator */
@@ -89,19 +98,43 @@ struct ia_css_pipe_config {
 	/**< Disabling digital zoom for a pipeline, if this is set to false,
 	     then setting a zoom factor will have no effect.
 	     In some use cases this provides better performance. */
+	struct ia_css_isp_config *p_isp_config;
+	/**< Pointer to ISP configuration */
 };
-#else
-struct ia_css_pipe_config;
-#endif
+
+/**
+ * Default settings for newly created pipe configurations.
+ */
+#define DEFAULT_PIPE_CONFIG \
+{ \
+	IA_CSS_PIPE_MODE_PREVIEW,		/* mode */ \
+	1,					/* isp_pipe_version */ \
+	{ 0, 0 },				/* pipe_effective_input_res */ \
+	{ 0, 0 },				/* bayer_ds_out_res */ \
+	{ 0, 0 },				/* vf_pp_in_res */ \
+	{ 0, 0 },				/* capt_pp_in_res */ \
+	{ 0, 0 },				/* dvs_crop_out_res */ \
+	{IA_CSS_BINARY_DEFAULT_FRAME_INFO},	/* output_info */ \
+	{IA_CSS_BINARY_DEFAULT_FRAME_INFO},	/* vf_output_info */ \
+	NULL,					/* acc_extension */ \
+	NULL,					/* acc_stages */ \
+	0,					/* num_acc_stages */ \
+	DEFAULT_CAPTURE_CONFIG,			/* default_capture_config */ \
+	{ 0, 0 },				/* dvs_envelope */ \
+	IA_CSS_FRAME_DELAY_1,			/* dvs_frame_delay */ \
+	-1,					/* acc_num_execs */ \
+	false,					/* enable_dz */ \
+	NULL					/* p_isp_config */\
+}
 
 /** Pipe info, this struct describes properties of a pipe after it's stream has
  * been created.
  */
 struct ia_css_pipe_info {
-	struct ia_css_frame_info output_info;
+	struct ia_css_frame_info output_info[IA_CSS_PIPE_MAX_OUTPUT_STAGE];
 	/**< Info about output resolution. This contains the stride which
 	     should be used for memory allocation. */
-	struct ia_css_frame_info vf_output_info;
+	struct ia_css_frame_info vf_output_info[IA_CSS_PIPE_MAX_OUTPUT_STAGE];
 	/**< Info about viewfinder output resolution (optional). This contains
 	     the stride that should be used for memory allocation. */
 	struct ia_css_frame_info raw_output_info;
@@ -114,10 +147,32 @@ struct ia_css_pipe_info {
 	     pixels normally used to initialize the ISP filters.
 	     This is why the raw output resolution should normally be set to
 	     the input resolution - 8x8. */
+	struct ia_css_shading_info shading_info;
+	/**< After an image pipe is created, this field will contain the info
+	     for the shading correction. */
 	struct ia_css_grid_info  grid_info;
-	/**< After register an image pipe, this field will contain the grid
+	/**< After an image pipe is created, this field will contain the grid
 	     info for 3A and DVS. */
+	int num_invalid_frames;
+	/**< The very first frames in a started stream do not contain valid data.
+	     In this field, the CSS-firmware communicates to the host-driver how
+	     many initial frames will contain invalid data; this allows the
+	     host-driver to discard those initial invalid frames and start it's
+	     output at the first valid frame. */
 };
+
+/**
+ * Defaults for ia_css_pipe_info structs.
+ */
+#define DEFAULT_PIPE_INFO \
+{ \
+	{IA_CSS_BINARY_DEFAULT_FRAME_INFO},	/* output_info */ \
+	{IA_CSS_BINARY_DEFAULT_FRAME_INFO},	/* vf_output_info */ \
+	IA_CSS_BINARY_DEFAULT_FRAME_INFO,	/* raw_output_info */ \
+	DEFAULT_SHADING_INFO,			/* shading_info */ \
+	DEFAULT_GRID_INFO,			/* grid_info */ \
+	0					/* num_invalid_frames */ \
+}
 
 /** @brief Load default pipe configuration
  * @param[out]	pipe_config The pipe configuration.
@@ -126,14 +181,16 @@ struct ia_css_pipe_info {
  * This function will load the default pipe configuration:
 @code
 	struct ia_css_pipe_config def_config = {
-		IA_CSS_PIPE_MODE_PREVIEW,  //mode
+		IA_CSS_PIPE_MODE_PREVIEW,  // mode
 		1,      // isp_pipe_version
 		{0, 0}, // bayer_ds_out_res
 		{0, 0}, // capt_pp_in_res
 		{0, 0}, // vf_pp_in_res
 		{0, 0}, // dvs_crop_out_res
 		{{0, 0}, 0, 0, 0, 0}, // output_info
+		{{0, 0}, 0, 0, 0, 0}, // second_output_info
 		{{0, 0}, 0, 0, 0, 0}, // vf_output_info
+		{{0, 0}, 0, 0, 0, 0}, // second_vf_output_info
 		NULL,   // acc_extension
 		NULL,   // acc_stages
 		0,      // num_acc_stages
@@ -146,6 +203,7 @@ struct ia_css_pipe_info {
 		1,      // dvs_frame_delay
 		-1,     // acc_num_execs
 		true,   // enable_dz
+		NULL,   // p_isp_config
 	};
 @endcode
  */
@@ -156,7 +214,8 @@ void ia_css_pipe_config_defaults(struct ia_css_pipe_config *pipe_config);
  * @param[out]	pipe The pipe.
  * @return	IA_CSS_SUCCESS or the error code.
  *
- * This function will create a pipe with the given configuration.
+ * This function will create a pipe with the given
+ * configuration.
  */
 enum ia_css_err
 ia_css_pipe_create(const struct ia_css_pipe_config *config,
@@ -181,6 +240,18 @@ ia_css_pipe_destroy(struct ia_css_pipe *pipe);
 enum ia_css_err
 ia_css_pipe_get_info(const struct ia_css_pipe *pipe,
 		     struct ia_css_pipe_info *pipe_info);
+
+/** @brief Configure a pipe with filter coefficients.
+ * @param[in]	pipe	The pipe.
+ * @param[in]	config	The pointer to ISP configuration.
+ * @return		IA_CSS_SUCCESS or error code upon error.
+ *
+ * This function configures the filter coefficients for an image
+ * pipe.
+ */
+enum ia_css_err
+ia_css_pipe_set_isp_config(struct ia_css_pipe *pipe,
+						   struct ia_css_isp_config *config);
 
 /** @brief Controls when the Event generator raises an IRQ to the Host.
  *
@@ -322,4 +393,66 @@ enum ia_css_err
 ia_css_pipe_dequeue_buffer(struct ia_css_pipe *pipe,
 			   struct ia_css_buffer *buffer);
 
-#endif /* __IA_CCS_PIPE_PUBLIC_H */
+
+/** @brief  Set the state (Enable or Disable) of the Extension stage in the
+ *          given pipe.
+ * @param[in] pipe         Pipe handle.
+ * @param[in] fw_handle    Extension firmware Handle (ia_css_fw_info.handle)
+ * @param[in] enable       Enable Flag (1 to enable ; 0 to disable)
+ *
+ * @return
+ * IA_CSS_SUCCESS 			: Success
+ * IA_CSS_ERR_INVALID_ARGUMENTS		: Invalid Parameters
+ * IA_CSS_ERR_RESOURCE_NOT_AVAILABLE	: Inactive QOS Pipe
+ * 					(No active stream with this pipe)
+ *
+ * This function will request state change (enable or disable) for the Extension
+ * stage (firmware handle) in the given pipe.
+ *
+ * Note:
+ * 	1. Extension can be enabled/disabled only on QOS Extensions
+ * 	2. Extension can be enabled/disabled only with an active QOS Pipe
+ * 	3. Initial(Default) state of QOS Extensions is Disabled
+ * 	4. State change cannot be guaranteed immediately OR on frame boundary
+ *
+ */
+enum ia_css_err
+ia_css_pipe_set_qos_ext_state (struct ia_css_pipe *pipe,
+                           uint32_t fw_handle,
+                           bool  enable);
+
+/** @brief  Get the state (Enable or Disable) of the Extension stage in the
+ *          given pipe.
+ * @param[in]  pipe        Pipe handle.
+ * @param[in]  fw_handle   Extension firmware Handle (ia_css_fw_info.handle)
+ * @param[out] *enable     Enable Flag
+ *
+ * @return
+ * IA_CSS_SUCCESS 			: Success
+ * IA_CSS_ERR_INVALID_ARGUMENTS		: Invalid Parameters
+ * IA_CSS_ERR_RESOURCE_NOT_AVAILABLE	: Inactive QOS Pipe
+ * 					(No active stream with this pipe)
+ *
+ * This function will query the state of the Extension stage (firmware handle)
+ * in the given Pipe.
+ *
+ * Note:
+ * 	1. Extension state can be queried only on QOS Extensions
+ * 	2. Extension can be enabled/disabled only with an active QOS Pipe
+ * 	3. Initial(Default) state of QOS Extensions is Disabled.
+ *
+ */
+enum ia_css_err
+ia_css_pipe_get_qos_ext_state (struct ia_css_pipe *pipe,
+                           uint32_t fw_handle,
+                           bool * enable);
+
+/** @brief Get selected configuration settings
+ * @param[in]	pipe	The pipe.
+ * @param[out]	config	Configuration settings.
+ * @return		None
+ */
+void
+ia_css_pipe_get_isp_config(struct ia_css_pipe *pipe,
+			     struct ia_css_isp_config *config);
+#endif /* __IA_CSS_PIPE_PUBLIC_H */

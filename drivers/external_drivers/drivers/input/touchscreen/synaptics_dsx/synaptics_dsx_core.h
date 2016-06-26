@@ -5,11 +5,11 @@
  *
  * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
  * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
- * Copyright (C) 2014 Leo Yan <leo.yan@intel.com>
  *
  * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -22,14 +22,22 @@
 #define SYNAPTICS_DS4 (1 << 0)
 #define SYNAPTICS_DS5 (1 << 1)
 #define SYNAPTICS_DSX_DRIVER_PRODUCT (SYNAPTICS_DS4 | SYNAPTICS_DS5)
-#define SYNAPTICS_DSX_DRIVER_VERSION 0x2002
+#define SYNAPTICS_DSX_DRIVER_VERSION 0x2003
 
 #include <linux/version.h>
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
 #endif
 
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 38))
+#define KERNEL_ABOVE_2_6_38
+#endif
+
+#ifdef KERNEL_ABOVE_2_6_38
 #define sstrtoul(...) kstrtoul(__VA_ARGS__)
+#else
+#define sstrtoul(...) strict_strtoul(__VA_ARGS__)
+#endif
 
 #define PDT_PROPS (0X00EF)
 #define PDT_START (0x00E9)
@@ -63,6 +71,16 @@
 
 #define MAX_NUMBER_OF_BUTTONS 4
 #define MAX_INTR_REGISTERS 4
+
+#define MASK_16BIT 0xFFFF
+#define MASK_8BIT 0xFF
+#define MASK_7BIT 0x7F
+#define MASK_6BIT 0x3F
+#define MASK_5BIT 0x1F
+#define MASK_4BIT 0x0F
+#define MASK_3BIT 0x07
+#define MASK_2BIT 0x03
+#define MASK_1BIT 0x01
 
 enum exp_fn {
 	RMI_DEV = 0,
@@ -107,17 +125,29 @@ struct synaptics_rmi4_fn_full_addr {
 };
 
 /*
+ * struct synaptics_rmi4_f11_extra_data - extra data of F$11
+ * @data38_offset: offset to F11_2D_DATA38 register
+ */
+struct synaptics_rmi4_f11_extra_data {
+	unsigned char data38_offset;
+};
+
+/*
  * struct synaptics_rmi4_f12_extra_data - extra data of F$12
  * @data1_offset: offset to F12_2D_DATA01 register
+ * @data4_offset: offset to F12_2D_DATA04 register
  * @data15_offset: offset to F12_2D_DATA15 register
  * @data15_size: size of F12_2D_DATA15 register
  * @data15_data: buffer for reading F12_2D_DATA15 register
+ * @ctrl20_offset: offset to F12_2D_CTRL20 register
  */
 struct synaptics_rmi4_f12_extra_data {
 	unsigned char data1_offset;
+	unsigned char data4_offset;
 	unsigned char data15_offset;
 	unsigned char data15_size;
 	unsigned char data15_data[(F12_FINGERS_TO_SUPPORT + 7) / 8];
+	unsigned char ctrl20_offset;
 };
 
 /*
@@ -125,7 +155,6 @@ struct synaptics_rmi4_f12_extra_data {
  * @fn_number: function number
  * @num_of_data_sources: number of data sources
  * @num_of_data_points: maximum number of fingers supported
- * @size_of_data_register_block: data register block size
  * @intr_reg_num: index to associated interrupt register
  * @intr_mask: interrupt mask
  * @full_addr: full 16-bit base addresses of function registers
@@ -138,7 +167,6 @@ struct synaptics_rmi4_fn {
 	unsigned char fn_number;
 	unsigned char num_of_data_sources;
 	unsigned char num_of_data_points;
-	unsigned char size_of_data_register_block;
 	unsigned char intr_reg_num;
 	unsigned char intr_mask;
 	struct synaptics_rmi4_fn_full_addr full_addr;
@@ -176,6 +204,7 @@ struct synaptics_rmi4_device_info {
  * @input_dev: pointer to associated input device
  * @hw_if: pointer to hardware interface data
  * @rmi4_mod_info: device information
+ * @board_prop_dir: /sys/board_properties directory for virtual key map file
  * @pwr_reg: pointer to regulator for power control
  * @bus_reg: pointer to regulator for bus pullup control
  * @rmi4_reset_mutex: mutex for software reset
@@ -205,16 +234,21 @@ struct synaptics_rmi4_device_info {
  * @flash_prog_mode: flag to indicate flash programming mode status
  * @irq_enabled: flag to indicate attention interrupt enable status
  * @fingers_on_2d: flag to indicate presence of fingers in 2D area
+ * @suspend: flag to indicate whether in suspend state
  * @sensor_sleep: flag to indicate sleep state of sensor
  * @stay_awake: flag to indicate whether to stay awake during suspend
- * @irq_enable: pointer to interrupt enable function
+ * @f11_wakeup_gesture: flag to indicate support for wakeup gestures in F$11
+ * @f12_wakeup_gesture: flag to indicate support for wakeup gestures in F$12
+ * @enable_wakeup_gesture: flag to indicate usage of wakeup gestures
  * @reset_device: pointer to device reset function
+ * @irq_enable: pointer to interrupt enable function
  */
 struct synaptics_rmi4_data {
 	struct platform_device *pdev;
 	struct input_dev *input_dev;
 	const struct synaptics_dsx_hw_interface *hw_if;
 	struct synaptics_rmi4_device_info rmi4_mod_info;
+	struct kobject *board_prop_dir;
 	struct regulator *pwr_reg;
 	struct regulator *bus_reg;
 	struct mutex rmi4_reset_mutex;
@@ -246,10 +280,15 @@ struct synaptics_rmi4_data {
 	bool flash_prog_mode;
 	bool irq_enabled;
 	bool fingers_on_2d;
+	bool suspend;
 	bool sensor_sleep;
 	bool stay_awake;
-	int (*irq_enable)(struct synaptics_rmi4_data *rmi4_data, bool enable);
+	bool f11_wakeup_gesture;
+	bool f12_wakeup_gesture;
+	bool enable_wakeup_gesture;
 	int (*reset_device)(struct synaptics_rmi4_data *rmi4_data);
+	int (*irq_enable)(struct synaptics_rmi4_data *rmi4_data, bool enable,
+			bool attn_only);
 };
 
 struct synaptics_dsx_bus_access {
@@ -288,7 +327,7 @@ void synaptics_rmi4_bus_exit(void);
 void synaptics_rmi4_new_function(struct synaptics_rmi4_exp_fn *exp_fn_module,
 		bool insert);
 
-int synaptics_fw_updater(unsigned char *fw_data);
+int synaptics_fw_updater(const unsigned char *fw_data);
 
 static inline int synaptics_rmi4_reg_read(
 		struct synaptics_rmi4_data *rmi4_data,

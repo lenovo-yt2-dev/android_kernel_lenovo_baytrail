@@ -72,6 +72,7 @@
 #define VCM_ORIENTATION_OFFSET 100
 #define POINT_AB_OFFSET 40
 #define BU64243_MAX_FOCUS_POS 1023
+#define BU64243_POWER_DOWN_MOVE_LENS_POSITION_COUNT 10  //control speed of lens movition when shutdowning by wdy  
 
 /* bu64243 device structure */
 struct bu64243_device {
@@ -173,7 +174,7 @@ struct bu64243_device {
 
 #define OV8865_FOCAL_LENGTH_NUM	439	/*4.39mm*/
 #define OV8865_FOCAL_LENGTH_DEM	100
-#define OV8865_F_NUMBER_DEFAULT_NUM	24
+#define OV8865_F_NUMBER_DEFAULT_NUM	22 /*fix Aperture F Value by wdy*/
 #define OV8865_F_NUMBER_DEM	10
 
 #define OV8865_TIMING_X_INC		0x3814
@@ -447,6 +448,7 @@ struct ov8865_device {
 
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct v4l2_ctrl *run_mode;
+	s32 odm_exposure_value;
 };
 
 /*
@@ -2452,9 +2454,47 @@ static struct ov8865_resolution ov8865_res_preview[] = {
 			}
 		},
 	},
+	{
+		.desc = "ov8865_1936x1096_30fps",
+		.width = 1936,
+		.height = 1096,
+		.regs = ov8865_1936x1096_30fps,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.skip_frames = 1,
+		.fps_options = {
+			{
+				 .fps = 30,
+				 .pixels_per_line = 0x0f98, /* 3992 */
+				 .lines_per_frame = 0x04b2, /* 1202 */
+			},
+			{
+			}
+		},
+	},
+
 };
 
 static struct ov8865_resolution ov8865_res_still[] = {
+        {
+                 .desc = "ov8865_896x736_30fps",
+                 .width = 896,
+                 .height = 736,
+                 .used = 0,
+                 .regs = ov8865_896x736_30fps,
+                 .bin_factor_x = 1,
+                 .bin_factor_y = 1,
+                 .skip_frames = 1,
+                 .fps_options = {
+                        {
+                                 .fps = 30,
+                                 .pixels_per_line = 0x6e6, /* 1766 */
+                                 .lines_per_frame = 0x550, /* 1360 */
+                        },
+                        {
+                        }
+                },
+        },
         {
                  .desc = "ov8865_1632x1224_30fps",
                  .width = 1632,
@@ -2507,6 +2547,24 @@ static struct ov8865_resolution ov8865_res_still[] = {
 				.fps = 10,
 				.pixels_per_line = 0x1254/* 4692*/, /* 2258 */
 				.lines_per_frame = 0x0bda, /* 3034 */
+			},
+			{
+			}
+		},
+	},
+	{
+		.desc = "ov8865_1936x1096_30fps",
+		.width = 1936,
+		.height = 1096,
+		.regs = ov8865_1936x1096_30fps,
+		.bin_factor_x = 0,
+		.bin_factor_y = 0,
+		.skip_frames = 1,
+		.fps_options = {
+			{
+				 .fps = 30,
+				 .pixels_per_line = 0x0f98, /* 3992 */
+				 .lines_per_frame = 0x04b2, /* 1202 */
 			},
 			{
 			}
@@ -2592,6 +2650,46 @@ static struct ov8865_resolution ov8865_res_video[] = {
 			}
 		},
 	},
+
+        {
+                 .desc = "ov8865_3280x1852_30fps",
+                 .width = 3280,
+                 .height = 1852,
+                 .used = 0,
+                 .regs = ov8865_3280x1852_30fps,
+                 .bin_factor_x = 0,
+                 .bin_factor_y = 0,
+                 .skip_frames = 1,
+                 .fps_options =  {
+                        {
+                                .fps = 30,
+                                .pixels_per_line = 0xa00, /* 0x0920,2336*/
+                                .lines_per_frame = 0x752,/* 0x0800, 2048 */
+                        },
+                        {
+                        }
+                }
+        },
+        {
+                 .desc = "ov8865_3280x2464_30fps",
+                 .width = 3280,
+                 .height = 2464,
+                 .used = 0,
+                 .regs = ov8865_3280x2464_30fps,
+                 .bin_factor_x = 0,
+                 .bin_factor_y = 0,
+                 .skip_frames = 1,
+                 .fps_options = {
+                        {
+                                .fps = 30,
+                                .pixels_per_line = 0x0790, /* 1936*/
+                                .lines_per_frame = 0x09b6, /* 2486 */
+                        },
+                        {
+                        }
+                },
+        },
+
 };
 
 static int

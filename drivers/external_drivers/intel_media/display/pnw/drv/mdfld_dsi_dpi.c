@@ -451,8 +451,9 @@ static int __dpi_panel_power_off(struct mdfld_dsi_config *dsi_config,
 		dev_priv->pvr_screen_event_handler(dev, 0);
 
 	/*save the plane informaton, for it will updated*/
-	ctx->dspsurf = dev_priv->init_screen_start;
-	ctx->dsplinoff = dev_priv->init_screen_offset;
+	ctx->dspsurf = REG_READ(regs->dspsurf_reg);
+	ctx->dsplinoff = REG_READ(regs->dsplinoff_reg);
+	ctx->dspsize = REG_READ(regs->dspsize_reg);
 	ctx->pipestat = REG_READ(regs->pipestat_reg);
 	ctx->dspcntr = REG_READ(regs->dspcntr_reg);
 	ctx->dspstride= REG_READ(regs->dspstride_reg);

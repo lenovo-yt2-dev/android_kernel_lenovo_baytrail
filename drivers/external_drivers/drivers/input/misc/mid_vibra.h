@@ -24,6 +24,8 @@
 #ifndef __MID_VIBRA_H
 #define __MID_VIBRA_H
 
+#include <linux/gpio.h>
+
 struct vibra_info {
 	int     enabled;
 	struct mutex	lock;
@@ -38,6 +40,7 @@ struct vibra_info {
 	int gpio_pwm;
 	int alt_fn;
 	int ext_drv;
+	bool use_gpio_en; /* Whether vibra uses gpio based enable control */
 
 	void (*enable)(struct vibra_info *info);
 	void (*disable)(struct vibra_info *info);
@@ -53,4 +56,14 @@ int intel_mid_plat_vibra_remove(struct platform_device *pdev);
 void  intel_mid_plat_vibra_shutdown(struct platform_device *pdev);
 
 extern struct mid_vibra_pdata pmic_vibra_data_byt_ffrd8;
+extern struct mid_vibra_pdata pmic_vibra_data_cht;
+
+#define vibra_gpio_set_value(info, v) \
+	if ((info)->use_gpio_en)  gpio_set_value((info)->gpio_en, (v))
+
+#define vibra_gpio_set_value_cansleep(info, v) \
+	if ((info)->use_gpio_en)  gpio_set_value_cansleep((info)->gpio_en, (v))
+
+#define vibra_gpio_free(info) \
+	if ((info)->use_gpio_en)  gpio_free((info)->gpio_en)
 #endif /* __MID_VIBRA_H */

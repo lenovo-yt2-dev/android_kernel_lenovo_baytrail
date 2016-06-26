@@ -88,6 +88,8 @@ struct cmd_resp {
 
 #define IA_NOTIFY_SUSPEND ((u8)0x1)
 #define IA_NOTIFY_RESUME  ((u8)0x2)
+#define IA_NOTIFY_TIMESTAMP_SYNC ((u8)0x3)
+typedef s64 timestamp_t;
 struct cmd_ia_notify_param {
 	u8 id;
 	char extra[0];
@@ -303,9 +305,9 @@ static const char sensor_port_str[PORT_SENSOR_NUM][SNR_NAME_MAX_LEN] = {
 };
 
 struct sensor_db {
+	struct list_head list;
 	u8 sid;
 	char sensor_name[SNR_NAME_MAX_LEN];
-	struct list_head list;
 } __packed;
 
 struct trace_data {

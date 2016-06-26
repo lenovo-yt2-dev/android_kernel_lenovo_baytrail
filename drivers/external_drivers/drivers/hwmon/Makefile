@@ -10,7 +10,7 @@ obj-$(CONFIG_SENSORS_PSH_BYT)		+= psh_ia_common.o psh_byt.o
 obj-$(CONFIG_GENERAL_SENSOR)            += sensor_general.o sensor_rawdata_proc.o
 obj-$(CONFIG_PS_STM8T143)		+= ps_stm8t143.o
 obj-$(CONFIG_SENSORS_SK3018)		+= sk3018.o
-obj-$(CONFIG_SENSORS_KIONIX)		+= kionix_accel.o
-#liumiao modify for gsensor
-#wqf modify for psensor
+#yhj modify for gsensor and p-sensor
+obj-$(CONFIG_SENSORS_KIONIX)     += kionix_accel.o
 obj-$(CONFIG_INPUT_CAPELLA_CM36671)     += cm36671.o
+#yhj add end

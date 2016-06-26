@@ -5,6 +5,7 @@ obj-$(CONFIG_HWMON)             += hwmon/
 obj-y				+= i2c/
 obj-$(CONFIG_INPUT)             += input/
 obj-y				+= leds/
+obj-y               		+= lpss/
 obj-y				+= misc/
 obj-$(CONFIG_MDM_CTRL)		+= modem_control/
 obj-y				+= pinctrl/

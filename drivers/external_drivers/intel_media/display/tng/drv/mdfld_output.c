@@ -37,10 +37,14 @@
 #include "displays/jdi_cmd.h"
 #include "displays/cmi_vid.h"
 #include "displays/cmi_cmd.h"
-#include "displays/sharp5_cmd.h"
+#include "displays/sharp10x19_cmd.h"
+#include "displays/sharp10x19_vid.h"
 #include "displays/sharp25x16_vid.h"
 #include "displays/sharp25x16_cmd.h"
+#include "displays/sdc16x25_8_cmd.h"
+#include "displays/sdc25x16_cmd.h"
 #include "displays/jdi25x16_vid.h"
+#include "displays/jdi25x16_cmd.h"
 #include "psb_drv.h"
 #include "android_hdmi.h"
 
@@ -49,10 +53,15 @@ static struct intel_mid_panel_list panel_list[] = {
 	{JDI_7x12_CMD, MDFLD_DSI_ENCODER_DBI, jdi_cmd_init},
 	{CMI_7x12_VID, MDFLD_DSI_ENCODER_DPI, cmi_vid_init},
 	{CMI_7x12_CMD, MDFLD_DSI_ENCODER_DBI, cmi_cmd_init},
-	{SHARP_10x19_CMD, MDFLD_DSI_ENCODER_DBI, sharp5_cmd_init},
+	{SHARP_10x19_CMD, MDFLD_DSI_ENCODER_DBI, sharp10x19_cmd_init},
+	{SHARP_10x19_VID, MDFLD_DSI_ENCODER_DPI, sharp10x19_vid_init},
+	{SHARP_10x19_DUAL_CMD, MDFLD_DSI_ENCODER_DBI, sharp10x19_cmd_init},
 	{SHARP_25x16_VID, MDFLD_DSI_ENCODER_DPI, sharp25x16_vid_init},
 	{SHARP_25x16_CMD, MDFLD_DSI_ENCODER_DBI, sharp25x16_cmd_init},
 	{JDI_25x16_VID, MDFLD_DSI_ENCODER_DPI, jdi25x16_vid_init},
+	{JDI_25x16_CMD, MDFLD_DSI_ENCODER_DBI, jdi25x16_cmd_init},
+	{SDC_16x25_CMD, MDFLD_DSI_ENCODER_DBI, sdc16x25_8_cmd_init},
+	{SDC_25x16_CMD, MDFLD_DSI_ENCODER_DBI, sdc25x16_cmd_init},
 };
 
 enum panel_type get_panel_type(struct drm_device *dev, int pipe)
@@ -67,7 +76,18 @@ bool is_dual_dsi(struct drm_device *dev)
 {
 	if ((get_panel_type(dev, 0) == SHARP_25x16_VID) ||
 		(get_panel_type(dev, 0) == SHARP_25x16_CMD) ||
+		(get_panel_type(dev, 0) == SHARP_10x19_DUAL_CMD) ||
+		(get_panel_type(dev, 0) == SDC_16x25_CMD) ||
+		(get_panel_type(dev, 0) == SDC_25x16_CMD) ||
+		(get_panel_type(dev, 0) == JDI_25x16_CMD) ||
 		(get_panel_type(dev, 0) == JDI_25x16_VID))
+		return true;
+	else return false;
+}
+
+bool is_dual_panel(struct drm_device *dev)
+{
+	if (get_panel_type(dev, 0) == SHARP_10x19_DUAL_CMD)
 		return true;
 	else return false;
 }
@@ -78,22 +98,51 @@ bool is_dual_dsi(struct drm_device *dev)
  */
 mdfld_dsi_encoder_t is_panel_vid_or_cmd(struct drm_device *dev)
 {
-	struct drm_psb_private *dev_priv =
-		(struct drm_psb_private *) dev->dev_private;
+	struct drm_psb_private *dev_priv = dev->dev_private;
+	return dev_priv->mipi_encoder_type;
+}
+
+mdfld_dsi_encoder_t get_mipi_panel_type(struct drm_device *dev)
+{
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(panel_list); i++) {
+	for (i = 0; i < ARRAY_SIZE(panel_list); i++)
 		if (panel_list[i].p_type == dev_priv->panel_id)
 			return panel_list[i].encoder_type;
-	}
-	DRM_INFO("%s : Could not find panel: dev_priv->pabel_id = %d, ARRAY_SIZE(panel_list) = %d",
-			__func__, dev_priv->panel_id, ARRAY_SIZE(panel_list));
-	DRM_INFO("%s : Crashing...", __func__);
+	DRM_ERROR("can't find panel id : %d\n", dev_priv->panel_id);
 	BUG();
 
-	/* This should be unreachable */
 	return 0;
 }
+
+/**
+ * panel_mode_string() - Returns panel mode as a string.
+ * @dev
+ * Function return value: "video", "command", or "unknown".
+ */
+const char *panel_mode_string(struct drm_device *dev)
+{
+	mdfld_dsi_encoder_t enctyp;
+	const char *pms;
+
+	enctyp = is_panel_vid_or_cmd(dev);
+
+	switch (enctyp) {
+	case MDFLD_DSI_ENCODER_DPI:
+		pms = "video";
+		break;
+	case MDFLD_DSI_ENCODER_DBI:
+		pms = "command";
+		break;
+	default:
+		pms = "unknown";
+		break;
+	}
+
+	return pms;
+}
+
 
 void init_panel(struct drm_device *dev, int mipi_pipe, enum panel_type p_type)
 {

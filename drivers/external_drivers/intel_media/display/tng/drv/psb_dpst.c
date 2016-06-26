@@ -159,6 +159,13 @@ void psb_dpst_device_pool_destroy(struct dpst_state *state)
 	int i;
 	struct umevent_list *list;
 	struct umevent_obj *umevent_test;
+
+	if(state == NULL)
+	{
+		DRM_INFO("DPST state already NULL in psb_dpst_device_pool_destroy\n");
+		return;
+	}
+
 	list = state->list;
 	flush_workqueue(state->dpst_wq);
 	destroy_workqueue(state->dpst_wq);

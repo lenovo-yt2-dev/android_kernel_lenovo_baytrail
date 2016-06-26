@@ -29,7 +29,7 @@
 
 int PVRCore_Init(void);
 void PVRCore_Cleanup(void);
-void PVRSRVRelease(void *pvPrivData);
+void PVRSRVRelease(void **pvPrivData);
 
 int PVRSRV_BridgeDispatchKM(struct drm_device *dev, void *arg, struct drm_file *pFile);
 

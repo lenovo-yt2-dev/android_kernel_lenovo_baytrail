@@ -21,7 +21,10 @@
 
 #include "ia_css_types.h"
 #include "sh_css_defs.h"
+#ifndef IA_CSS_NO_DEBUG
+/* FIXME: See BZ 4427 */
 #include "ia_css_debug.h"
+#endif
 
 #include "ia_css_csc.host.h"
 
@@ -33,38 +36,47 @@ const struct ia_css_cc_config default_cc_config = {
 void
 ia_css_encode_cc(
 	struct sh_css_isp_csc_params *to,
-	const struct ia_css_cc_config *from)
+	const struct ia_css_cc_config *from,
+	unsigned size)
 {
+	(void)size;
+#ifndef IA_CSS_NO_DEBUG
 	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE_PRIVATE, "ia_css_encode_cc() enter:\n");
+#endif
 
-	to->m_shift    = (int) from->fraction_bits;
-	to->m00 = (int) from->matrix[0];
-	to->m01 = (int) from->matrix[1];
-	to->m02 = (int) from->matrix[2];
-	to->m10 = (int) from->matrix[3];
-	to->m11 = (int) from->matrix[4];
-	to->m12 = (int) from->matrix[5];
-	to->m20 = (int) from->matrix[6];
-	to->m21 = (int) from->matrix[7];
-	to->m22 = (int) from->matrix[8];
+	to->m_shift    = (int16_t) from->fraction_bits;
+	to->m00 = (int16_t) from->matrix[0];
+	to->m01 = (int16_t) from->matrix[1];
+	to->m02 = (int16_t) from->matrix[2];
+	to->m10 = (int16_t) from->matrix[3];
+	to->m11 = (int16_t) from->matrix[4];
+	to->m12 = (int16_t) from->matrix[5];
+	to->m20 = (int16_t) from->matrix[6];
+	to->m21 = (int16_t) from->matrix[7];
+	to->m22 = (int16_t) from->matrix[8];
 
+#ifndef IA_CSS_NO_DEBUG
 	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE_PRIVATE, "ia_css_encode_cc() leave:\n");
+#endif
 }
 
 void
 ia_css_csc_encode(
 	struct sh_css_isp_csc_params *to,
-	const struct ia_css_cc_config *from)
+	const struct ia_css_cc_config *from,
+	unsigned size)
 {
-	ia_css_encode_cc(to, from);
+	ia_css_encode_cc(to, from, size);
 }
 
+#ifndef IA_CSS_NO_DEBUG
 void
 ia_css_cc_dump(
 	const struct sh_css_isp_csc_params *csc,
 	unsigned level,
 	const char *name)
 {
+	if (!csc) return;
 	ia_css_debug_dtrace(level, "%s\n", name);
 	ia_css_debug_dtrace(level, "\t%-32s = %d\n",
 		"m_shift",
@@ -123,5 +135,5 @@ ia_css_cc_config_debug_dtrace(
 		config->matrix[5], config->matrix[6],
 		config->matrix[7], config->matrix[8]);
 }
-
+#endif
 

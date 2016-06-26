@@ -24,31 +24,20 @@
 
 #define MAX_NR_OF_PAYLOADS_PER_SW_EVENT 4
 
-#define SP_SW_EVENT_ID_0	0	/* for the error		*/
-#define SP_SW_EVENT_ID_1	1	/* for the host2sp_buffer_queue */
-#define SP_SW_EVENT_ID_2	2	/* for the sp2host_buffer_queue */
-#define SP_SW_EVENT_ID_3	3	/* for the sp2host_event_queue  */
-#define SP_SW_EVENT_ID_4	4	/* for the start stream cmd */
-#define SP_SW_EVENT_ID_5	5	/* for the stop stream cmd  */
+enum ia_css_psys_sw_event {
+	IA_CSS_PSYS_SW_EVENT_BUFFER_ENQUEUED, /* from host to SP */
+	IA_CSS_PSYS_SW_EVENT_BUFFER_DEQUEUED, /* from SP to host */
+	IA_CSS_PSYS_SW_EVENT_EVENT_DEQUEUED, /* from SP to host, one way only */
+	IA_CSS_PSYS_SW_EVENT_START_STREAM,
+	IA_CSS_PSYS_SW_EVENT_STOP_STREAM,
+	IA_CSS_PSYS_SW_EVENT_MIPI_BUFFERS_READY,
+	IA_CSS_PSYS_SW_EVENT_UNLOCK_RAW_BUFFER,
+	IA_CSS_PSYS_SW_EVENT_STAGE_ENABLE_DISABLE /* for extension state change enable/disable */
+};
 
-/*********************************************
- *
- * Hack for Baytrail.
- *
- * AUTHOR: zhengjie.lu@intel.com
- * TIME: 2013-01-19, 14:38.
- * LOCATION: Santa Clara, U.S.A.
- * COMMENT:
- * Define a new Host2SP event which indicates
- * the Host has passed the pointers of the
- * empty MIPI buffers to the SP.
- *
- ********************************************/	
-#define SP_SW_EVENT_ID_6	6	/* for the completion of passing the
-					   pointers of the empty MIPI buffers
-					   from the Host to the SP
-					*/
-/** End of hack for Baytrail **/
+enum ia_css_isys_sw_event {
+	IA_CSS_ISYS_SW_EVENT_EVENT_DEQUEUED
+};
 
 #endif /* __SW_EVENT_GLOBAL_H_INCLUDED__ */
 

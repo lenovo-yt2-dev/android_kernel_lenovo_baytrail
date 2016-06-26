@@ -478,7 +478,7 @@ static int r69001_ts_create_dbgfs(struct r69001_ts_data *ts)
 		return -ENOMEM;
 	}
 
-	entry = debugfs_create_file(MODE_FILE_NAME, S_IRUGO,
+	entry = debugfs_create_file(MODE_FILE_NAME, S_IRUSR,
 			r69001_ts_dbgfs_root,
 			(void *)ts, &r69001_ts_dbgfs_fops);
 	if (!entry) {

@@ -365,7 +365,7 @@ $(foreach _o,SYS_CFLAGS SYS_CXXFLAGS SYS_INCLUDES SYS_EXE_LDFLAGS SYS_LIB_LDFLAG
 # Check for words in EXCLUDED_APIS that aren't understood by the
 # common/apis/*.mk files. This should be kept in sync with all the tests on
 # EXCLUDED_APIS in those files
-_excludable_apis := rscompute opencl opengl opengles1 opengles2 openvg ews unittests xorg xorg_unittests scripts composerhal camerahal
+_excludable_apis := rscompute opencl opengl opengles1 opengles2 openvg ews unittests xorg xorg_unittests scripts composerhal camerahal memtrackhal
 _excluded_apis := $(subst $(comma),$(space),$(EXCLUDED_APIS))
 _unrecognised := $(strip $(filter-out $(_excludable_apis),$(_excluded_apis)))
 ifneq ($(_unrecognised),)

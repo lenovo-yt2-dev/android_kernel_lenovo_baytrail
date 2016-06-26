@@ -31,9 +31,10 @@ int get_gpio_irq_rst(void *data);
 int get_gpio_mdm_state(void *data);
 int get_gpio_rst(void *data);
 int get_gpio_pwr(void *data);
-int cpu_init_gpio_m2(void *data);
-int cpu_cleanup_gpio_m2(void *data);
-int get_gpio_mdm_state_m2(void *data);
-int get_gpio_irq_cdump_m2(void *data);
-int get_gpio_irq_rst_m2(void *data);
+int cpu_init_gpio_ngff(void *data);
+int cpu_cleanup_gpio_ngff(void *data);
+int get_gpio_mdm_state_ngff(void *data);
+int get_gpio_irq_cdump_ngff(void *data);
+int get_gpio_irq_rst_ngff(void *data);
+int get_gpio_on(void *data);
 #endif

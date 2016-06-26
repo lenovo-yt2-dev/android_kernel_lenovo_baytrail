@@ -41,34 +41,81 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */ /**************************************************************************/
 
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
+#include <linux/mm.h>
 
+#include "pvr_debug.h"
 #include "img_defs.h"
 #include "allocmem.h"
+#if defined(PVRSRV_ENABLE_PROCESS_STATS)
 #include "process_stats.h"
-
+#endif
 
 IMG_INTERNAL IMG_PVOID OSAllocMem(IMG_UINT32 ui32Size)
 {
-    IMG_PVOID pvRet = kmalloc(ui32Size, GFP_KERNEL);
+	IMG_PVOID pvRet;
 
-#if defined(PVRSRV_ENABLE_PROCESS_STATS) && defined(PVRSRV_ENABLE_MEMORY_STATS)
-    if (pvRet != IMG_NULL)
-    {
-		IMG_CPU_PHYADDR sCpuPAddr;
-		sCpuPAddr.uiAddr = 0;
+	if (ui32Size > PVR_LINUX_VMALLOC_ALLOCATION_THRESHOLD)
+	{
+		pvRet = vmalloc(ui32Size);
+	}
+	else
+	{
+		pvRet = kmalloc(ui32Size, GFP_KERNEL);
+	}
 
-        PVRSRVStatsAddMemAllocRecord(PVRSRV_MEM_ALLOC_TYPE_KMALLOC,
-                                     pvRet,
-                                     sCpuPAddr,
-                                     ui32Size,
-                                     IMG_NULL);
-   }
+#if defined(PVRSRV_ENABLE_PROCESS_STATS)
+	if (pvRet != IMG_NULL)
+	{
+		IMG_UINT32 uiStatSize;
+		IMG_UINT32 uiAllocType;
+
+
+		if (!is_vmalloc_addr(pvRet))
+		{
+			uiStatSize = ksize(pvRet);
+			uiAllocType = PVRSRV_MEM_ALLOC_TYPE_KMALLOC;
+
+#if !defined(PVRSRV_ENABLE_MEMORY_STATS)
+			PVRSRVStatsIncrMemAllocStat(uiAllocType, uiStatSize);
+#endif
+		}
+		else
+		{
+			uiStatSize = ((ui32Size + PAGE_SIZE -1) & ~(PAGE_SIZE-1));
+			uiAllocType = PVRSRV_MEM_ALLOC_TYPE_VMALLOC;
+
+#if !defined(PVRSRV_ENABLE_MEMORY_STATS)
+			PVRSRVStatsIncrMemAllocStatAndTrack(uiAllocType, uiStatSize, (IMG_UINT64)(IMG_UINTPTR_T) pvRet);
+#endif
+		}
+
+#if defined(PVRSRV_ENABLE_MEMORY_STATS)
+		{
+			IMG_CPU_PHYADDR sCpuPAddr;
+			sCpuPAddr.uiAddr = 0;
+
+			PVRSRVStatsAddMemAllocRecord(uiAllocType,
+										 pvRet,
+										 sCpuPAddr,
+										 uiStatSize,
+										 IMG_NULL);
+		}
+#endif
+
+	}
 #endif
 
 	return pvRet;
 }
+IMG_INTERNAL IMG_PVOID OSAllocMemstatMem(IMG_UINT32 ui32Size)
+{
+    IMG_PVOID pvRet = kmalloc(ui32Size, GFP_KERNEL);
 
-IMG_INTERNAL IMG_PVOID OSReAllocMem(IMG_PVOID pvPrev, IMG_UINT32 ui32Size)
+	return pvRet;
+}
+
+IMG_INTERNAL IMG_PVOID OSReallocMem(IMG_PVOID pvPrev, IMG_UINT32 ui32Size)
 {
     IMG_PVOID pvRet = krealloc(pvPrev, ui32Size, GFP_KERNEL);
 	return pvRet;
@@ -78,31 +125,60 @@ IMG_INTERNAL IMG_PVOID OSAllocZMem(IMG_UINT32 ui32Size)
 {
 	IMG_PVOID pvRet = kzalloc(ui32Size, GFP_KERNEL);
 
-#if defined(PVRSRV_ENABLE_PROCESS_STATS) && defined(PVRSRV_ENABLE_MEMORY_STATS)
     if (pvRet != IMG_NULL)
     {
+#if defined(PVRSRV_ENABLE_PROCESS_STATS)
+#if !defined(PVRSRV_ENABLE_MEMORY_STATS)
+    	PVRSRVStatsIncrMemAllocStat(PVRSRV_MEM_ALLOC_TYPE_KMALLOC, ksize(pvRet));
+#else
 		IMG_CPU_PHYADDR sCpuPAddr;
 		sCpuPAddr.uiAddr = 0;
 
         PVRSRVStatsAddMemAllocRecord(PVRSRV_MEM_ALLOC_TYPE_KMALLOC,
                                      pvRet,
                                      sCpuPAddr,
-                                     ui32Size,
+                                     ksize(pvRet),
                                      IMG_NULL);
-    }
 #endif
+#endif
+    }
 
 	return pvRet;
 }
 
-IMG_INTERNAL IMG_VOID OSFreeMem(IMG_PVOID pvMem)
+IMG_INTERNAL void OSFreeMem(IMG_PVOID pvMem)
 {
-#if defined(PVRSRV_ENABLE_PROCESS_STATS) && defined(PVRSRV_ENABLE_MEMORY_STATS)
-    if (pvMem != IMG_NULL)
-    {
-		PVRSRVStatsRemoveMemAllocRecord(PVRSRV_MEM_ALLOC_TYPE_KMALLOC, pvMem);
-	}
-#endif
 
+	if ( !is_vmalloc_addr(pvMem) )
+	{
+#if defined(PVRSRV_ENABLE_PROCESS_STATS)
+		if (pvMem != IMG_NULL)
+		{
+#if !defined(PVRSRV_ENABLE_MEMORY_STATS)
+			PVRSRVStatsDecrMemAllocStat(PVRSRV_MEM_ALLOC_TYPE_KMALLOC, ksize(pvMem));
+#else
+			PVRSRVStatsRemoveMemAllocRecord(PVRSRV_MEM_ALLOC_TYPE_KMALLOC, (IMG_UINT64)(IMG_UINTPTR_T) pvMem);
+#endif
+		}
+#endif
+		kfree(pvMem);
+	}
+	else
+	{
+#if defined(PVRSRV_ENABLE_PROCESS_STATS)
+		if (pvMem != IMG_NULL)
+		{
+#if !defined(PVRSRV_ENABLE_MEMORY_STATS)
+			PVRSRVStatsDecrMemAllocStatAndUntrack(PVRSRV_MEM_ALLOC_TYPE_VMALLOC, (IMG_UINT64)(IMG_UINTPTR_T) pvMem);
+#else
+			PVRSRVStatsRemoveMemAllocRecord(PVRSRV_MEM_ALLOC_TYPE_VMALLOC, (IMG_UINT64)(IMG_UINTPTR_T) pvMem);
+#endif
+		}
+#endif
+		vfree(pvMem);
+	}
+}
+IMG_INTERNAL void OSFreeMemstatMem(IMG_PVOID pvMem)
+{
 	kfree(pvMem);
 }

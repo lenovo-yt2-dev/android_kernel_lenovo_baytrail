@@ -187,6 +187,21 @@ IMG_VOID SCPCommandComplete(SCP_CONTEXT *psContext);
 IMG_EXPORT
 PVRSRV_ERROR SCPFlush(SCP_CONTEXT *psContext);
 
+
+/*************************************************************************/ /*!
+@Function       SCPHasPendingCommand
+
+@Description    Check if there is any pending command.
+
+@Input          psSCPContext            Context to process
+
+@Return         IMG_TRUE if there is at least one pending command
+				IMG_FALSE none pending command
+*/
+/*****************************************************************************/
+IMG_EXPORT
+IMG_BOOL SCPHasPendingCommand(SCP_CONTEXT *psContext);
+
 /*************************************************************************/ /*!
 @Function       SCPDumpStatus
 

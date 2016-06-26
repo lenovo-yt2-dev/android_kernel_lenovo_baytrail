@@ -22,6 +22,7 @@
 #include "platform_support.h"
 
 #include "sh_css_hrt.h"
+#include "ia_css_debug.h"
 
 #include "device_access.h"
 
@@ -49,51 +50,29 @@
 
 bool sh_css_hrt_system_is_idle(void)
 {
-	hrt_data	status;
-	bool not_idle = false;
+	bool not_idle = false, idle;
+	fifo_channel_t ch;
 
-	not_idle |= !isp_ctrl_getbit(ISP0_ID, ISP_SC_REG, ISP_IDLE_BIT);
+	idle = sp_ctrl_getbit(SP0_ID, SP_SC_REG, SP_IDLE_BIT);
+	not_idle |= !idle;
+	if (!idle)
+		IA_CSS_WARNING("SP not idle");
 
-	status = fifo_monitor_reg_load(FIFO_MONITOR0_ID,
-#if defined(IS_ISP_2500_SYSTEM)
-		HIVE_GP_REGS_SP1_STRMON_STAT_IDX);
-#else
-		HIVE_GP_REGS_SP_STREAM_STAT_IDX);
-#endif
-	not_idle |= ((status & FIFO_CHANNEL_SP_VALID_MASK) != 0);
+	idle = isp_ctrl_getbit(ISP0_ID, ISP_SC_REG, ISP_IDLE_BIT);
+	not_idle |= !idle;
+	if (!idle)
+		IA_CSS_WARNING("ISP not idle");
 
-#if defined(IS_ISP_2500_SYSTEM)
-	// checking status of 2nd SP
-	status = fifo_monitor_reg_load(FIFO_MONITOR0_ID,
-		HIVE_GP_REGS_SP2_STRMON_STAT_IDX);
-	not_idle |= ((status & FIFO_CHANNEL_SP_VALID_MASK) != 0);
-#endif
+	for (ch=0; ch<N_FIFO_CHANNEL; ch++) {
+		fifo_channel_state_t state;
+		fifo_channel_get_state(FIFO_MONITOR0_ID, ch, &state);
+		if (state.fifo_valid) {
+			IA_CSS_WARNING("FIFO channel %d is not empty", ch);
+			not_idle = true;
+		}
+	}
 
-#if !defined(IS_ISP_2500_SYSTEM)
-#if defined(HAS_FIFO_MONITORS_VERSION_2)
-	status = fifo_monitor_reg_load(FIFO_MONITOR0_ID,
-		HIVE_GP_REGS_SP_STREAM_STAT_B_IDX);
-	not_idle |= ((status & FIFO_CHANNEL_SP_VALID_B_MASK) != 0);
-#endif
-#endif
-
-	status = fifo_monitor_reg_load(FIFO_MONITOR0_ID,
-#if defined(IS_ISP_2500_SYSTEM)
-		HIVE_GP_REGS_ISP_STRMON_STAT_IDX);
-#else
-		HIVE_GP_REGS_ISP_STREAM_STAT_IDX);
-#endif
-	not_idle |= ((status & FIFO_CHANNEL_ISP_VALID_MASK) != 0);
-
-	status = fifo_monitor_reg_load(FIFO_MONITOR0_ID,
-#if defined(IS_ISP_2500_SYSTEM)
-		HIVE_GP_REGS_MOD_STRMON_STAT_IDX);
-#else
-		HIVE_GP_REGS_MOD_STREAM_STAT_IDX);
-#endif
-	not_idle |= ((status & FIFO_CHANNEL_MOD_VALID_MASK) != 0);
-
-return !not_idle;
+	return !not_idle;
 }
 
 enum ia_css_err sh_css_hrt_sp_wait(void)

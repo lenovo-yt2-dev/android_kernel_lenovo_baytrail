@@ -38,8 +38,6 @@
 #include "mdfld_dsi_pkg_sender.h"
 
 /* FIXME: To get the JDI panel width/height inches. */
-#define JDI_PANEL_WIDTH		72
-#define JDI_PANEL_HEIGHT	128
 
 void jdi_vid_init(struct drm_device *dev, struct panel_funcs *p_funcs);
 

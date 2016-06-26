@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright (c) 2011, Intel Corporation.
+ * Copyright (c) 2014, Intel Corporation.
  * Portions (c), Imagination Technology, Ltd.
  * All rights reserved.
  *
@@ -57,10 +57,31 @@
 #include "psb_dpst_func.h"
 #include "mdfld_dsi_dbi_dsr.h"
 
+#define HSV
+#define dpst_print PSB_DEBUG_DPST
+#define DPST_START_PERCENTAGE  10000
+
+static struct mutex dpst_mutex;
 static int blc_adj2;
-static u32 lut_adj[256];
 
 static struct drm_device *g_dev = NULL;	// hack for the queue
+static uint32_t diet_saved[33];
+
+/* hist value in home UI on different resolution */
+static uint32_t *dpst_hist_fake;
+static uint32_t dpst_hist_25x16[] = {0x4d60, 0x319a3, 0xe6055, 0x13b47f,
+	0x6d752, 0x45cce, 0x340dc, 0x2b212, 0x23f7f, 0x1cb74, 0x1368a, 0xf06a,
+	0x8fb9, 0x8182, 0x2106, 0x3cd, 0x25f, 0x33c, 0x1d8, 0x1db, 0x24e, 0x1cb,
+	0x1cd, 0xf98, 0x1c9, 0x142, 0x132, 0x15f, 0x125, 0x120, 0x26d, 0x4c0c};
+
+static uint32_t dpst_hist_1080p[] = {0x42e1a, 0x74, 0x93c1, 0xcf07, 0x95f14,
+	0xca89, 0x8c4d, 0x982f, 0xb962, 0xcb4f, 0xc920, 0xc879, 0xd58d, 0xf115,
+	0xf8e6, 0xfa78, 0xf25a, 0xfddd, 0xefaf, 0xc1b8, 0xc943, 0xb1c8, 0x869c,
+	0x890d, 0x9ad4, 0xb920, 0x15f04, 0x1ba4e, 0x8e78, 0x1707, 0xb17, 0x2e19};
+static uint32_t dpst_hist_720p[] = {0x18a85, 0x2a, 0x16ac, 0x2db1, 0x260b1,
+	0x3c4e, 0x2a90, 0x2a67, 0x308f, 0x331c, 0x473f, 0x5262, 0x560a, 0x6b32,
+	0xb815, 0xe1fe, 0x7d03, 0x75df, 0x753e, 0x7507, 0x5383, 0x4710, 0x41ea,
+	0x499f, 0x5121, 0x6b71, 0xbfc4, 0xfd41, 0x4adf, 0x1146, 0x833, 0x1531};
 
 void dpst_disable_post_process(struct drm_device *dev);
 
@@ -74,7 +95,7 @@ int send_hist(void)
 	dispmgr_cmd.module = DISPMGR_MOD_DPST;
 	dispmgr_cmd.cmd = DISPMGR_DPST_HIST_DATA;
 	dispmgr_cmd.data_size = sizeof(struct drm_psb_hist_status_arg);
-	dispmgr_cmd.data = &mydata;
+	dispmgr_cmd.data = (uint64_t)&mydata;
 	dispmgr_nl_send_msg(&dispmgr_cmd);
 	return 0;
 }
@@ -83,7 +104,6 @@ int send_hist(void)
 /* IOCTL - moved to standard calls for Kernel Integration */
 int psb_hist_enable(struct drm_device *dev, void *data)
 {
-	u32 irqCtrl = 0;
 	struct drm_psb_private *dev_priv = psb_priv(dev);
 	struct dpst_guardband guardband_reg;
 	struct dpst_ie_histogram_control ie_hist_cont_reg;
@@ -99,29 +119,40 @@ int psb_hist_enable(struct drm_device *dev, void *data)
 		return 0;
 	ctx = &dsi_config->dsi_hw_context;
 
+	mutex_lock(&dpst_mutex);
 	/*
 	* FIXME: We need to force the Display to
 	* turn on but on TNG OSPM how we can force PIPEA to do it?
 	*/
 	if (power_island_get(OSPM_DISPLAY_A)) {
 
+		mdfld_dsi_dsr_forbid(dsi_config);
+
 		if (*enable == 1) {
 			ie_hist_cont_reg.data = PSB_RVDC32(HISTOGRAM_LOGIC_CONTROL);
 			ie_hist_cont_reg.ie_pipe_assignment = 0;
-			ie_hist_cont_reg.histogram_mode_select = DPST_YUV_LUMA_MODE;
+			ie_hist_cont_reg.bin_reg_func_select = 1;
+			ie_hist_cont_reg.bin_reg_index = 0;
 			ie_hist_cont_reg.ie_histogram_enable = 1;
+			ie_hist_cont_reg.ie_mode_table_enabled = 1;
+#ifdef HSV
+			ie_hist_cont_reg.histogram_mode_select = 1;//HSV
+			ie_hist_cont_reg.alt_enhancement_mode = 2;//dpst_hsv_multiplier;
+#else
+			ie_hist_cont_reg.histogram_mode_select = 0;//YUV
+			ie_hist_cont_reg.alt_enhancement_mode = 1; //additive
+#endif
 			PSB_WVDC32(ie_hist_cont_reg.data, HISTOGRAM_LOGIC_CONTROL);
 			ctx->histogram_logic_ctrl = ie_hist_cont_reg.data;
+			dpst_print("hist_ctl 0x%x\n", ie_hist_cont_reg.data);
 
 			guardband_reg.data = PSB_RVDC32(HISTOGRAM_INT_CONTROL);
 			guardband_reg.interrupt_enable = 1;
 			guardband_reg.interrupt_status = 1;
+
 			PSB_WVDC32(guardband_reg.data, HISTOGRAM_INT_CONTROL);
 			ctx->histogram_intr_ctrl = guardband_reg.data;
-
-			irqCtrl = PSB_RVDC32(PIPEASTAT);
-			ctx->pipestat = (irqCtrl | PIPE_DPST_EVENT_ENABLE);
-			PSB_WVDC32(ctx->pipestat, PIPEASTAT);
+			dpst_print("guardband 0x%x\n", guardband_reg.data);
 
 			/* Wait for two vblanks */
 		} else {
@@ -130,21 +161,22 @@ int psb_hist_enable(struct drm_device *dev, void *data)
 			guardband_reg.interrupt_status = 1;
 			PSB_WVDC32(guardband_reg.data, HISTOGRAM_INT_CONTROL);
 			ctx->histogram_intr_ctrl = guardband_reg.data;
+			dpst_print("guardband 0x%x\n", guardband_reg.data);
 
 			ie_hist_cont_reg.data = PSB_RVDC32(HISTOGRAM_LOGIC_CONTROL);
 			ie_hist_cont_reg.ie_histogram_enable = 0;
 			PSB_WVDC32(ie_hist_cont_reg.data, HISTOGRAM_LOGIC_CONTROL);
 			ctx->histogram_logic_ctrl = ie_hist_cont_reg.data;
+			dpst_print("disabled: hist_ctl 0x%x\n", ie_hist_cont_reg.data);
 
-			irqCtrl = PSB_RVDC32(PIPEASTAT);
-			irqCtrl &= ~PIPE_DPST_EVENT_ENABLE;
-			PSB_WVDC32(irqCtrl, PIPEASTAT);
-			ctx->pipestat = irqCtrl;
 			dpst_disable_post_process(g_dev);
 		}
 
+		mdfld_dsi_dsr_allow(dsi_config);
 		power_island_put(OSPM_DISPLAY_A);
 	}
+
+	mutex_unlock(&dpst_mutex);
 
 	return 0;
 }
@@ -158,7 +190,6 @@ int psb_hist_enable(struct drm_device *dev, void *data)
 	u32 iedbr_reg_data = 0;
 	struct dpst_ie_histogram_control ie_hist_cont_reg;
 	u32 i;
-	int dpst3_bin_threshold_count = 0;
 	uint32_t blm_hist_ctl = HISTOGRAM_LOGIC_CONTROL;
 	uint32_t iebdr_reg = HISTOGRAM_BIN_DATA;
 	uint32_t segvalue_max_22_bit = 0x3fffff;
@@ -172,38 +203,63 @@ int psb_hist_enable(struct drm_device *dev, void *data)
 	if (!dsi_config)
 		return 0;
 
+	/* Use a fake hist status to avoid enhancement is adapted to black
+	 * content during suspend, while make content too bright on resume.
+	*/
+	if(dev_priv->early_suspended) {
+		memcpy(arg, dpst_hist_fake, 32*sizeof(uint32_t));
+		return 0;
+	}
+
+	mutex_lock(&dpst_mutex);
 	/*
-        * FIXME: We need to force the Display to
-        * turn on but on TNG OSPM how we can force PIPEA to do it?
-        */
-        if (power_island_get(OSPM_DISPLAY_A))
+	 * FIXME: We need to force the Display to
+	 * turn on but on TNG OSPM how we can force PIPEA to do it?
+	 */
+	if (power_island_get(OSPM_DISPLAY_A))
 	{
+		mdfld_dsi_dsr_forbid(dsi_config);
+
 		ie_hist_cont_reg.data = PSB_RVDC32(blm_hist_ctl);
-		ie_hist_cont_reg.bin_reg_func_select = dpst3_bin_threshold_count;
+		dpst_print("hist_ctl: 0x%x\n", ie_hist_cont_reg.data);
+		ie_hist_cont_reg.bin_reg_func_select = 0;
 		ie_hist_cont_reg.bin_reg_index = 0;
+		ie_hist_cont_reg.ie_histogram_enable = 1;
+		ie_hist_cont_reg.ie_mode_table_enabled = 1;
+		ie_hist_cont_reg.ie_pipe_assignment = 0;
+#ifdef HSV
+		ie_hist_cont_reg.histogram_mode_select = 1;//HSV
+		ie_hist_cont_reg.alt_enhancement_mode = 2;//dpst_hsv_multiplier;
+#else
+		ie_hist_cont_reg.histogram_mode_select = 0;//YUV
+		ie_hist_cont_reg.alt_enhancement_mode = 1; //additive
+#endif
 
 		PSB_WVDC32(ie_hist_cont_reg.data, blm_hist_ctl);
+		dpst_print("hist static: \n");
 		for (i = 0; i < dpst3_bin_count; i++) {
 			iedbr_reg_data = PSB_RVDC32(iebdr_reg);
 			if (!(iedbr_reg_data & iedbr_busy_bit)) {
 				arg[i] = iedbr_reg_data & segvalue_max_22_bit;
+				dpst_print("hist_ctl 0x%d 0x%x\n", 0x3ff & PSB_RVDC32(blm_hist_ctl), arg[i]);
 			} else {
-				i = 0;
+				i = -1;
 				ie_hist_cont_reg.data = PSB_RVDC32(blm_hist_ctl);
 				ie_hist_cont_reg.bin_reg_index = 0;
 				PSB_WVDC32(ie_hist_cont_reg.data, blm_hist_ctl);
 			}
 		}
-
+		mdfld_dsi_dsr_allow(dsi_config);
 		power_island_put(OSPM_DISPLAY_A);
 	}
+
+	mutex_unlock(&dpst_mutex);
 
 	return 0;
 }
 
 
 // SH START DIET
-// SH TODO This doesn't work yet.
 int psb_diet_enable(struct drm_device *dev, void *data)
 {
 	struct drm_psb_private *dev_priv = psb_priv(dev);
@@ -212,13 +268,15 @@ int psb_diet_enable(struct drm_device *dev, void *data)
 	uint32_t * arg = data;
 	struct dpst_ie_histogram_control ie_hist_cont_reg;
 	u32 i;
-	int dpst3_bin_threshold_count = 1;
-	int dpst_hsv_multiplier = 2;
 	uint32_t blm_hist_ctl = HISTOGRAM_LOGIC_CONTROL;
 	uint32_t iebdr_reg = HISTOGRAM_BIN_DATA;
 	int dpst3_bin_count = 32;
+	 u32 temp =0;
 
 	if (!dev_priv)
+		return 0;
+
+	if(dev_priv->early_suspended)
 		return 0;
 
 	dsi_config = dev_priv->dsi_configs[0];
@@ -226,26 +284,51 @@ int psb_diet_enable(struct drm_device *dev, void *data)
 		return 0;
 	ctx = &dsi_config->dsi_hw_context;
 
+	mutex_lock(&dpst_mutex);
+
 	if (power_island_get(OSPM_DISPLAY_A))
-        {
+	{
+		mdfld_dsi_dsr_forbid(dsi_config);
 		if (data) {
 			ie_hist_cont_reg.data = PSB_RVDC32(blm_hist_ctl);
-			ie_hist_cont_reg.bin_reg_func_select =
-				dpst3_bin_threshold_count;
+			dpst_print("hist_ctl: 0x%x\n", ie_hist_cont_reg.data);
+			ie_hist_cont_reg.bin_reg_func_select = 1;
 			ie_hist_cont_reg.bin_reg_index = 0;
+			ie_hist_cont_reg.ie_histogram_enable = 1;
+			ie_hist_cont_reg.ie_mode_table_enabled = 1;
+			ie_hist_cont_reg.ie_pipe_assignment = 0;
+#ifdef HSV
+			ie_hist_cont_reg.histogram_mode_select = 1;//HSV
+			ie_hist_cont_reg.alt_enhancement_mode = 2;//dpst_hsv_multiplier;
+#else
+			ie_hist_cont_reg.histogram_mode_select = 0;//YUV
+			ie_hist_cont_reg.alt_enhancement_mode = 1; //additive
+#endif
 			PSB_WVDC32(ie_hist_cont_reg.data, blm_hist_ctl);
-			for (i = 0; i < dpst3_bin_count; i++)
+			if (drm_psb_debug & PSB_D_DPST) {
+				printk("previous corr: ");
+				for (i = 0; i <= dpst3_bin_count; i++)
+				{
+					printk(" 0x%x ", PSB_RVDC32(iebdr_reg));
+				}
+				printk("\n");
+			}
+			PSB_WVDC32(0x200, iebdr_reg);
+			for (i = 1; i <= dpst3_bin_count; i++)
 			{
 				PSB_WVDC32(arg[i], iebdr_reg);
 			}
 			ctx->aimg_enhance_bin = PSB_RVDC32(iebdr_reg);
 
 			ie_hist_cont_reg.data = PSB_RVDC32(blm_hist_ctl);
-			ie_hist_cont_reg.ie_mode_table_enabled = 1;
-			ie_hist_cont_reg.alt_enhancement_mode = dpst_hsv_multiplier;
-			PSB_WVDC32(ie_hist_cont_reg.data, blm_hist_ctl);
-			ctx->histogram_logic_ctrl = ie_hist_cont_reg.data;
 
+			temp = ie_hist_cont_reg.data;
+			temp|=(1<<27);
+			temp&=~0x7f;
+			ie_hist_cont_reg.data = temp;
+			PSB_WVDC32(ie_hist_cont_reg.data, blm_hist_ctl);
+
+			ctx->histogram_logic_ctrl = ie_hist_cont_reg.data;
 		} else {
 			ie_hist_cont_reg.data = PSB_RVDC32(blm_hist_ctl);
 			ie_hist_cont_reg.ie_mode_table_enabled = 0;
@@ -253,12 +336,111 @@ int psb_diet_enable(struct drm_device *dev, void *data)
 			ctx->histogram_logic_ctrl = ie_hist_cont_reg.data;
 		}
 
+		mdfld_dsi_dsr_allow(dsi_config);
 		power_island_put(OSPM_DISPLAY_A);
 	}
+
+	mutex_unlock(&dpst_mutex);
 
 	return 0;
 }
 
+/* dsr lock and power island lock should be hold before calling this function */
+int psb_dpst_diet_save(struct drm_device *dev)
+{
+	struct drm_psb_private *dev_priv = NULL;
+	struct dpst_ie_histogram_control ie_hist_cont_reg;
+	uint32_t blm_hist_ctl = HISTOGRAM_LOGIC_CONTROL;
+	uint32_t iebdr_reg = HISTOGRAM_BIN_DATA;
+	int dpst3_bin_count = 32;
+	u32 i;
+
+	if (!dev)
+		return 0;
+
+	dev_priv = psb_priv(dev);
+	if (!dev_priv || !dev_priv->psb_dpst_state)
+		return 0;
+
+	ie_hist_cont_reg.data = PSB_RVDC32(blm_hist_ctl);
+	ie_hist_cont_reg.bin_reg_func_select = 1;
+	ie_hist_cont_reg.bin_reg_index = 0;
+	PSB_WVDC32(ie_hist_cont_reg.data, blm_hist_ctl);
+	for (i = 0; i <= dpst3_bin_count; i++)
+		diet_saved[i] = PSB_RVDC32(iebdr_reg);
+	dpst_print("diet saved\n");
+		diet_saved[0] = 0x200;
+
+	return 0;
+}
+
+/* dsr lock and power island lock should be hold before calling this function */
+int psb_dpst_diet_restore(struct drm_device *dev)
+{
+	struct drm_psb_private *dev_priv = NULL;
+	struct mdfld_dsi_config *dsi_config = NULL;
+	struct mdfld_dsi_hw_context *ctx = NULL;
+	struct dpst_ie_histogram_control ie_hist_cont_reg;
+	u32 i;
+	uint32_t blm_hist_ctl = HISTOGRAM_LOGIC_CONTROL;
+	uint32_t iebdr_reg = HISTOGRAM_BIN_DATA;
+	int dpst3_bin_count = 32;
+	u32 temp =0;
+
+	if (!dev)
+		return 0;
+
+	dev_priv = psb_priv(dev);
+	if (!dev_priv || !dev_priv->psb_dpst_state)
+		return 0;
+
+	dsi_config = dev_priv->dsi_configs[0];
+	if (!dsi_config)
+		return 0;
+	ctx = &dsi_config->dsi_hw_context;
+
+	PSB_WVDC32(ctx->histogram_intr_ctrl, HISTOGRAM_INT_CONTROL);
+	ie_hist_cont_reg.data = ctx->histogram_logic_ctrl;
+	dpst_print("hist_ctl: 0x%x\n", ie_hist_cont_reg.data);
+	ie_hist_cont_reg.bin_reg_func_select = 1;
+	ie_hist_cont_reg.bin_reg_index = 0;
+	ie_hist_cont_reg.ie_histogram_enable = 1;
+	ie_hist_cont_reg.ie_mode_table_enabled = 1;
+	ie_hist_cont_reg.ie_pipe_assignment = 0;
+#ifdef HSV
+	ie_hist_cont_reg.histogram_mode_select = 1;//HSV
+	ie_hist_cont_reg.alt_enhancement_mode = 2;//dpst_hsv_multiplier;
+#else
+	ie_hist_cont_reg.histogram_mode_select = 0;//YUV
+	ie_hist_cont_reg.alt_enhancement_mode = 1; //additive
+#endif
+	PSB_WVDC32(ie_hist_cont_reg.data, blm_hist_ctl);
+	if (drm_psb_debug & PSB_D_DPST) {
+		printk("before restore: ");
+		for (i = 0; i <= dpst3_bin_count; i++)
+		{
+			printk(" 0x%x ", PSB_RVDC32(iebdr_reg));
+		}
+		printk("\n");
+	}
+	for (i = 0; i <= dpst3_bin_count; i++)
+	{
+		PSB_WVDC32(diet_saved[i], iebdr_reg);
+	}
+	ctx->aimg_enhance_bin = PSB_RVDC32(iebdr_reg);
+
+	ie_hist_cont_reg.data = PSB_RVDC32(blm_hist_ctl);
+
+	temp = ie_hist_cont_reg.data;
+	temp|=(1<<27);
+	temp&=~0x7f;
+	ie_hist_cont_reg.data = temp;
+	PSB_WVDC32(ie_hist_cont_reg.data, blm_hist_ctl);
+
+	ctx->histogram_logic_ctrl = ie_hist_cont_reg.data;
+
+	return 0;
+}
 
 // SH END
 int psb_init_comm(struct drm_device *dev, void *data)
@@ -332,6 +514,13 @@ int psb_init_comm(struct drm_device *dev, void *data)
 	y += 1;
 	*arg = (x << 16) | y;
 
+	if (x*y <= 1280*800)
+		dpst_hist_fake = dpst_hist_720p;
+	else if (x*y <= 1920*1200)
+		dpst_hist_fake = dpst_hist_1080p;
+	else
+		dpst_hist_fake = dpst_hist_25x16;
+
 	return 0;
 }
 
@@ -368,6 +557,7 @@ int psb_init_comm(struct drm_device *dev, void *data)
 		reg_data.guardband, reg_data.guardband_interrupt_delay); */
 	PSB_WVDC32(reg_data.data, HISTOGRAM_INT_CONTROL);
 	ctx->histogram_intr_ctrl = reg_data.data;
+	dpst_print("guardband 0x%x\n", reg_data.data);
 
 	power_island_put(OSPM_DISPLAY_A);
 
@@ -438,16 +628,28 @@ int dpst_disable(struct drm_device *dev)
 {
 	struct drm_psb_private *dev_priv = psb_priv(dev);
 	uint32_t * arg = data;
-	struct backlight_device bd;
+	struct backlight_device *bd;
 
+	bd = psb_get_backlight_device();
 	if(!dev_priv)
 		return 0;
 
-	dev_priv->blc_adj2 = *arg;
+	if(dev_priv->early_suspended)
+		return 0;
+
+	dpst_print("adjust percentage: %d.%d\n", *arg / 100, *arg % 100);
+	dev_priv->blc_adj2 = (*arg * 255 / 100) * 255 / 100;
 
 #ifdef CONFIG_BACKLIGHT_CLASS_DEVICE
-	bd.props.brightness = psb_get_brightness(&bd);
-	psb_set_brightness(&bd);
+	mutex_lock(&bd->ops_lock);
+	bd->props.brightness = psb_get_brightness(bd);
+	if ( 0 == bd->props.brightness)
+	{
+	    mutex_unlock(&bd->ops_lock);
+	    return 0;
+	}
+	psb_set_brightness(bd);
+	mutex_unlock(&bd->ops_lock);
 #endif				/*  */
 	    return 0;
 }
@@ -463,6 +665,7 @@ int dpst_disable(struct drm_device *dev)
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	int i = 0;
 
+	DRM_ERROR("GAMMA tuning is not expected in DPST on Moorefield.\n");
 //      int32_t obj_id;
 
 //      obj_id = lut_arg->output_id;
@@ -486,98 +689,40 @@ int dpst_disable(struct drm_device *dev)
 
 static void dpst_save_bl_adj_factor(struct drm_device *dev)
 {
-    struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = dev->dev_private;
 
-    if (!dev_priv)
-	return;
-    blc_adj2 = dev_priv->blc_adj2;
+	if (!dev_priv)
+		return;
+
+	blc_adj2 = DPST_START_PERCENTAGE;
 }
 
 static void dpst_restore_bl_adj_factor(struct drm_device *dev)
 {
-    struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_psb_private *dev_priv = dev->dev_private;
+	int i = 0;
 
-    if (!dev_priv)
-	return;
+	if (!dev_priv)
+		return;
 
-    if (blc_adj2 != dev_priv->blc_adj2 && blc_adj2 != 0)
-        psb_dpst_bl(dev, &blc_adj2);
-}
+	/*compute the original adj in function psb_dpst_bl*/
+	dev_priv->blc_adj2 = ((dev_priv->blc_adj2 * 100) / 255) *100 /255;
 
-static void dpst_save_gamma_settings(struct drm_device *dev)
-{
-    struct drm_psb_private *dev_priv = dev->dev_private;
-    struct drm_connector *connector;
-    struct mdfld_dsi_config *dsi_config;
-    struct drm_crtc *crtc;
-    struct psb_intel_crtc *psb_intel_crtc;
-    int i = 0;
-
-    if (!dev_priv)
-        return;
-
-    connector = dev_priv->dpst_connector;
-    dsi_config = dev_priv->dsi_configs[0];
-
-    crtc = connector->encoder->crtc;
-    psb_intel_crtc = to_psb_intel_crtc(crtc);
-
-    /*
-    * FIXME: We need to force the Display to
-    * turn on but on TNG OSPM how we can force PIPEA to do it?
-    */
-    if (!power_island_get(OSPM_DISPLAY_A))
-    {
-	return;
-    }
-
-    for (i = 0; i < 256; i++)
-        lut_adj[i] = REG_READ((PALETTE_A + 4 * i));
-
-    power_island_put(OSPM_DISPLAY_A);
-}
-
-static void dpst_restore_gamma_settings(struct drm_device *dev)
-{
-    struct drm_psb_private *dev_priv = dev->dev_private;
-    struct mdfld_dsi_config *dsi_config;
-    struct mdfld_dsi_hw_context *ctx;
-    struct drm_connector *connector;
-    struct drm_crtc *crtc;
-    struct psb_intel_crtc *psb_intel_crtc;
-    int i = 0;
-
-    if (!dev_priv)
-        return;
-
-    connector = dev_priv->dpst_connector;
-    dsi_config = dev_priv->dsi_configs[0];
-    ctx = &dsi_config->dsi_hw_context;
-
-    crtc = connector->encoder->crtc;
-    psb_intel_crtc = to_psb_intel_crtc(crtc);
-
-    /*
-    * FIXME: We need to force the Display to
-    * turn on but on TNG OSPM how we can force PIPEA to do it?
-    */
-    if (!power_island_get(OSPM_DISPLAY_A))
-    {
-        return;
-    }
-
-    for (i = 0; i < 256; i++) {
-        ctx->palette[i] = lut_adj[i];
-        REG_WRITE((PALETTE_A + 4 * i), lut_adj[i]);
-    }
-
-    power_island_put(OSPM_DISPLAY_A);
+	if (blc_adj2 != dev_priv->blc_adj2 && blc_adj2 != 0)
+	{
+		for(i = dev_priv->blc_adj2; i <= blc_adj2; i = i+30)
+		{
+			psb_dpst_bl(dev, &i);
+			msleep(100);
+		}
+		i = blc_adj2;
+		psb_dpst_bl(dev, &i);
+	}
 }
 
 void dpst_disable_post_process(struct drm_device *dev)
 {
 	dpst_restore_bl_adj_factor(dev);
-	dpst_restore_gamma_settings(dev);
 }
 
  void dpst_execute_recv_command(struct dispmgr_command_hdr *cmd_hdr)
@@ -585,15 +730,11 @@ void dpst_disable_post_process(struct drm_device *dev)
 	switch (cmd_hdr->cmd) {
 	case DISPMGR_DPST_GET_MODE:
 		 {
-			if (cmd_hdr->data_size) {
-				unsigned long value =
-				    *((unsigned long *)cmd_hdr->data);
-			}
 			uint32_t xy = 0;
 			struct dispmgr_command_hdr send_cmd_hdr;
 			psb_dpst_mode(g_dev, &xy);
 			send_cmd_hdr.data_size = sizeof(xy);
-			send_cmd_hdr.data = &xy;
+			send_cmd_hdr.data = (uint64_t)&xy;
 			send_cmd_hdr.module = DISPMGR_MOD_DPST;
 			send_cmd_hdr.cmd = DISPMGR_DPST_GET_MODE;
 			dispmgr_nl_send_msg(&send_cmd_hdr);
@@ -646,12 +787,12 @@ void dpst_disable_post_process(struct drm_device *dev)
 		 {
 			if (cmd_hdr->data_size) {
 				uint32_t * arg = (uint32_t *) cmd_hdr->data;
-				//psb_diet_enable(g_dev, (void *)arg);
+				psb_diet_enable(g_dev, (void *)arg);
 			}
 		} break;
 	case DISPMGR_DPST_DIET_DISABLE:
 		 {
-			//psb_diet_enable(g_dev, 0);
+			psb_diet_enable(g_dev, 0);
 		}
 		break;
 	default:
@@ -663,14 +804,14 @@ void dpst_disable_post_process(struct drm_device *dev)
 	};			/* switch */
 }
 
-
 /* Initialize the dpst data */
 int dpst_init(struct drm_device *dev, int level, int output_id)
 {
 	g_dev = dev;            /* hack for now - the work queue does not have the device */
 
+	mutex_init(&dpst_mutex);
+
 	dpst_save_bl_adj_factor(dev);
-	dpst_save_gamma_settings(dev);
 
 	return 0;
 }

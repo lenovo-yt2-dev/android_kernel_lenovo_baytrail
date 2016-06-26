@@ -231,9 +231,7 @@ PVRSRVDrmOpen(struct drm_device *dev, struct drm_file *file)
 DRI_DRM_STATIC void
 PVRSRVDrmPostClose(struct drm_device *dev, struct drm_file *file)
 {
-	PVRSRVRelease(file->driver_priv);
-
-	file->driver_priv = NULL;
+	PVRSRVRelease(&file->driver_priv);
 }
 #else
 DRI_DRM_STATIC int

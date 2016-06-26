@@ -1967,7 +1967,7 @@ static ssize_t set_charging_attrs(struct device *dev,
 		const char *buf, size_t count)
 {
 	struct bq24192_chip *chip = dev_get_drvdata(dev);
-	char cmd[10];
+	char cmd[15];
 	int  ret;
 	static int  save_cntl_state  = 0;
 
@@ -1999,7 +1999,8 @@ static ssize_t set_charging_attrs(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(set_charging, S_IRUSR|S_IWUSR | S_IRGRP|S_IWGRP, show_charging_attrs,
+//M:ysq for Spark-L_P001436
+static DEVICE_ATTR(set_charging, S_IRUSR|S_IWUSR | S_IRGRP|S_IWGRP | S_IROTH|S_IWOTH , show_charging_attrs,
 		set_charging_attrs);
 
 static struct attribute *battery_attributes[] = {
@@ -2042,7 +2043,6 @@ static int bq24192_probe(struct i2c_client *client,
 	//ret = gpio_direction_output(148,0);
 	gpio_request(55,"USB_EN");
 	ret = gpio_direction_output(55,0);
-
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
 		dev_err(&client->dev,
@@ -2428,6 +2428,7 @@ static void __exit bq24192_rpmsg_exit(void)
 #else
 static int __init bq24192_init(void)
 {
+	printk("yxf  %s   \n",__func__);
 	return i2c_add_driver(&bq24192_i2c_driver);
 }
 module_init(bq24192_init);

@@ -40,11 +40,11 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */ /**************************************************************************/
 
-#include <linux/ion.h>
+#include PVR_ANDROID_ION_HEADER
 #include <linux/slab.h>
 #include <linux/genalloc.h>
 #include <linux/scatterlist.h>
-#include "../drivers/gpu/ion/ion_priv.h"
+#include PVR_ANDROID_ION_PRIV_HEADER
 
 #include "ion_lma_heap.h"
 #include "pvr_debug.h"
@@ -109,10 +109,7 @@ static struct sg_table *lma_heap_map_dma(struct ion_heap *heap,
 		return NULL;
 	}
 
-	/* FIXME: pfn_to_page() is being called here on an address in PCI
-	   memory, which doesn't make sense. Without a better way to do this, we
-	   have to come up with a struct page, even if it's not completely
-	   valid. This definitely doesn't work without CONFIG_FLATMEM. */
+	
 #if defined(CONFIG_FLATMEM)
 	sg_set_page(psTable->sgl, pfn_to_page(PFN_DOWN(buffer->priv_phys)),
 				buffer->size, 0);

@@ -295,6 +295,7 @@ PVRSyncCreateSync(struct PVR_SYNC_TIMELINE *obj,
 				  struct PVR_SYNC_KERNEL_SYNC_INFO *psSyncInfo)
 {
 	struct PVR_SYNC *psPt = NULL;
+	struct PVR_SYNC_DATA *psSyncData = NULL;
 
 	psPt = (struct PVR_SYNC *)
 		sync_pt_create(&obj->obj, sizeof(struct PVR_SYNC));
@@ -304,25 +305,27 @@ PVRSyncCreateSync(struct PVR_SYNC_TIMELINE *obj,
 		goto err_out;
 	}
 
-	psPt->psSyncData = kmalloc(sizeof(struct PVR_SYNC_DATA), GFP_KERNEL);
-	if(!psPt->psSyncData)
+	psSyncData = kzalloc(sizeof(struct PVR_SYNC_DATA), GFP_KERNEL);
+	if(!psSyncData)
 	{
 		PVR_DPF((PVR_DBG_ERROR, "%s: Failed to allocate PVR_SYNC_DATA",
 				 __func__));
 		goto err_free_pt;
 	}
 
-	atomic_set(&psPt->psSyncData->sRefcount, 1);
+	atomic_set(&psSyncData->sRefcount, 1);
 
-	psPt->psSyncData->ui32WOPSnapshot =
+	psSyncData->ui32WOPSnapshot =
 		obj->psSyncInfo->psBase->psSyncData->ui32WriteOpsPending;
 
-	psPt->psSyncData->psSyncInfo = psSyncInfo;
+	psSyncData->psSyncInfo = psSyncInfo;
 
 	/* Stamp the point and update the global counter under lock */
 	mutex_lock(&obj->sTimelineLock);
-	psPt->psSyncData->ui64Stamp = gui64SyncPointStamp++;
+	psSyncData->ui64Stamp = gui64SyncPointStamp++;
 	mutex_unlock(&obj->sTimelineLock);
+
+	psPt->psSyncData = psSyncData;
 
 err_out:
 	return psPt;
@@ -366,6 +369,8 @@ static void PVRSyncFreeSyncData(struct PVR_SYNC_DATA *psSyncData)
 static void PVRSyncFreeSync(struct sync_pt *psPt)
 {
 	struct PVR_SYNC *psSync = (struct PVR_SYNC *)psPt;
+	if (!psSync->psSyncData)
+		return;
 #if defined(DEBUG_PRINT)
 	PVRSRV_KERNEL_SYNC_INFO *psSyncInfo =
 		psSync->psSyncData->psSyncInfo->psBase;

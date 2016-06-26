@@ -25,6 +25,7 @@
  */
 
 #include <linux/init.h>
+#include <media/v4l2-event.h>
 
 #include "atomisp_acc.h"
 #include "atomisp_internal.h"
@@ -33,15 +34,7 @@
 
 #include "hrt/hive_isp_css_mm_hrt.h"
 #include "memory_access/memory_access.h"
-#ifdef CSS20
 #include "ia_css.h"
-#ifndef CSS21
-#include "ia_css_accelerate.h"
-#endif /* !CSS21 */
-#else /* CSS20 */
-#include "sh_css.h"
-#include "sh_css_accelerate.h"
-#endif /* CSS20 */
 
 static const struct {
 	unsigned int flag;
@@ -50,7 +43,8 @@ static const struct {
 	{ ATOMISP_ACC_FW_LOAD_FL_PREVIEW, CSS_PIPE_ID_PREVIEW },
 	{ ATOMISP_ACC_FW_LOAD_FL_COPY, CSS_PIPE_ID_COPY },
 	{ ATOMISP_ACC_FW_LOAD_FL_VIDEO, CSS_PIPE_ID_VIDEO },
-	{ ATOMISP_ACC_FW_LOAD_FL_CAPTURE, CSS_PIPE_ID_CAPTURE }
+	{ ATOMISP_ACC_FW_LOAD_FL_CAPTURE, CSS_PIPE_ID_CAPTURE },
+	{ ATOMISP_ACC_FW_LOAD_FL_ACC, CSS_PIPE_ID_ACC }
 };
 
 /*
@@ -162,7 +156,7 @@ int atomisp_acc_load_to_pipe(struct atomisp_device *isp,
 	struct atomisp_acc_fw *acc_fw;
 	int handle;
 
-	if (!user_fw->data || user_fw->size == 0)
+	if (!user_fw->data || user_fw->size < sizeof(*acc_fw->fw))
 		return -EINVAL;
 
 	/* Binary has to be enabled at least for one pipeline */
@@ -199,28 +193,23 @@ int atomisp_acc_load_to_pipe(struct atomisp_device *isp,
 	acc_fw->handle = handle;
 	acc_fw->flags = user_fw->flags;
 	acc_fw->type = user_fw->type;
+	acc_fw->fw->handle = handle;
 
-#ifdef CSS20
 	/*
 	 * correct isp firmware type in order ISP firmware can be appended
 	 * to correct pipe properly
 	 */
 	if (acc_fw->fw->type == ia_css_isp_firmware) {
-		switch (acc_fw->type) {
-		case ATOMISP_ACC_FW_LOAD_TYPE_OUTPUT:
-			acc_fw->fw->info.isp.type = IA_CSS_ACC_OUTPUT;
-			break;
-
-		case ATOMISP_ACC_FW_LOAD_TYPE_VIEWFINDER:
-			acc_fw->fw->info.isp.type = IA_CSS_ACC_VIEWFINDER;
-			break;
-
-		case ATOMISP_ACC_FW_LOAD_TYPE_STANDALONE:
-			acc_fw->fw->info.isp.type = IA_CSS_ACC_STANDALONE;
-			break;
-		}
+		static const int type_to_css[] = {
+			[ATOMISP_ACC_FW_LOAD_TYPE_OUTPUT] =
+				IA_CSS_ACC_OUTPUT,
+			[ATOMISP_ACC_FW_LOAD_TYPE_VIEWFINDER] =
+				IA_CSS_ACC_VIEWFINDER,
+			[ATOMISP_ACC_FW_LOAD_TYPE_STANDALONE] =
+				IA_CSS_ACC_STANDALONE,
+		};
+		acc_fw->fw->info.isp.type = type_to_css[acc_fw->type];
 	}
-#endif /* CSS20 */
 
 	list_add_tail(&acc_fw->list, &isp->acc.fw);
 	return 0;
@@ -339,30 +328,51 @@ int atomisp_acc_wait(struct atomisp_sub_device *asd, unsigned int *handle)
 	return ret;
 }
 
+void atomisp_acc_done(struct atomisp_sub_device *asd, unsigned int handle)
+{
+	struct v4l2_event event = { 0 };
+
+	event.type = V4L2_EVENT_ATOMISP_ACC_COMPLETE;
+	event.u.frame_sync.frame_sequence = atomic_read(&asd->sequence);
+	event.id = handle;
+
+	v4l2_event_queue(asd->subdev.devnode, &event);
+}
+
 int atomisp_acc_map(struct atomisp_device *isp, struct atomisp_acc_map *map)
 {
 	struct atomisp_map *atomisp_map;
 	ia_css_ptr cssptr;
 	int pgnr;
 
-	if (map->flags || !map->user_ptr || map->css_ptr)
+	if (map->css_ptr)
 		return -EINVAL;
 
 	if (isp->acc.pipeline)
 		return -EBUSY;
 
-	/* Buffer to map must be page-aligned */
-	if ((unsigned long)map->user_ptr & ~PAGE_MASK) {
-		dev_err(isp->dev,
-			"%s: mapped buffer address %p is not page aligned\n",
-			__func__, map->user_ptr);
-		return -EINVAL;
+	if (map->user_ptr) {
+		/* Buffer to map must be page-aligned */
+		if ((unsigned long)map->user_ptr & ~PAGE_MASK) {
+			dev_err(isp->dev,
+				"%s: mapped buffer address %p is not page aligned\n",
+				__func__, map->user_ptr);
+			return -EINVAL;
+		}
+
+		pgnr = DIV_ROUND_UP(map->length, PAGE_SIZE);
+		cssptr = hrt_isp_css_mm_alloc_user_ptr(
+				map->length, map->user_ptr,
+				pgnr, HRT_USR_PTR,
+				(map->flags & ATOMISP_MAP_FLAG_CACHED));
+	} else {
+		/* Allocate private buffer. */
+		if (map->flags & ATOMISP_MAP_FLAG_CACHED)
+			cssptr = hrt_isp_css_mm_calloc_cached(map->length);
+		else
+			cssptr = hrt_isp_css_mm_calloc(map->length);
 	}
 
-	pgnr = DIV_ROUND_UP(map->length, PAGE_SIZE);
-	cssptr = hrt_isp_css_mm_alloc_user_ptr(
-			map->length, map->user_ptr,
-			pgnr, HRT_USR_PTR, false);
 	if (!cssptr)
 		return -ENOMEM;
 
@@ -384,9 +394,6 @@ int atomisp_acc_map(struct atomisp_device *isp, struct atomisp_acc_map *map)
 int atomisp_acc_unmap(struct atomisp_device *isp, struct atomisp_acc_map *map)
 {
 	struct atomisp_map *atomisp_map;
-
-	if (map->flags)
-		return -EINVAL;
 
 	if (isp->acc.pipeline)
 		return -EBUSY;
@@ -439,6 +446,8 @@ int atomisp_acc_load_extensions(struct atomisp_sub_device *asd)
 {
 	struct atomisp_acc_fw *acc_fw;
 	bool ext_loaded = false;
+	bool continuous = asd->continuous_mode->val &&
+			  asd->run_mode->val == ATOMISP_RUN_MODE_PREVIEW;
 	int ret = 0, i = -1;
 	struct atomisp_device *isp = asd->isp;
 
@@ -454,6 +463,14 @@ int atomisp_acc_load_extensions(struct atomisp_sub_device *asd)
 			continue;
 
 		for (i = 0; i < ARRAY_SIZE(acc_flag_to_pipe); i++) {
+			/* QoS (ACC pipe) acceleration stages are currently
+			 * allowed only in continuous mode. Skip them for
+			 * all other modes. */
+			if (!continuous &&
+			    acc_flag_to_pipe[i].flag ==
+			    ATOMISP_ACC_FW_LOAD_FL_ACC)
+				continue;
+
 			if (acc_fw->flags & acc_flag_to_pipe[i].flag) {
 				ret = atomisp_css_load_acc_extension(asd,
 					acc_fw->fw,acc_flag_to_pipe[i].pipe_id,
@@ -498,6 +515,10 @@ error:
 			continue;
 
 		for (i = ARRAY_SIZE(acc_flag_to_pipe) - 1; i >= 0; i--) {
+			if (!continuous &&
+			    acc_flag_to_pipe[i].flag ==
+			    ATOMISP_ACC_FW_LOAD_FL_ACC)
+				continue;
 			if (acc_fw->flags & acc_flag_to_pipe[i].flag) {
 				atomisp_css_unload_acc_extension(asd,
 					acc_fw->fw,
@@ -532,4 +553,61 @@ void atomisp_acc_unload_extensions(struct atomisp_sub_device *asd)
 	}
 
 	isp->acc.extension_mode = false;
+}
+
+int atomisp_acc_set_state(struct atomisp_sub_device *asd,
+			  struct atomisp_acc_state *arg)
+{
+	struct atomisp_device *isp = asd->isp;
+	struct atomisp_acc_fw *acc_fw;
+	bool enable = (arg->flags & ATOMISP_STATE_FLAG_ENABLE) != 0;
+	struct ia_css_pipe *pipe;
+	enum ia_css_err r;
+	int i;
+
+	if (!isp->acc.extension_mode)
+		return -EBUSY;
+
+	if (arg->flags & ~ATOMISP_STATE_FLAG_ENABLE)
+		return -EINVAL;
+
+	acc_fw = acc_get_fw(isp, arg->fw_handle);
+	if (!acc_fw)
+		return -EINVAL;
+
+	for (i = 0; i < ARRAY_SIZE(acc_flag_to_pipe); i++) {
+		if (acc_fw->flags & acc_flag_to_pipe[i].flag) {
+			pipe = asd->stream_env[ATOMISP_INPUT_STREAM_GENERAL].
+				pipes[acc_flag_to_pipe[i].pipe_id];
+			r = ia_css_pipe_set_qos_ext_state(pipe, acc_fw->handle,
+							  enable);
+			if (r != IA_CSS_SUCCESS)
+				return -EBADRQC;
+		}
+	}
+
+	if (enable)
+		acc_fw->flags |= ATOMISP_ACC_FW_LOAD_FL_ENABLE;
+	else
+		acc_fw->flags &= ~ATOMISP_ACC_FW_LOAD_FL_ENABLE;
+
+	return 0;
+}
+
+int atomisp_acc_get_state(struct atomisp_sub_device *asd,
+			  struct atomisp_acc_state *arg)
+{
+	struct atomisp_device *isp = asd->isp;
+	struct atomisp_acc_fw *acc_fw;
+
+	if (!isp->acc.extension_mode)
+		return -EBUSY;
+
+	acc_fw = acc_get_fw(isp, arg->fw_handle);
+	if (!acc_fw)
+		return -EINVAL;
+
+	arg->flags = acc_fw->flags;
+
+	return 0;
 }

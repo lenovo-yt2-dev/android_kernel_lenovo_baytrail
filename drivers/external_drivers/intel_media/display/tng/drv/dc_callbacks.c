@@ -203,13 +203,11 @@ void DCCBFlipOverlay(struct drm_device *dev,
 	if (ctx->index == 1)
 		ovadd_reg = OVC_OVADD;
 
-	ctx->ovadd |= ctx->pipe;
 	ctx->ovadd |= 1;
 
-	if (((ctx->pipe & OV_PIPE_SELECT) >> OV_PIPE_SELECT_POS) == OV_PIPE_A)
+	if (ctx->pipe == 0)
 		dsi_config = dev_priv->dsi_configs[0];
-	else if (((ctx->pipe & OV_PIPE_SELECT) >> OV_PIPE_SELECT_POS) ==
-			OV_PIPE_C)
+	else if (ctx->pipe == 2)
 		dsi_config = dev_priv->dsi_configs[1];
 
 	if (dsi_config) {
@@ -256,16 +254,6 @@ void DCCBFlipSprite(struct drm_device *dev,
 		dsi_config = dev_priv->dsi_configs[1];
 	}
 
-	if (dsi_config) {
-		dsi_ctx = &dsi_config->dsi_hw_context;
-		dsi_ctx->sprite_dsppos = ctx->pos;
-		dsi_ctx->sprite_dspsize = ctx->size;
-		dsi_ctx->sprite_dspstride = ctx->stride;
-		dsi_ctx->sprite_dspcntr = ctx->cntr;
-		dsi_ctx->sprite_dsplinoff = ctx->linoff;
-		dsi_ctx->sprite_dspsurf = ctx->surf;
-	}
-
 	if ((ctx->update_mask & SPRITE_UPDATE_POSITION))
 		PSB_WVDC32(ctx->pos, DSPAPOS + reg_offset);
 
@@ -277,12 +265,26 @@ void DCCBFlipSprite(struct drm_device *dev,
 	if ((ctx->update_mask & SPRITE_UPDATE_CONSTALPHA))
 		PSB_WVDC32(ctx->contalpa, DSPACONSTALPHA + reg_offset);
 
-	if ((ctx->update_mask & SPRITE_UPDATE_CONTROL))
-		PSB_WVDC32(ctx->cntr, DSPACNTR + reg_offset);
+	if ((ctx->update_mask & SPRITE_UPDATE_CONTROL)){
+                if(drm_psb_set_gamma_success)
+		        PSB_WVDC32(ctx->cntr | DISPPLANE_GAMMA_ENABLE, DSPACNTR + reg_offset);
+                else
+                        PSB_WVDC32(ctx->cntr, DSPACNTR + reg_offset);
+        }
 
 	if ((ctx->update_mask & SPRITE_UPDATE_SURFACE)) {
 		PSB_WVDC32(ctx->linoff, DSPALINOFF + reg_offset);
 		PSB_WVDC32(ctx->surf, DSPASURF + reg_offset);
+	}
+
+	if (dsi_config) {
+		dsi_ctx = &dsi_config->dsi_hw_context;
+		dsi_ctx->sprite_dsppos = ctx->pos;
+		dsi_ctx->sprite_dspsize = ctx->size;
+		dsi_ctx->sprite_dspstride = ctx->stride;
+		dsi_ctx->sprite_dspcntr = ctx->cntr | ((PSB_RVDC32(DSPACNTR + reg_offset) & DISPPLANE_GAMMA_ENABLE));
+		dsi_ctx->sprite_dsplinoff = ctx->linoff;
+		dsi_ctx->sprite_dspsurf = ctx->surf;
 	}
 }
 
@@ -316,16 +318,6 @@ void DCCBFlipPrimary(struct drm_device *dev,
 	} else
 		return;
 
-	if (dsi_config) {
-		dsi_ctx = &dsi_config->dsi_hw_context;
-		dsi_ctx->dsppos = ctx->pos;
-		dsi_ctx->dspsize = ctx->size;
-		dsi_ctx->dspstride = ctx->stride;
-		dsi_ctx->dspcntr = ctx->cntr;
-		dsi_ctx->dsplinoff = ctx->linoff;
-		dsi_ctx->dspsurf = ctx->surf;
-	}
-
 	if ((ctx->update_mask & SPRITE_UPDATE_POSITION))
 		PSB_WVDC32(ctx->pos, DSPAPOS + reg_offset);
 
@@ -337,13 +329,74 @@ void DCCBFlipPrimary(struct drm_device *dev,
 	if ((ctx->update_mask & SPRITE_UPDATE_CONSTALPHA))
 		PSB_WVDC32(ctx->contalpa, DSPACONSTALPHA + reg_offset);
 
-	if ((ctx->update_mask & SPRITE_UPDATE_CONTROL))
-		PSB_WVDC32(ctx->cntr, DSPACNTR + reg_offset);
+	if ((ctx->update_mask & SPRITE_UPDATE_CONTROL)){
+                if(drm_psb_set_gamma_success)
+                        PSB_WVDC32(ctx->cntr | DISPPLANE_GAMMA_ENABLE, DSPACNTR + reg_offset);
+                else
+                        PSB_WVDC32(ctx->cntr, DSPACNTR + reg_offset);
+        }
 
 	if ((ctx->update_mask & SPRITE_UPDATE_SURFACE)) {
 		PSB_WVDC32(ctx->linoff, DSPALINOFF + reg_offset);
 		PSB_WVDC32(ctx->surf, DSPASURF + reg_offset);
 	}
+
+	if (dsi_config) {
+		dsi_ctx = &dsi_config->dsi_hw_context;
+		dsi_ctx->dsppos = ctx->pos;
+		dsi_ctx->dspsize = ctx->size;
+		dsi_ctx->dspstride = ctx->stride;
+		dsi_ctx->dspcntr = ctx->cntr | ((PSB_RVDC32(DSPACNTR + reg_offset) & DISPPLANE_GAMMA_ENABLE));
+		dsi_ctx->dsplinoff = ctx->linoff;
+		dsi_ctx->dspsurf = ctx->surf;
+	}
+}
+
+void DCCBSetPipeToOvadd(u32 *ovadd, int pipe)
+{
+	switch (pipe) {
+	case 0:
+		*ovadd |= OV_PIPE_A << OV_PIPE_SELECT_POS;
+		break;
+	case 1:
+		*ovadd |= OV_PIPE_B << OV_PIPE_SELECT_POS;
+		break;
+	case 2:
+		*ovadd |= OV_PIPE_C << OV_PIPE_SELECT_POS;
+		break;
+	}
+
+	return;
+}
+
+void DCCBFlipCursor(struct drm_device *dev,
+			struct intel_dc_cursor_ctx *ctx)
+{
+	struct drm_psb_private *dev_priv;
+	u32 reg_offset = 0;
+
+	if (!dev || !ctx)
+		return;
+
+	dev_priv = (struct drm_psb_private *)dev->dev_private;
+
+	user_mode_start(dev_priv);
+
+	switch (ctx->pipe) {
+	case 0:
+		reg_offset = 0;
+		break;
+	case 1:
+		reg_offset = 0x40;
+		break;
+	case 2:
+		reg_offset = 0x60;
+		break;
+	}
+
+	PSB_WVDC32(ctx->cntr, CURACNTR + reg_offset);
+	PSB_WVDC32(ctx->pos, CURAPOS + reg_offset);
+	PSB_WVDC32(ctx->surf, CURABASE + reg_offset);
 }
 
 void DCCBSetupZorder(struct drm_device *dev,
@@ -386,21 +439,35 @@ void DCCBSetupZorder(struct drm_device *dev,
 	PSB_WVDC32(PSB_RVDC32(sprite_surf_reg), sprite_surf_reg);
 }
 
+static void _OverlayWaitVblank(struct drm_device *dev, int pipe)
+{
+	union drm_wait_vblank vblwait;
+	int ret;
+
+	vblwait.request.type =
+		(_DRM_VBLANK_RELATIVE |
+		 _DRM_VBLANK_NEXTONMISS);
+	vblwait.request.sequence = 1;
+
+	if (pipe == 1)
+		vblwait.request.type |=
+			_DRM_VBLANK_SECONDARY;
+
+	ret = drm_wait_vblank(dev, (void *)&vblwait, 0);
+	if (ret) {
+		DRM_ERROR("%s: fail to wait vsync of pipe %d\n", __func__, pipe);
+	}
+}
+
 static void _OverlayWaitFlip(
 	struct drm_device *dev, u32 ovstat_reg, int index, int pipe)
 {
 	int retry;
-	int ret = -EBUSY;
-
-	if (DCCBEnableVSyncInterrupt(dev, pipe) != 0) {
-		DRM_ERROR("%s: failed to enable vblank on pipe %d\n",
-			__func__, pipe);
-		return;
-	}
 
 	/* HDMI pipe can run as low as 24Hz */
 	retry = 600;
-	if (pipe != 1) {
+	if (pipe != 1)
+	{
 		retry = 200;  /* 60HZ for MIPI */
 		DCCBDsrForbid(dev, pipe);
 	}
@@ -410,15 +477,11 @@ static void _OverlayWaitFlip(
 	 * overlay command buffer.
 	 */
 	while (--retry) {
-		if (pipe != 1 && ret == -EBUSY) {
-			ret = DCCBUpdateDbiPanel(dev, pipe);
-		}
 		if (BIT31 & PSB_RVDC32(ovstat_reg))
 			break;
 		udelay(100);
 	}
 
-	DCCBDisableVSyncInterrupt(dev, pipe);
 	if (pipe != 1)
 		DCCBDsrAllow(dev, pipe);
 
@@ -426,6 +489,115 @@ static void _OverlayWaitFlip(
 		DRM_ERROR("OVADD %d flip timeout on pipe %d!\n", index, pipe);
 }
 
+static void _OverlayWaitDisable(struct drm_device *dev, u32 ovadd_reg,
+			int index, int pipe)
+{
+	int retry;
+	int ret = -EBUSY;
+	bool is_cmd_mode;
+
+	is_cmd_mode = is_panel_vid_or_cmd(dev) == MDFLD_DSI_ENCODER_DBI;
+	/* HDMI pipe can run as low as 24Hz */
+	retry = 600;
+	if (pipe != 1)
+	{
+		retry = 200;  /* 60HZ for MIPI */
+		if(is_cmd_mode)
+			DCCBDsrForbid(dev, pipe);
+	}
+	/**
+	 * make sure overlay command buffer
+	 * was copied before updating the system
+	 * overlay command buffer.
+	 */
+	while (--retry) {
+		if (pipe != 1 && ret == -EBUSY && is_cmd_mode)
+		{
+			_OverlayWaitVblank(dev, pipe);
+			DCCBWaitForDbiFifoEmpty(dev, pipe);
+			ret = DCCBUpdateDbiPanel(dev, pipe);
+		}
+		if (!(BIT15 & PSB_RVDC32(ovadd_reg)))
+			break;
+		udelay(100);
+	}
+
+	if (pipe != 1 && is_cmd_mode)
+		DCCBDsrAllow(dev, pipe);
+
+	if (!retry)
+		DRM_ERROR("OVADD %d wait disable timeout on pipe %d!\n", index, pipe);
+}
+static bool DCCBIsEnterDsrState(struct drm_device *dev, int pipe)
+{
+	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct mdfld_dsi_config *dsi_config = NULL;
+	struct mdfld_dsi_dsr *dsr = NULL;
+
+	if ((pipe != PIPEB) &&
+		(is_panel_vid_or_cmd(dev) == MDFLD_DSI_ENCODER_DBI))
+	{
+		if (pipe == 0)
+			dsi_config = dev_priv->dsi_configs[0];
+		else if (pipe == 2)
+			dsi_config = dev_priv->dsi_configs[1];
+
+		if(!dsi_config)
+			return false;
+
+		dsr = dsi_config->dsr;
+		if(!dsr)
+			return false;
+
+		if(dsr->dsr_state == DSR_ENTERED_LEVEL0)
+			return true;
+	}
+
+	return false;
+}
+void DCCBOverlayWaitFlipDone(struct drm_device *dev, int index, int pipe)
+{
+	u32 ovstat_reg = OV_DOVASTA;
+
+	if(index != 0 && index != 1 )
+		return;
+
+        if (index)
+		ovstat_reg = OVC_DOVCSTA;
+
+	if((pipe == PIPEB) && (!hdmi_state))
+		return;
+
+	if(DCCBIsEnterDsrState(dev,pipe))
+		return;
+
+	/*wait for overlay flipped*/
+	if (!(BIT31 & PSB_RVDC32(ovstat_reg)))
+		_OverlayWaitFlip(dev, ovstat_reg, index, pipe);
+
+}
+
+void DCCBOverlayWaitDisableDone(struct drm_device *dev, int index, int pipe)
+{
+	u32 ovadd_reg = OV_OVADD;
+	if(index != 0 && index != 1 )
+		return;
+
+        if (index)
+		ovadd_reg = OVC_OVADD;
+
+	if((pipe == PIPEB) && (!hdmi_state))
+		return;
+
+	if(DCCBIsEnterDsrState(dev,pipe))
+		return;
+
+	/*wait for overlay disable done*/
+	if (BIT15 & PSB_RVDC32(ovadd_reg))
+		_OverlayWaitDisable(dev, ovadd_reg, index, pipe);
+
+
+}
 static int _GetPipeFromOvadd(u32 ovadd)
 {
 	int ov_pipe_sel = (ovadd & OV_PIPE_SELECT) >> OV_PIPE_SELECT_POS;
@@ -484,11 +656,20 @@ int DCCBOverlayEnable(struct drm_device *dev, u32 ctx,
 	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct mdfld_dsi_config *dsi_config = NULL;
 	struct mdfld_dsi_hw_context *dsi_ctx;
+	u32 ovadd_reg = OV_OVADD;
+	u32 ovstat_reg = OV_DOVASTA;
+	u32 power_islands = OSPM_DISPLAY_A;
 	int pipe;
 
 	if (index != 0 && index != 1) {
 		DRM_ERROR("Invalid overlay index %d\n", index);
 		return -EINVAL;
+	}
+
+	if (index) {
+		ovadd_reg = OVC_OVADD;
+		ovstat_reg = OVC_DOVCSTA;
+		power_islands |= OSPM_DISPLAY_C;
 	}
 
 	pipe = _GetPipeFromOvadd(ctx);
@@ -507,6 +688,18 @@ int DCCBOverlayEnable(struct drm_device *dev, u32 ctx,
 				dsi_ctx->ovcadd = 0;
 		}
 	}
+
+	if (power_island_get(power_islands)) {
+		/*make sure previous flip was done*/
+		if (is_panel_vid_or_cmd(dev) == MDFLD_DSI_ENCODER_DPI)
+			_OverlayWaitFlip(dev, ovstat_reg, index, pipe);
+		//_OverlayWaitVblank(dev, pipe);
+
+		PSB_WVDC32(ctx, ovadd_reg);
+
+		power_island_put(power_islands);
+	}
+
 	return 0;
 }
 
@@ -541,18 +734,17 @@ int DCCBSpriteEnable(struct drm_device *dev, u32 ctx,
 	return 0;
 }
 
-int DCCBPrimaryEnable(struct drm_device *dev, u32 ctx,
-			int index, int enabled)
+void DCCBEnablePrimaryWA(struct drm_device *dev, int index)
 {
 	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct psb_gtt *pg = dev_priv->pg;
 	struct mdfld_dsi_config *dsi_config = NULL;
 	struct mdfld_dsi_hw_context *dsi_ctx = NULL;
-	u32 dspcntr_value;
 	u32 reg_offset;
 
 	if (index < 0 || index > 2) {
 		DRM_ERROR("Invalid primary index %d\n", index);
-		return -EINVAL;
+		return;
 	}
 
 	if (index == 0) {
@@ -565,30 +757,69 @@ int DCCBPrimaryEnable(struct drm_device *dev, u32 ctx,
 		reg_offset = 0x2000;
 	}
 
-	if (PSB_RVDC32(DSPASURF + reg_offset) == 0)
-		return 0;
-
-	dspcntr_value = ~DISPPLANE_PIXFORMAT_MASK & PSB_RVDC32(DSPACNTR + reg_offset);
-	dspcntr_value = DISPPLANE_32BPP | BIT31 | dspcntr_value;
-
 	if (dsi_config) {
 		dsi_ctx = &dsi_config->dsi_hw_context;
 		dsi_ctx->dsppos = 0;
-		dsi_ctx->dspsize = (4 << 16) | 63;
+		dsi_ctx->dspsize = (63 << 16) | 63;
 		dsi_ctx->dspstride = (64 << 2);
-		dsi_ctx->dspcntr = dspcntr_value;
+		dsi_ctx->dspcntr = 0x9c800000;
 		dsi_ctx->dsplinoff = 0;
-		dsi_ctx->dspsurf = 0;
+		dsi_ctx->dspsurf = pg->reserved_gtt_start;
 	}
 
 	PSB_WVDC32(0, DSPAPOS + reg_offset);
-	PSB_WVDC32((4 << 16) | 63, DSPASIZE + reg_offset);
+	PSB_WVDC32((63 << 16) | 63, DSPASIZE + reg_offset);
 	PSB_WVDC32((64 << 2), DSPASTRIDE + reg_offset);
-	PSB_WVDC32(dspcntr_value, DSPACNTR + reg_offset);
-
+	PSB_WVDC32(0x9c800000, DSPACNTR + reg_offset);
 	PSB_WVDC32(0, DSPALINOFF + reg_offset);
 	PSB_WVDC32(0, DSPATILEOFF + reg_offset);
-	PSB_WVDC32(0, DSPASURF + reg_offset);
+	PSB_WVDC32(pg->reserved_gtt_start, DSPASURF + reg_offset);
+	DRM_INFO("enable primary plane WA on pipe %d\n", index);
+}
+
+int DCCBPrimaryEnable(struct drm_device *dev, u32 ctx,
+			int index, int enabled)
+{
+	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct mdfld_dsi_config *dsi_config = NULL;
+	struct mdfld_dsi_hw_context *dsi_ctx = NULL;
+	u32 sprite_reg = DSPACNTR + 0x3000;
+	u32 reg_offset;
+
+	if (index < 0 || index > 2) {
+		DRM_ERROR("Invalid primary index %d\n", index);
+		return -EINVAL;
+	}
+
+	DCCBEnablePrimaryWA(dev, index);
+
+	return 0;
+}
+
+int DCCBCursorDisable(struct drm_device *dev, int index)
+{
+	u32 reg_offset;
+
+	if (index < 0 || index > 2) {
+		DRM_ERROR("Invalid cursor index %d\n", index);
+		return -EINVAL;
+	}
+
+	switch (index) {
+	case 0:
+		reg_offset = 0;
+		break;
+	case 1:
+		reg_offset = 0x40;
+		break;
+	case 2:
+		reg_offset = 0x60;
+		break;
+	}
+
+	PSB_WVDC32(0, CURACNTR + reg_offset);
+	PSB_WVDC32(0, CURAPOS + reg_offset);
+	PSB_WVDC32(0, CURABASE + reg_offset);
 
 	return 0;
 }
@@ -766,4 +997,48 @@ void DCCBDsrAllow(struct drm_device *dev, int pipe)
 			dev_priv->dsi_configs[0] : dev_priv->dsi_configs[1];
 
 	mdfld_dsi_dsr_allow(dsi_config);
+}
+
+int DCCBUpdateCursorPos(struct drm_device *dev, int pipe, uint32_t pos)
+{
+	u32 power_island = 0;
+	u32 reg_offset = 0;
+
+	switch (pipe) {
+	case 0:
+		power_island = OSPM_DISPLAY_A;
+		reg_offset = 0;
+		break;
+	case 1:
+		power_island = OSPM_DISPLAY_B;
+		reg_offset = 0x40;
+		break;
+	case 2:
+		power_island = OSPM_DISPLAY_C;
+		reg_offset = 0x60;
+		break;
+	default:
+		DRM_ERROR("%s: invalid pipe %d\n", __func__, pipe);
+		return -1;
+	}
+
+	if (!power_island_get(power_island)) {
+		DRM_ERROR("%s: failed to get power island for pipe %d\n", __func__, pipe);
+		return -1;
+	}
+
+	PSB_WVDC32(pos, CURAPOS + reg_offset);
+	power_island_put(power_island);
+	return 0;
+}
+
+/* below two functions are to resolve merrifield build issue */
+void DCCBExitMaxfifoMode(struct drm_device *dev)
+{
+	return;
+}
+
+int DCCBEnterMaxfifoMode(struct drm_device *dev, int req_mode)
+{
+	return 0;
 }

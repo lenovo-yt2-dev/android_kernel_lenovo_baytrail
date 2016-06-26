@@ -22,6 +22,12 @@
 #ifndef __IA_CSS_STREAM_FORMAT_H
 #define __IA_CSS_STREAM_FORMAT_H
 
+/** @file
+ * This file contains formats usable for ISP streaming input
+ */
+
+#include <type_support.h> /* bool */
+
 /** The ISP streaming input interface supports the following formats.
  *  These match the corresponding MIPI formats.
  */
@@ -29,8 +35,10 @@ enum ia_css_stream_format {
 	IA_CSS_STREAM_FORMAT_YUV420_8_LEGACY,    /**< 8 bits per subpixel */
 	IA_CSS_STREAM_FORMAT_YUV420_8,  /**< 8 bits per subpixel */
 	IA_CSS_STREAM_FORMAT_YUV420_10, /**< 10 bits per subpixel */
-	IA_CSS_STREAM_FORMAT_YUV422_8,  /**< UYVY..UVYV, 8 bits per subpixel */
-	IA_CSS_STREAM_FORMAT_YUV422_10, /**< UYVY..UVYV, 10 bits per subpixel */
+	IA_CSS_STREAM_FORMAT_YUV420_16, /**< 16 bits per subpixel */
+	IA_CSS_STREAM_FORMAT_YUV422_8,  /**< UYVY..UYVY, 8 bits per subpixel */
+	IA_CSS_STREAM_FORMAT_YUV422_10, /**< UYVY..UYVY, 10 bits per subpixel */
+	IA_CSS_STREAM_FORMAT_YUV422_16, /**< UYVY..UYVY, 16 bits per subpixel */
 	IA_CSS_STREAM_FORMAT_RGB_444,  /**< BGR..BGR, 4 bits per subpixel */
 	IA_CSS_STREAM_FORMAT_RGB_555,  /**< BGR..BGR, 5 bits per subpixel */
 	IA_CSS_STREAM_FORMAT_RGB_565,  /**< BGR..BGR, 5 bits B and R, 6 bits G */
@@ -83,4 +91,11 @@ enum ia_css_stream_format {
 	IA_CSS_STREAM_FORMAT_USER_DEF7,  /**< User defined 8-bit data type 7 */
 	IA_CSS_STREAM_FORMAT_USER_DEF8,  /**< User defined 8-bit data type 8 */
 };
+
+#define	IA_CSS_STREAM_FORMAT_NUM	IA_CSS_STREAM_FORMAT_USER_DEF8
+
+unsigned int ia_css_util_input_format_bpp(
+	enum ia_css_stream_format format,
+	bool two_ppc);
+
 #endif /* __IA_CSS_STREAM_FORMAT_H */

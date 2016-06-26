@@ -23,14 +23,13 @@
 #define __IA_CSS_QPLANE_TYPES_H
 
 #include <ia_css_frame_public.h>
-/* need include for sh_css_sp_pipeline but cannot include sh_css_internal.h */
+#include "sh_css_internal.h"
 
 /** qplane frame
  *
  *  ISP block: qplane frame
  */
 
-#include "ia_css.h"
 
 struct ia_css_qplane_configuration {
 	const struct sh_css_sp_pipeline *pipe;

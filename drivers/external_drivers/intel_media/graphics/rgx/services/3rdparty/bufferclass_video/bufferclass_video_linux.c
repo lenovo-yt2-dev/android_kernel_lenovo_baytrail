@@ -618,7 +618,7 @@ BCVideoBridge(struct drm_device *dev, IMG_VOID * arg,
 	case BC_Video_ioctl_request_buffers: {
 		bc_buf_params_t p;
 		if (copy_from_user
-		    (&p, (void __user *)(psBridge->inputparam), sizeof(p))) {
+		    (&p, (void __user *)((uint64_t)(psBridge->inputparam)), sizeof(p))) {
 			printk(KERN_ERR " : failed to copy inputparam to kernel.\n");
 			return -EFAULT;
 		}
@@ -633,7 +633,7 @@ BCVideoBridge(struct drm_device *dev, IMG_VOID * arg,
 		struct ttm_object_file *tfile = BCVideoGetPriv(file_priv)->tfile;
 
 		if (copy_from_user
-		    (&p, (void __user *)(psBridge->inputparam), sizeof(p))) {
+		    (&p, (void __user *)((uint64_t)(psBridge->inputparam)), sizeof(p))) {
 			printk(KERN_ERR DRVNAME
 			       " : failed to copy inputparam to kernel.\n");
 			return -EFAULT;
@@ -683,7 +683,7 @@ BCVideoBridge(struct drm_device *dev, IMG_VOID * arg,
 		BUFFER_INFO *bufferInfo;
 
 		if (copy_from_user
-		    (&p, (void __user *)(psBridge->inputparam), sizeof(p))) {
+		    (&p, (void __user *)((uint64_t)(psBridge->inputparam)), sizeof(p))) {
 			printk(KERN_ERR DRVNAME
 			       " : failed to copy inputparam to kernel.\n");
 			return -EFAULT;
@@ -735,7 +735,7 @@ BCVideoBridge(struct drm_device *dev, IMG_VOID * arg,
 			}
 
 		}
-		psBridge->outputparam = (int) pvBuf;
+		psBridge->outputparam = (int) ((uint64_t)pvBuf);
 
 		return 0;
 		break;
@@ -744,7 +744,7 @@ BCVideoBridge(struct drm_device *dev, IMG_VOID * arg,
 		bc_buf_ptr_t p;
 
 		if (copy_from_user
-		    (&p, (void __user *)(psBridge->inputparam), sizeof(p))) {
+		    (&p, (void __user *)((uint64_t)(psBridge->inputparam)), sizeof(p))) {
 			printk(KERN_ERR DRVNAME
 			       " : failed to copy inputparam to kernel.\n");
 			return -EFAULT;
@@ -817,7 +817,7 @@ BC_Camera_Bridge(BC_Video_ioctl_package * psBridge, unsigned long pAddr)
 	}
 	case BC_Video_ioctl_request_buffers: {
 		bc_buf_params_t p;
-		memcpy(&p, (void *)(psBridge->inputparam), sizeof(p));
+		memcpy(&p, (void *)((uint64_t)(psBridge->inputparam)), sizeof(p));
 		if (p.type == BC_MEMORY_MMAP)
 			return BC_CreateBuffers(id, &p, IMG_TRUE);
 		else
@@ -832,7 +832,7 @@ BC_Camera_Bridge(BC_Video_ioctl_package * psBridge, unsigned long pAddr)
 		bc_buf_ptr_t p;
 
 		if (copy_from_user
-		    (&p, (void __user *)(psBridge->inputparam), sizeof(p))) {
+		    (&p, (void __user *)((uint64_t)(psBridge->inputparam)), sizeof(p))) {
 			printk(KERN_ERR DRVNAME
 			       " : failed to copy inputparam to kernel.\n");
 			return -EFAULT;

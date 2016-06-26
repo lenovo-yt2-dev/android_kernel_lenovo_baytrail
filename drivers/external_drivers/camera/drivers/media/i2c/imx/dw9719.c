@@ -123,7 +123,7 @@ int dw9719_vcm_power_up(struct v4l2_subdev *sd)
 		ret = -ENXIO;
 		goto fail_powerdown;
 	}
-	dw9719_dev.focus = DW9719_MAX_FOCUS_POS;
+	dw9719_dev.focus = 0;
 	dw9719_dev.initialized = true;
 
 	return 0;

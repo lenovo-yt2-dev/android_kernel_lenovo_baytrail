@@ -39,7 +39,7 @@ ov8865_read_otp(struct i2c_client *client, u16 len, u16 reg, u8 *val)
 {
 	struct i2c_msg msg[2];
 	u16 data[OV8865_SHORT_MAX];
-	int err, i;
+	int err;
 
 	if (!client->adapter) {
 		v4l2_err(client, "%s error, no client->adapter\n", __func__);
@@ -74,10 +74,9 @@ error:
 
 static int ov8865_otp_read(struct i2c_client *client, u8 *ov8865_data_ptr, u32 *ov8865_size)
 {
-	int i, ret;
+	int ret;
 	int address_start = SNR_OTP_START;
 	int address_end = SNR_OTP_END;
-	u16 val;
 
 	printk("ov8865 OTP debug\n");
 
@@ -481,7 +480,7 @@ static int otp_AWB_LSC_light_source_copy(const unsigned char *ov8865_data_ptr, u
     /* focus copy */
 	otp_offset += 2;
 	ov8865_offset = ov8865_data_group_pos.af;
-	memcpy(otp_data_ptr+otp_offset, ov8865_data_ptr+ov8865_offset, 11);
+	//memcpy(otp_data_ptr+otp_offset, ov8865_data_ptr+ov8865_offset, 11);
 
 	/* otp_data[2]:n_lights */
 	ov8865_offset = ov8865_data_group_pos.awb_lsc_light_source_one;
@@ -567,10 +566,18 @@ static int otp_AWB_LSC_light_source_copy(const unsigned char *ov8865_data_ptr, u
 static int otp_AF_copy(const unsigned char *ov8865_data_ptr, const int ov8865_size, unsigned char *otp_data_ptr, int *otp_size)
 {
 	/* offset 2bytes in otp_data */
+	unsigned char *pdata;
 	int otp_offset = 2;
 	int ov8865_offset = ov8865_data_group_pos.af;
 	/* OV8865_AF_GROUP_LEN include ov8865_data checksum(1byte) */
 	memcpy(otp_data_ptr+otp_offset,ov8865_data_ptr+ov8865_offset,OV8865_AF_GROUP_LEN-1);
+
+	pdata = otp_data_ptr+otp_offset;
+	/*make near = end, far = start to make nearest work*/
+	memcpy(otp_data_ptr + otp_offset + 9, otp_data_ptr + otp_offset + 3, 2);
+	memcpy(otp_data_ptr + otp_offset + 7, otp_data_ptr + otp_offset + 5, 2);
+	printk("near:%d %d far:%d %d\r\n", pdata[3], pdata[4], pdata[5], pdata[6]);
+	printk("start:%d %d end:%d %d\r\n", pdata[7], pdata[8], pdata[9], pdata[10]);
 	/* length of otp_data */
 	*otp_size += OV8865_AF_GROUP_LEN-1;
 

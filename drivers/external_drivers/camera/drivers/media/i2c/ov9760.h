@@ -303,6 +303,7 @@ struct ov9760_device {
 	u8 res;
 	u8 type;
 	u8 sensor_revision;
+	s32 odm_exposure_value;
 };
 
 struct ov9760_format_struct {
@@ -372,7 +373,8 @@ static struct ov9760_reg const ov9760_1456x1096_30fps[] = {
 	{OV9760_8BIT, {0x3092}, 0x02}, //	;
 	{OV9760_8BIT, {0x3093}, 0x02}, //	;PLL control
 	{OV9760_8BIT, {0x3094}, 0x00}, //	;PLL control
-
+	{OV9760_8BIT, {0x5781}, 0x17}, //	add by wdy for spark
+	{OV9760_8BIT, {0x5792}, 0x00}, //	add by wdy for spark
 	{OV9760_TOK_TERM, {0}, 0}
 };
 static struct ov9760_reg const ov9760_1296x736_30fps[] = {
@@ -413,7 +415,8 @@ static struct ov9760_reg const ov9760_1296x736_30fps[] = {
 	{OV9760_8BIT, {0x3092}, 0x02}, //	;
 	{OV9760_8BIT, {0x3093}, 0x02}, //	;PLL control
 	{OV9760_8BIT, {0x3094}, 0x00}, //	;PLL control
-	
+	{OV9760_8BIT, {0x5781}, 0x17}, //	add by wdy for spark
+	{OV9760_8BIT, {0x5792}, 0x00}, //	add by wdy for spark
 	{OV9760_TOK_TERM, {0}, 0}
 };
 
@@ -455,7 +458,8 @@ static struct ov9760_reg const ov9760_1216x736_30fps[] = {
 	{OV9760_8BIT, {0x3092}, 0x02}, //	;
 	{OV9760_8BIT, {0x3093}, 0x02}, //	;PLL control
 	{OV9760_8BIT, {0x3094}, 0x00}, //	;PLL control
-	
+	{OV9760_8BIT, {0x5781}, 0x17}, //	add by wdy for spark
+	{OV9760_8BIT, {0x5792}, 0x00}, //	add by wdy for spark
 	{OV9760_TOK_TERM, {0}, 0}
 };
 
@@ -497,7 +501,8 @@ static struct ov9760_reg const ov9760_896x736_30fps[] = {
 	{OV9760_8BIT, {0x3092}, 0x02}, //	;
 	{OV9760_8BIT, {0x3093}, 0x02}, //	;PLL control
 	{OV9760_8BIT, {0x3094}, 0x00}, //	;PLL control
-
+	{OV9760_8BIT, {0x5781}, 0x17}, //	add by wdy for spark
+	{OV9760_8BIT, {0x5792}, 0x00}, //	add by wdy for spark
 	{OV9760_TOK_TERM, {0}, 0}
 };
 
@@ -811,7 +816,8 @@ static struct ov9760_reg const ov9760_init_config[] = {
 	{OV9760_8BIT, {0x5185}, 0x00},
 	{OV9760_8BIT, {0x5186}, 0x01},
 	{OV9760_8BIT, {0x5002}, 0x41},
-
+	{OV9760_8BIT, {0x5781}, 0x17}, //	add by wdy for spark
+	{OV9760_8BIT, {0x5792}, 0x00}, //	add by wdy for spark
 	{OV9760_TOK_TERM, {0}, 0}
 };
 

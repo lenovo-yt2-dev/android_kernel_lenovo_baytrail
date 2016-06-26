@@ -198,7 +198,7 @@ static int mrfl_pwr_cmd_gfx(u32 gfx_mask, int new_state)
 				apply_TNG_A0_workarounds(OSPM_GRAPHICS_ISLAND, 1);
 
 			/* ANN A0 workarounds */
-			if (IS_ANN_A0(dev))
+			if (IS_ANN(dev))
 				apply_ANN_A0_workarounds(OSPM_GRAPHICS_ISLAND, 1);
 		}
 
@@ -366,6 +366,14 @@ int gpu_freq_mhz_to_code(int freq_mhz_in, int *p_freq_out)
 }
 EXPORT_SYMBOL(gpu_freq_mhz_to_code);
 
+int gpu_freq_get_max_fuse_setting(void)
+{
+
+	/* Feature not supported for TNG */
+	return 0;
+}
+EXPORT_SYMBOL(gpu_freq_get_max_fuse_setting);
+
 /***********************************************************
  * All Graphics Island
  ***********************************************************/
@@ -383,6 +391,9 @@ static bool ospm_gfx_power_up(struct drm_device *dev,
 
 	PSB_DEBUG_PM("Pre-power-up status = 0x%08x\n",
 		intel_mid_msgbus_read32(PUNIT_PORT, NC_PM_SSS));
+
+	PSB_DEBUG_PM("Power down LDO, then RSCD");
+	ret = GFX_POWER_UP(PMU_LDO);
 
 	ret = GFX_POWER_UP(PMU_RSCD);
 
@@ -413,6 +424,7 @@ static bool ospm_gfx_power_down(struct drm_device *dev,
 			struct ospm_power_island *p_island)
 {
 	bool ret;
+	uint32_t reg, data;
 
 	PSB_DEBUG_PM("OSPM: ospm_gfx_power_down \n");
 
@@ -426,6 +438,14 @@ static bool ospm_gfx_power_down(struct drm_device *dev,
 	psb_irq_uninstall_islands(dev,OSPM_GRAPHICS_ISLAND);
 	synchronize_irq(dev->pdev->irq);
 
+	PSB_DEBUG_PM("Flush SLC, then power down SLC LDO");
+	/* write 1 to RGX_CR_SLC_CTRL_FLUSH_INVAL */
+	reg = 0x103818 - RGX_OFFSET;
+	data = 1;
+	RGX_REG_WRITE(reg, data);
+
+	ret = GFX_POWER_DOWN(PMU_LDO);
+
 	/* power down every thing */
 	ret = GFX_POWER_DOWN(PMU_RSCD);
 
@@ -433,6 +453,106 @@ static bool ospm_gfx_power_down(struct drm_device *dev,
 		intel_mid_msgbus_read32(PUNIT_PORT, NC_PM_SSS));
 
 	return !ret;
+}
+
+static void ospm_check_registers(struct drm_device *dev)
+{
+	uint32_t reg, data;
+
+	PSB_DEBUG_PM("start\n");
+
+	reg = 0x103800 - RGX_OFFSET;
+	data = RGX_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x SLC_CTRL_MISC(0x103800)\n", data);
+
+	reg = 0x103808 - RGX_OFFSET;
+	data = RGX_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x SLC_CTRL_INVAL(0x103808)\n", data);
+
+	reg = 0x103818 - RGX_OFFSET;
+	data = RGX_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x SLC_CTRL_FLUSH_INVAL(0x103818)\n", data);
+
+	reg = 0x103820 - RGX_OFFSET;
+	data = RGX_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x SLC_STATUS0(0x103820)\n", data);
+
+	reg = 0x103828 - RGX_OFFSET;
+	data = RGX_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x SLC_CTRL_BYPASS(0x103828)\n", data);
+
+	reg = 0x160008 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x GFX_CONTROL(0x160008)\n", data);
+	reg = 0x16000c - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x GFX_THROT(0x16000c)\n", data);
+	reg = 0x160020 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x GCILP_CONTROL(0x160020)\n", data);
+	reg = 0x160028 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	PSB_DEBUG_PM("0x%08x GCILP_ARB_CONTROL(0x160028)\n", data);
+
+	return ;
+}
+
+
+static void ospm_pnp_settings(struct drm_device *dev)
+{
+	uint32_t reg, data, count = 0;
+
+	/*set BYP_CC to 1 on  SLC_CTRL_BYPASS */
+	reg = 0x103828 - RGX_OFFSET;
+	data = RGX_REG_READ(reg);
+	data |= 1 << 20;
+	RGX_REG_WRITE(reg, data);
+
+	reg = 0x160008 - GFX_WRAPPER_OFFSET;
+	data = 0x0;
+	WRAPPER_REG_WRITE(reg, data);
+
+	/* soc.gfx_wrapper.gclip_control.aes_bypass_disable = 1*/
+	reg = 0x160020 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	data |= 0x080;
+	WRAPPER_REG_WRITE(reg, data);
+
+	/* set [20:16] to 0x12 */
+	if (IS_ANN(dev))
+		data |= 0x019<<16;
+	else
+		data |= 0x012<<16;
+	/* set CONCURRENCY_PERF_MODE to 0x01 */
+	data |= 0x01<<8;
+	/* set PFI_CREDIT_INIT to 1 */
+	data |= 0x01 << 23;
+	WRAPPER_REG_WRITE(reg, data);
+
+	count = 0;
+	do {
+		usleep_range(450, 550);
+		data = RGX_REG_READ(reg);
+	} while ((data & (0x01<<23)) && (count++ < 10000));
+
+	if (unlikely(count > 10000))
+		PSB_DEBUG_PM("PFI_CREDIT_INIT: flush and invalide timeout\n" );
+
+	reg = 0x160028 - GFX_WRAPPER_OFFSET;
+	data = WRAPPER_REG_READ(reg);
+	/*
+	GCILP_ARB_CONTROL[3:0] = SLCRD_WEIGHT = 3
+	GCILP_ARB_CONTROL[7:4] = SLCWR_WEIGHT = 3
+	GCILP_ARB_CONTROL[11:8] = VED_WEIGHT = 3
+	GCILP_ARB_CONTROL[15:12] = VEC_WEIGHT = 3
+	GCILP_ARB_CONTROL[19:16] = VSP_WEIGHT = 3
+	GCILP_ARB_CONTROL[23:20] = FIRST_ARB_WEIGHT = 3
+	GCILP_ARB_CONTROL[31] = ARB_MODE = 0
+	*/
+	data |= 0x333333;
+	WRAPPER_REG_WRITE(reg, data);
+
+	return ;
 }
 /**
  * ospm_slc_power_up
@@ -444,15 +564,17 @@ static bool ospm_slc_power_up(struct drm_device *dev,
 			struct ospm_power_island *p_island)
 {
 	bool ret;
+	uint32_t reg, data, count;
 
 	PSB_DEBUG_PM("%s: Pre-power-off Status = 0x%08x\n",
 		__func__,
 		intel_mid_msgbus_read32(PUNIT_PORT, NC_PM_SSS));
 
-	ret = GFX_POWER_UP(PMU_LDO);
-
-	if (!ret)
-		ret = GFX_POWER_UP(PMU_SLC);
+	/* bind LDO power up with GFX */
+	/*
+	 * ret = GFX_POWER_UP(PMU_LDO);
+	 */
+	ret = GFX_POWER_UP(PMU_SLC);
 
 	/*
 	 * This workarounds are only needed for TNG A0/A1 silicon.
@@ -466,7 +588,7 @@ static bool ospm_slc_power_up(struct drm_device *dev,
 		*/
 		apply_TNG_A0_workarounds(OSPM_GRAPHICS_ISLAND, 1);
 	}
-	if (!ret && IS_ANN_A0(dev))
+	if (!ret && IS_ANN(dev))
 		apply_ANN_A0_workarounds(OSPM_GRAPHICS_ISLAND, 1);
 
 	if (!ret)
@@ -478,8 +600,6 @@ static bool ospm_slc_power_up(struct drm_device *dev,
 	/* SLC flush and invalidate */
 	if (!ret)
 	{
-		uint32_t reg, data, count;
-
 		reg = 0x100100 - RGX_OFFSET;
 		data = RGX_REG_READ(reg);
 		RGX_REG_WRITE(reg, data | (1 << 27));
@@ -503,8 +623,6 @@ static bool ospm_slc_power_up(struct drm_device *dev,
 	}
 
 	if (!ret) {
-		uint32_t reg, data;
-
 		/* soc.gfx_wrapper.gbypassenable_sw = 1 */
 		reg = 0x160854 - GFX_WRAPPER_OFFSET;
 		data = WRAPPER_REG_READ(reg);
@@ -516,7 +634,6 @@ static bool ospm_slc_power_up(struct drm_device *dev,
 	}
 
 	if (!ret && IS_TNG_B0(dev)) {
-		uint32_t reg, data;
 		/* soc.gfx_wrapper.gclip_control.aes_bypass_disable = 1*/
 		reg = 0x160020 - GFX_WRAPPER_OFFSET;
 		data = WRAPPER_REG_READ(reg);
@@ -528,11 +645,12 @@ static bool ospm_slc_power_up(struct drm_device *dev,
 	/* SLC hash set */
 	if (!ret)
 	{
-		uint32_t reg, data;
 		reg = 0x103800 - RGX_OFFSET;
 		data = 0x200001;
 		RGX_REG_WRITE(reg, data);
 	}
+
+	ospm_pnp_settings(dev);
 
 	return !ret;
 }
@@ -557,10 +675,11 @@ static bool ospm_slc_power_down(struct drm_device *dev,
 
 	if (!ret)
 		ret = GFX_POWER_DOWN(PMU_SLC);
-
-	if (!ret)
-		ret = GFX_POWER_DOWN(PMU_LDO);
-
+	/* bind LDO power down with GFX */
+	/*
+	 *if (!ret)
+	 *	ret = GFX_POWER_DOWN(PMU_LDO);
+	 */
 	PSB_DEBUG_PM("Post-power-off Status = 0x%08x\n",
 		intel_mid_msgbus_read32(PUNIT_PORT, NC_PM_SSS));
 

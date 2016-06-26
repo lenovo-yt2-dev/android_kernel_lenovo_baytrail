@@ -15,5 +15,5 @@ config VIDEO_ATOMISP
 config VIDEO_ATOMISP_TMP
        tristate "temporary Kconfig variable for atomisp2"
 
-
-
+config VIDEO_ATOMISP_CTP
+       tristate "temporary Kconfig variable for atomisp2 on CTP"

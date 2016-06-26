@@ -35,7 +35,6 @@
 #ifdef    CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
 #endif /* CONFIG_HAS_EARLYSUSPEND */
-
 /* Debug Message Flags */
 #define KIONIX_KMSG_ERR	0	/* Print kernel debug message for error */
 #define KIONIX_KMSG_INF	0	/* Print kernel debug message for info */
@@ -53,7 +52,16 @@
 #else
 #define KMSGINF(format, ...)
 #endif
+//add by yhj 20150207
+#define I2C_BOARDINFO_IN_DRIVER
+#define I2C_STATIC_BUS_NUM			5
 
+#ifdef I2C_BOARDINFO_IN_DRIVER
+static struct i2c_board_info kionix_accel_i2c_boardinfo = {
+	I2C_BOARD_INFO(KIONIX_ACCEL_NAME, KIONIX_ACCEL_I2C_ADDR),
+};
+#endif
+//add end
 
 /******************************************************************************
  * Accelerometer WHO_AM_I return value
@@ -174,8 +182,8 @@
 
 /* Input Event Constants */
 #define ACCEL_G_MAX			8096
-#define ACCEL_FUZZ			3
-#define ACCEL_FLAT			3
+#define ACCEL_FUZZ			0
+#define ACCEL_FLAT			0
 /* I2C Retry Constants */
 #define KIONIX_I2C_RETRY_COUNT		10 	/* Number of times to retry i2c */
 #define KIONIX_I2C_RETRY_TIMEOUT	1	/* Timeout between retry (miliseconds) */
@@ -1029,10 +1037,11 @@ static int kionix_accel_enable(struct kionix_accel_driver *acceld)
 	int err = 0;
 	int loop;
 	long remaining;
-
+	printk("////yhj add in %s -before,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
 	mutex_lock(&acceld->mutex_earlysuspend);
 
 	atomic_set(&acceld->accel_suspend_continue, 0);
+	//printk("////yhj add in %s -after,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
         //printk("liumiao:the suspend is %d\n",acceld->accel_suspended);
 	/* Make sure that the sensor had successfully resumed before enabling it 
 	if(atomic_read(&acceld->accel_suspended) == 1) {
@@ -1085,11 +1094,11 @@ exit:
 static int kionix_accel_disable(struct kionix_accel_driver *acceld)
 {
 	int err = 0;
-
+	printk("////yhj add in %s -before,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
 	mutex_lock(&acceld->mutex_resume);
 
 	atomic_set(&acceld->accel_suspend_continue, 1);
-
+	//printk("////yhj add in %s -after,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
 	if(atomic_read(&acceld->accel_enabled) > 0){
 		if(atomic_dec_and_test(&acceld->accel_enabled)) {
 			if(atomic_read(&acceld->accel_enable_resume) > 0)
@@ -1190,7 +1199,7 @@ static ssize_t kionix_accel_set_enable(struct device *dev, struct device_attribu
 	const int enable_count = 1;
 	unsigned long enable;
 	int err = 0;
-
+	//printk("////yhj add in %s.\n",__func__);
 	/* Lock the device to prevent races with open/close (and itself) */
 	mutex_lock(&input_dev->mutex);
 
@@ -1204,22 +1213,22 @@ static ssize_t kionix_accel_set_enable(struct device *dev, struct device_attribu
 		/* Removes any leading negative sign */
 		while(*buf2 == '-')
 			buf2++;
-		#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,35))
+		//#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,35))
 		err = kstrtouint((const char *)buf2, 10, (unsigned int *)&enable);
 		if (err < 0) {
 			KMSGERR(&acceld->client->dev, \
 					"%s: kstrtouint returned err = %d\n", __func__, err);
 			goto exit;
 		}
-		#else
+		//else
 		err = strict_strtoul((const char *)buf2, 10, &enable);
 		if (err < 0) {
 			KMSGERR(&acceld->client->dev, \
 					"%s: strict_strtoul returned err = %d\n", __func__, err);
 			goto exit;
 		}
-		#endif
-
+		//#endif
+		//printk("////yhj add in %s 2 enable=%d.\n",__func__,enable);
 		if(enable)
 			err = kionix_accel_enable(acceld);
 		else
@@ -1253,7 +1262,7 @@ static ssize_t kionix_accel_set_delay(struct device *dev, struct device_attribut
 	const int delay_count = 1;
 	unsigned long interval;
 	int err = 0;
-
+	//printk("///// yhj add in %s,interval=%ul",__func__,interval);
 	/* Lock the device to prevent races with open/close (and itself) */
 	mutex_lock(&input_dev->mutex);
 
@@ -1298,6 +1307,7 @@ static ssize_t kionix_accel_set_delay(struct device *dev, struct device_attribut
 		if(acceld->accel_drdy == 1)
 			enable_irq(client->irq);
 	}
+	//printk("///// yhj add in %s,interval=%ul",__func__,interval);
 
 exit:
 	mutex_unlock(&input_dev->mutex);
@@ -1538,9 +1548,10 @@ void kionix_accel_earlysuspend_suspend(struct early_suspend *h)
 {
 	struct kionix_accel_driver *acceld = container_of(h, struct kionix_accel_driver, early_suspend);
 	long remaining;
-
+	printk("////yhj add in %s -before,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
+		//usleep_range(3000, 4000);
 	mutex_lock(&acceld->mutex_earlysuspend);
-
+	//printk("////yhj add in %s -after,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
 	/* Only continue to suspend if enable did not intervene */
 	if(atomic_read(&acceld->accel_suspend_continue) == 0) {
 		/* Make sure that the sensor had successfully disabled before suspending it 
@@ -1569,9 +1580,9 @@ void kionix_accel_earlysuspend_resume(struct early_suspend *h)
 {
 	struct kionix_accel_driver *acceld = container_of(h, struct kionix_accel_driver, early_suspend);
 	int err;
-
+	printk("////yhj add in %s -before,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
 	mutex_lock(&acceld->mutex_resume);
-
+	//printk("////yhj add in %s -after,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
 	if(atomic_read(&acceld->accel_suspended) == 1) {
 		err = kionix_accel_enable(acceld);
 		if (err < 0) {
@@ -1599,7 +1610,9 @@ static int  kionix_accel_probe(struct i2c_client *client,
 	const struct kionix_accel_platform_data *accel_pdata = client->dev.platform_data;
 	struct kionix_accel_driver *acceld;
 	int err;
-//	struct proc_dir_entry *proc_dir, *proc_entry;
+	//add by yhj 20150206
+	printk("%s start.\n",__func__);
+	//	struct proc_dir_entry *proc_dir, *proc_entry;
 
 	if (!i2c_check_functionality(client->adapter,
 				I2C_FUNC_I2C | I2C_FUNC_SMBUS_BYTE_DATA)) {
@@ -1762,7 +1775,7 @@ static int  kionix_accel_probe(struct i2c_client *client,
 	atomic_set(&acceld->accel_enabled, 0);
 	atomic_set(&acceld->accel_input_event, 0);
 	atomic_set(&acceld->accel_enable_resume, 0);
-
+	//printk("////yhj add in %s -before,accel_suspend_continue=%d.\n",__func__,atomic_read(&acceld->accel_suspend_continue) );
 	mutex_init(&acceld->mutex_earlysuspend);
 	mutex_init(&acceld->mutex_resume);
 	rwlock_init(&acceld->rwlock_accel_data);
@@ -1784,7 +1797,7 @@ static int  kionix_accel_probe(struct i2c_client *client,
 	acceld->accel_workqueue = create_workqueue("Kionix Accel Workqueue");
 	INIT_DELAYED_WORK(&acceld->accel_work, kionix_accel_work);
 	//init_waitqueue_head(&acceld->wqh_suspend);
-
+	
 	if (acceld->accel_drdy) {
 		err = request_threaded_irq(client->irq, NULL, kionix_accel_isr, \
 					   IRQF_TRIGGER_RISING| IRQF_ONESHOT, \
@@ -1813,11 +1826,14 @@ static int  kionix_accel_probe(struct i2c_client *client,
 
 #ifdef    CONFIG_HAS_EARLYSUSPEND
 	/* The higher the level, the earlier it resume, and the later it suspend */
-	acceld->early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 50;
+	acceld->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
 	acceld->early_suspend.suspend = kionix_accel_earlysuspend_suspend;
 	acceld->early_suspend.resume = kionix_accel_earlysuspend_resume;
 	register_early_suspend(&acceld->early_suspend);
 #endif /* CONFIG_HAS_EARLYSUSPEND */
+
+	//add by yhj 20150206
+	printk("%s end.\n",__func__);
 
 	return 0;
 
@@ -1868,7 +1884,7 @@ static struct kionix_accel_platform_data accel_pdata = {
        .min_interval=5,
 	.poll_interval=50,
        .gpio_int=67,
-       .accel_direction=1,
+       .accel_direction=5,
        .accel_irq_use_drdy=1,
 }
         
@@ -1883,21 +1899,73 @@ static struct i2c_driver kionix_accel_driver = {
 	.remove		= kionix_accel_remove,
 	.id_table	= kionix_accel_id,
 };
-
+/*
 static int __init kionix_accel_init(void)   //change by lm
-{     printk("%s:liumiao",__func__);
+{     
+	printk("%s:liumiao.\n",__func__);
        int i2c_busnum = 5;
         struct i2c_board_info i2c_info;
-        
+       printk("%s:before i2c_add_driver.\n",__func__);
 	i2c_add_driver(&kionix_accel_driver);
-	
+	printk("%s:after i2c_add_driver.\n",__func__);
 	memset(&i2c_info, 0, sizeof(i2c_info));
        strlcpy(i2c_info.type, "kionix_accel", sizeof("kionix_accel"));
        
        i2c_info.addr = 0x0E;
        i2c_info.platform_data=&accel_pdata;
+	printk("%s:before i2c_register_board_info.\n",__func__);
        return i2c_register_board_info(i2c_busnum, &i2c_info, 1);
 }
+*/
+//add by yhj 20150207
+#ifdef I2C_BOARDINFO_IN_DRIVER 
+static int i2c_static_add_device(struct i2c_board_info *info)
+{
+	struct i2c_adapter *adapter;
+	struct i2c_client *client;
+
+	adapter = i2c_get_adapter(I2C_STATIC_BUS_NUM);
+	if (!adapter) {
+		//printk(KERN_ERR "%s: can't get i2c adapter\n", __FUNCTION__);
+		return -ENODEV;
+	}
+
+	client = i2c_new_device(adapter, info);
+	if (!client) {
+		//printk(KERN_ERR "%s:  can't add i2c device at 0x%x\n",
+			//__FUNCTION__, (unsigned int)info->addr);
+		return -ENODEV;
+	}
+
+	i2c_put_adapter(adapter);
+
+	return 0;
+}
+#endif
+static int __init kionix_accel_init(void)
+{
+#ifdef I2C_BOARDINFO_IN_DRIVER
+	printk("%s:liumiao.\n",__func__);
+	int  ret = 0;
+	int i2c_busnum = 5;
+        struct i2c_board_info i2c_info;
+
+	memset(&i2c_info, 0, sizeof(i2c_info));
+	strlcpy(i2c_info.type, "kionix_accel", sizeof("kionix_accel"));
+       i2c_info.addr = 0x0E;
+       i2c_info.platform_data=&accel_pdata;
+	ret = i2c_static_add_device(&i2c_info);
+	if (ret < 0) {
+		printk(KERN_ERR "%s: add i2c device error %d\n", __FUNCTION__, ret);
+		return ret;
+	}
+
+
+#endif 
+	return i2c_add_driver(&kionix_accel_driver);
+}
+
+//add end
 module_init(kionix_accel_init);
 
 static void __exit kionix_accel_exit(void)

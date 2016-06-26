@@ -45,6 +45,7 @@
 #include "displayclass_interface.h"
 #include "display_callbacks.h"
 #include <linux/wakelock.h>
+#include <linux/pm_qos.h>
 
 /*  Name changed with kernel 3.10 gen graphics patches. */
 #if !defined DRM_MODE_ENCODER_DSI
@@ -64,6 +65,11 @@ extern int gfxrtdelay;
 extern int drm_psb_te_timer_delay;
 extern int drm_psb_enable_gamma;
 extern int drm_psb_enable_color_conversion;
+extern int drm_psb_set_gamma_success;
+extern int drm_psb_set_gamma_pending;
+extern int drm_psb_set_gamma_pipe;
+extern int gamma_setting_save[256];
+extern int csc_setting_save[6];
 extern u32 DISP_PLANEB_STATUS;
 
 extern struct ttm_bo_driver psb_ttm_bo_driver;
@@ -107,6 +113,9 @@ enum enum_ports {
 #define PANEL_PROC_ENTRY "panel_status"
 #define HDMI_PROC_ENTRY "hdmi_power"
 #define GPIO_PROC_ENTRY "hdmi_gpio_control"
+#define CSC_PROC_ENTRY "csc_control"
+#define RGX_PROC_ENTRY "rgx_hwr_control"
+
 
 
 #define PSB_DRM_DRIVER_DATE "2009-03-10"
@@ -354,14 +363,43 @@ enum enum_ports {
 #define IS_TNG_A0(dev) ((intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_TANGIER) && (intel_mid_soc_stepping() == 0))
 
 #if defined(CONFIG_DRM_CTP)
-#define IS_TNG_B0(dev) 		0
+#define IS_TNG_B0(dev)		0
 #elif defined(CONFIG_DRM_VXD_BYT)
-#define IS_TNG_B0(dev) 		0
+#define IS_TNG_B0(dev)		0
 #else
 #define IS_TNG_B0(dev) ((intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_TANGIER) && (intel_mid_soc_stepping() == 1))
 #endif
 
+#define IS_ANN(dev) (intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE)
+
+/*
+ * Checking for Anniedale and Anniedale revision ID
+ *
+ * Note: Argument "dev" defined for these macros is not used.  It is OK to
+ * specify "dev" as null.
+ *
+ * Stepping:  The "CPU ID" stepping value.  Not used here. A0==0, B0==0, K0==1
+ * Note: Function intel_mid_soc_stepping returns the Revision ID (not the
+ * stepping).
+ *
+ * Revision ID: A way to differentiate between SOC variants.
+ * The Revision ID can be read from defined PCI devices.
+ * For Anniedale A0, B0, and K0, the three defined PCI devices are
+ * 00:00:0 (ASA-CUnit), 00:02:0 (Gunit (Display and Graphics)), and
+ * 00:03:0 (Iunit (ISP)).
+ * For these three pci devices on Anniedale, the revision ID is the same.
+ * So, device 00:00:0 is a suitable surrogate for obtaining a Revision ID upon
+ * which decisions can be made. Anniedale Revision IDs:
+ * (Yes, that's 2 for B0 and 1 for K0).
+ * 0 --> A0
+ * 2 --> B0
+ * 1 --> K0
+ */
 #define IS_ANN_A0(dev) ((intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE) && (intel_mid_soc_stepping() == 0))
+
+#define IS_ANN_B0(dev) ((intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE) && (intel_mid_soc_stepping() == 2))
+
+#define IS_MOFD(dev) (intel_mid_identify_cpu() == INTEL_MID_CPU_CHIP_ANNIEDALE)
 
 #define IS_MID(dev) (IS_MDFLD(dev) || IS_MRFLD(dev))
 #define IS_FLDS(dev) (IS_MDFLD(dev) || IS_MRFLD(dev))
@@ -398,6 +436,12 @@ typedef enum {
 	MDFLD_DSI_ENCODER_DPI,
 } mdfld_dsi_encoder_t;
 
+typedef enum {
+	MDFLD_PIPE_A = 0,
+	MDFLD_PIPE_B,
+	MDFLD_PIPE_C,
+	MDFLD_PIPE_MAX,
+} mdfld_pipe_num;
 
 struct drm_psb_private {
 	/*
@@ -407,6 +451,9 @@ struct drm_psb_private {
 #ifdef CONFIG_MID_DSI_DPU
 	void *dbi_dpu_info;
 #endif
+	/* QOS */
+	struct pm_qos_request s0ix_qos;
+
 	struct mdfld_dsi_config *dsi_configs[2];
 
 	struct workqueue_struct *vsync_wq;
@@ -417,11 +464,14 @@ struct drm_psb_private {
 	struct work_struct reset_panel_work;
 
 	struct work_struct vsync_event_work;
-	int vsync_pipe;
+	unsigned int vsync_pipe;
 
 	struct mutex vsync_lock;
 	atomic_t *vblank_count;
 	bool vsync_enabled[3];
+
+	bool pipea_dpi_underrun_count;
+	bool pipec_dpi_underrun_count;
 
 	/*
 	 *TTM Glue.
@@ -467,7 +517,6 @@ struct drm_psb_private {
 	uint8_t *ved_wrapper_reg;
 	uint8_t *vec_wrapper_reg;
 	uint8_t *vdc_reg;
-	uint32_t gatt_free_offset;
 
 	/* IMG video context */
 	struct list_head video_ctx;
@@ -521,23 +570,8 @@ struct drm_psb_private {
 	uint32_t num_pipe;
 
 	/*
-	 * CI share buffer
-	 */
-	unsigned int ci_region_start;
-	unsigned int ci_region_size;
-
-	/*
-	 * RAR share buffer;
-	 */
-	unsigned int rar_region_start;
-	unsigned int rar_region_size;
-
-	/*
 	 *Memory managers
 	 */
-
-	int have_camera;
-	int have_rar;
 	int have_tt;
 	int have_mem_mmu;
 	int have_mem_mmu_tiling;
@@ -562,6 +596,12 @@ struct drm_psb_private {
 	uint8_t panel_desc;
 	bool early_suspended;
 	struct wake_lock ospm_wake_lock;
+
+	/*
+	 *MAXFIFO/ S0i1-Display info
+	 */
+	void * dc_maxfifo_info;
+
 
 	/*
 	 * Sizes info
@@ -1024,6 +1064,12 @@ struct drm_psb_private {
 	spinlock_t dsr_lock;
 	struct timer_list dsr_timer;
 
+	/* VSYNC HRT TIMER
+	 * W/A for system hang when s0i1 display is enabled
+	 */
+	ktime_t vsync_hrt_period;
+	struct hrtimer vsync_timer;
+
 	bool dsi_device_ready;
 	bool hdmi_done_reading_edid;
 	bool um_start;
@@ -1080,6 +1126,7 @@ struct drm_psb_private {
 *	pfn_screen_event_handler pvr_screen_event_handler;
 */
 	struct timer_list hdmi_timer;
+	struct timer_list maxfifo_timer;
 	/* fix Lock screen flip in resume issue */
 	unsigned long init_screen_start;
 	unsigned long init_screen_offset;
@@ -1104,6 +1151,9 @@ struct drm_psb_private {
 	struct pci_dev *pci_root;
 	bool bUseHFPLL;
 	bool bRereadZero;
+	bool panel_180_rotation;
+	bool legacy_csc_enable;
+	bool legacy_gamma_enable;
 };
 
 struct psb_mmu_driver;
@@ -1112,6 +1162,9 @@ extern int drm_crtc_probe_output_modes(struct drm_device *dev, int, int);
 extern int drm_pick_crtcs(struct drm_device *dev);
 extern int mdfld_intel_crtc_set_gamma(struct drm_device *dev,
 					struct gamma_setting *setting_data);
+
+extern int mdfld_intel_crtc_set_color_conversion(struct drm_device *dev,
+                                        struct csc_setting *setting_data);
 
 static inline struct drm_psb_private *psb_priv(struct drm_device *dev)
 {
@@ -1125,13 +1178,15 @@ static inline struct drm_psb_private *psb_priv(struct drm_device *dev)
 extern irqreturn_t psb_irq_handler(DRM_IRQ_ARGS);
 extern int psb_irq_enable_dpst(struct drm_device *dev);
 extern int psb_irq_disable_dpst(struct drm_device *dev);
+extern int psb_dpst_diet_save(struct drm_device *dev);
+extern int psb_dpst_diet_restore(struct drm_device *dev);
 extern void psb_irq_preinstall(struct drm_device *dev);
 extern int psb_irq_postinstall(struct drm_device *dev);
 extern void psb_irq_uninstall(struct drm_device *dev);
 extern void psb_irq_preinstall_islands(struct drm_device *dev, int hw_islands);
 extern int psb_irq_postinstall_islands(struct drm_device *dev, int hw_islands);
-extern void psb_irq_turn_on_dpst(struct drm_device *dev);
-extern void psb_irq_turn_off_dpst(struct drm_device *dev);
+extern void psb_irq_turn_on_dpst_no_lock(struct drm_device *dev);
+extern void psb_irq_turn_off_dpst_no_lock(struct drm_device *dev);
 
 extern void psb_irq_uninstall_islands(struct drm_device *dev, int hw_islands);
 extern int psb_vblank_wait2(struct drm_device *dev, unsigned int *sequence);
@@ -1152,11 +1207,15 @@ extern int intel_get_crtc_scanoutpos(struct drm_device *dev, int pipe,
 extern int mdfld_enable_te(struct drm_device *dev, int pipe);
 extern int mdfld_recover_te(struct drm_device *dev, int pipe);
 extern void mdfld_disable_te(struct drm_device *dev, int pipe);
+extern int mrfl_enable_repeat_frame_intr(struct drm_device *dev,
+					int idle_frame_count);
+extern void mrfl_disable_repeat_frame_intr(struct drm_device *dev);
 extern int mdfld_irq_enable_hdmi_audio(struct drm_device *dev);
 extern int mdfld_irq_disable_hdmi_audio(struct drm_device *dev);
 extern void psb_te_timer_func(unsigned long data);
 extern void mdfld_te_handler_work(struct work_struct *te_work);
 extern void mdfld_vsync_event_work(struct work_struct *work);
+
 #ifdef CONFIG_SUPPORT_HDMI
 void hdmi_do_audio_underrun_wq(struct work_struct *work);
 void hdmi_do_audio_bufferdone_wq(struct work_struct *work);
@@ -1219,6 +1278,8 @@ struct backlight_device *psb_get_backlight_device(void);
 #define PSB_D_WARN    (1 << 13)
 #define PSB_D_MIPI    (1 << 14)
 #define PSB_D_BL    (1 << 15)
+#define PSB_D_DPST    (1 << 16)
+#define PSB_D_MAXFIFO (1 << 17)
 
 #ifndef DRM_DEBUG_CODE
 /* To enable debug printout, set drm_psb_debug in psb_drv.c
@@ -1265,6 +1326,10 @@ extern int drm_topaz_sbuswa;
 	PSB_DEBUG(PSB_D_MIPI, _fmt, ##_arg)
 #define PSB_DEBUG_BL(_fmt, _arg...) \
         PSB_DEBUG(PSB_D_BL, _fmt, ##_arg)
+#define PSB_DEBUG_DPST(_fmt, _arg...) \
+        PSB_DEBUG(PSB_D_DPST, _fmt, ##_arg)
+#define PSB_DEBUG_MAXFIFO(_fmt, _arg...) \
+        PSB_DEBUG(PSB_D_MAXFIFO, _fmt, ##_arg)
 
 #if DRM_DEBUG_CODE
 #define PSB_DEBUG(_flag, _fmt, _arg...)					\
@@ -1415,6 +1480,8 @@ extern int drm_decode_flag;
 
 extern char HDMI_EDID[20];
 extern int hdmi_state;
+extern int drm_vsp_vpp_batch_cmd;
+extern int drm_video_sepkey;
 
 /*
  * set cpu_relax = 1 in sysfs to use cpu_relax instead of udelay bysy loop

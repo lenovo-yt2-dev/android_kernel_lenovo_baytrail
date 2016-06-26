@@ -368,28 +368,37 @@ static ssize_t dlp_flash_dev_read(struct file *filp,
 			   loff_t *ppos)
 {
 	struct dlp_channel *ch_ctx = filp->private_data;
-	struct dlp_flash_ctx *flash_ctx = ch_ctx->ch_data;
+	struct dlp_flash_ctx *flash_ctx;
 	struct hsi_msg *msg;
 	int ret, to_copy, copied, available;
 	unsigned long flags;
 
 	/* Have some data to read ? */
-	spin_lock_irqsave(&ch_ctx->lock, flags);
-	ret = list_empty(&flash_ctx->rx_msgs);
-	spin_unlock_irqrestore(&ch_ctx->lock, flags);
+	if (!ch_ctx || !ch_ctx->ch_data)
+		return -ENOENT;
+	else {
+		flash_ctx = ch_ctx->ch_data;
+		spin_lock_irqsave(&ch_ctx->lock, flags);
+		ret = list_empty(&flash_ctx->rx_msgs);
+		spin_unlock_irqrestore(&ch_ctx->lock, flags);
+	}
 
 	/* List empty ? */
 	if (ret) {
 		/* Descriptor opened in Non-Blocking mode ? */
-		if (filp->f_flags & O_NONBLOCK) {
-			copied = -EWOULDBLOCK;
-			goto out;
-		} else {
-			ret = wait_event_interruptible(flash_ctx->read_wq, 0);
-			if (ret) {
-				copied = -EINTR;
-				goto out;
-			}
+		if (filp->f_flags & O_NONBLOCK)
+			return -EWOULDBLOCK;
+		else {
+			if (ch_ctx && flash_ctx)
+				ret = wait_event_interruptible(flash_ctx->read_wq, !dlp_flash_get_opened(ch_ctx));
+			else
+				return -ENOENT;
+
+			if (ret)
+				return -EINTR;
+			else
+				/* driver closed !*/
+				return -ENOENT;
 		}
 	}
 
@@ -397,11 +406,11 @@ static ssize_t dlp_flash_dev_read(struct file *filp,
 	available = count;
 
 	/* Parse RX msgs queue */
-	while ((msg = dlp_boot_rx_dequeue(ch_ctx))) {
+	while (ch_ctx && (msg = dlp_boot_rx_dequeue(ch_ctx))) {
 		/* Check if we have enough of space in the user buffer */
 		to_copy = MIN(msg->actual_len, available);
 		/* In case no more buffer at user space for the read */
-		if (to_copy == 0){
+		if (ch_ctx && (to_copy == 0)) {
 			/* Put the msg back in the RX queue */
 			dlp_boot_rx_queue_head(ch_ctx, msg);
 
@@ -415,7 +424,8 @@ static ssize_t dlp_flash_dev_read(struct file *filp,
 			pr_err(DRVNAME ": Uanble to copy data to the user buffer\n");
 
 			/* Put the msg back in the RX queue */
-			dlp_boot_rx_queue_head(ch_ctx, msg);
+			if (ch_ctx)
+				dlp_boot_rx_queue_head(ch_ctx, msg);
 
 			/* Stop copying */
 			break;
@@ -436,11 +446,14 @@ static ssize_t dlp_flash_dev_read(struct file *filp,
 		}
 	}
 
-	/* Update the position */
-	(*ppos) += copied;
+	if (!ch_ctx)
+		return -ENOENT;
+	else {
+		/* Update the position */
+		(*ppos) += copied;
 
-out:
-	return copied;
+		return copied;
+	}
 }
 
 /*
@@ -477,7 +490,8 @@ static ssize_t dlp_flash_dev_write(struct file *filp,
 	ret = hsi_async(tx_msg->cl, tx_msg);
 	if (ret) {
 		pr_err(DRVNAME ": hsi_async(TX) failed (ret:%d)\n", ret);
-		ret = -EIO;
+		if (ret != -EACCES)
+			ret = -EIO;
 		goto free_tx;
 	}
 
@@ -505,13 +519,28 @@ out:
 static unsigned int dlp_flash_dev_poll(struct file *filp,
 		struct poll_table_struct *pt)
 {
-	struct dlp_channel *ch_ctx = filp->private_data;
-	struct dlp_flash_ctx *flash_ctx = ch_ctx->ch_data;
+	struct dlp_channel *ch_ctx;
+	struct dlp_flash_ctx *flash_ctx;
 	unsigned long flags;
 	unsigned int ret = 0;
 
+	if (unlikely(atomic_read(&dlp_drv.drv_remove_ongoing))) {
+		pr_err(DRVNAME ": %s: Driver is currently removed by the system",
+				__func__);
+		ret = POLLHUP;
+		return ret;
+	}
+	ch_ctx = filp->private_data;
+	flash_ctx = ch_ctx->ch_data;
+
 	poll_wait(filp, &flash_ctx->read_wq, pt);
 
+	if (unlikely(atomic_read(&dlp_drv.drv_remove_ongoing))) {
+		pr_err(DRVNAME ": %s: Driver is currently removed by the system",
+				__func__);
+		ret = POLLHUP;
+		return ret;
+	}
 	/* Have some data to read ? */
 	spin_lock_irqsave(&ch_ctx->lock, flags);
 	if (!list_empty(&flash_ctx->rx_msgs))
@@ -651,7 +680,18 @@ out:
 static int dlp_flash_ctx_cleanup(struct dlp_channel *ch_ctx)
 {
 	struct dlp_flash_ctx *flash_ctx = ch_ctx->ch_data;
+	struct hsi_msg *msg;
 	int ret = 0;
+
+	/* stop Reading thread */
+	dlp_flash_set_opened(ch_ctx, 0);
+	/* empty rx list*/
+	while (!list_empty(&flash_ctx->rx_msgs)) {
+		msg = dlp_boot_rx_dequeue(ch_ctx);
+		if (msg != NULL) {
+			dlp_pdu_free(msg, msg->channel);
+		}
+	}
 
 	/* Unregister/Delete char device & class */
 	device_destroy(flash_ctx->class, flash_ctx->tdev);

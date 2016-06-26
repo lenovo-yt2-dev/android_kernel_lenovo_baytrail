@@ -36,4 +36,6 @@ void gpu_freq_set_suspend_func(int (*suspend_func)(void));
 
 void gpu_freq_set_resume_func(int (*resume_func)(void));
 
+int gpu_freq_get_max_fuse_setting(void);
+
 #endif	/* _TNG_GRAPHICS_OSPM_H_*/

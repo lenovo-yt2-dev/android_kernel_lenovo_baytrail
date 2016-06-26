@@ -34,12 +34,8 @@
 #include <media/media-device.h>
 #include <media/v4l2-subdev.h>
 
-#ifdef CSS20
 #include "ia_css_types.h"
 #include "sh_css_legacy.h"
-#else /* CSS20 */
-#include "sh_css_types.h"
-#endif /* CSS20 */
 
 #include "atomisp_csi2.h"
 #include "atomisp_file.h"
@@ -50,12 +46,29 @@
 #include "gp_device.h"
 #include "irq.h"
 
+#ifdef CONFIG_GMIN_INTEL_MID
+/* redefine include/linux/atomisp_platform.h
+#define __IS_SOC(x) (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL && \
+		     boot_cpu_data.x86 == 6 &&			     \
+		     boot_cpu_data.x86_model == x)
+
+#define IS_MFLD	__IS_SOC(0x27)
+#define IS_BYT	__IS_SOC(0x37)
+#define IS_CHT	__IS_SOC(0x4C)
+#define IS_MOFD	__IS_SOC(0x5A)
+*/
+#else /* !CONFIG_GMIN_INTEL_MID */
+#define IS_CHT (INTEL_MID_BOARD(1, PHONE, CHT) || \
+	INTEL_MID_BOARD(1, TABLET, CHT))
 #define IS_MOFD (INTEL_MID_BOARD(1, PHONE, MOFD) || \
 	INTEL_MID_BOARD(1, TABLET, MOFD))
 #define IS_BYT (INTEL_MID_BOARD(1, PHONE, BYT) || \
 	INTEL_MID_BOARD(1, TABLET, BYT))
-#define IS_MFLD (INTEL_MID_BOARD(1, PHONE, MFLD) || \
-        INTEL_MID_BOARD(1, TABLET, MFLD))
+#endif /* CONFIG_GMIN_INTEL_MID */
+
+#define IS_HWREVISION(isp, rev) \
+	(((isp)->media_dev.hw_revision & ATOMISP_HW_REVISION_MASK) == \
+	 ((rev) << ATOMISP_HW_REVISION_SHIFT))
 
 #define MAX_STREAM_NUM	2
 
@@ -82,13 +95,13 @@
 #define DRIVER_VERSION		KERNEL_VERSION(ATOMISP_MAJOR, \
 	ATOMISP_MINOR, ATOMISP_PATCHLEVEL)
 
-#define ATOM_ISP_STEP_WIDTH	4
-#define ATOM_ISP_STEP_HEIGHT	4
+#define ATOM_ISP_STEP_WIDTH	2
+#define ATOM_ISP_STEP_HEIGHT	2
 
 #define ATOM_ISP_MIN_WIDTH	4
 #define ATOM_ISP_MIN_HEIGHT	4
-#define ATOM_ISP_MAX_WIDTH	4352
-#define ATOM_ISP_MAX_HEIGHT	3264
+#define ATOM_ISP_MAX_WIDTH	UINT_MAX
+#define ATOM_ISP_MAX_HEIGHT	UINT_MAX
 
 /* sub-QCIF resolution */
 #define ATOM_RESOLUTION_SUBQCIF_WIDTH	128
@@ -108,18 +121,21 @@
 #define ATOMISP_SC_TYPE_SIZE	2
 
 #define ATOMISP_ISP_TIMEOUT_DURATION		(2 * HZ)
+#define ATOMISP_EXT_ISP_TIMEOUT_DURATION        (6 * HZ)
 #define ATOMISP_ISP_FILE_TIMEOUT_DURATION	(60 * HZ)
+#define ATOMISP_WDT_KEEP_CURRENT_DELAY          0
 #define ATOMISP_ISP_MAX_TIMEOUT_COUNT	2
 #define ATOMISP_CSS_STOP_TIMEOUT_US	200000
 
 #define ATOMISP_CSS_Q_DEPTH	3
 #define ATOMISP_CSS_EVENTS_MAX  16
-#define ATOMISP_CONT_RAW_FRAMES 10
+#define ATOMISP_CONT_RAW_FRAMES 15
+#define ATOMISP_METADATA_QUEUE_DEPTH_FOR_HAL	8
+#define ATOMISP_S3A_BUF_QUEUE_DEPTH_FOR_HAL	8
 
 #define ATOMISP_DELAYED_INIT_NOT_QUEUED	0
 #define ATOMISP_DELAYED_INIT_QUEUED	1
-#define ATOMISP_DELAYED_INIT_WORK_DONE	2
-#define ATOMISP_DELAYED_INIT_DONE	3
+#define ATOMISP_DELAYED_INIT_DONE	2
 
 #define ATOMISP_CALC_CSS_PREV_OVERLAP(lines) \
 	((lines) * 38 / 100 & 0xfffffe)
@@ -134,13 +150,36 @@
  */
 #define ATOMISP_MAX_ISR_LATENCY	1000
 
+/*
+ * Add new YUVPP pipe for SOC sensor.
+ * a.ATOMISP_CSS_SUPPORT_YUVPP = 1
+ *    the css support YUVPP for SOC sensor.
+ * b.ATOMISP_CSS_SUPPORT_YUVPP = 0
+ *    the css no support YUVPP for SOC sensor
+ * c.Now, the FW has some issue about YUVPP pipe. so I disable YUVPP pipe for
+ *   SOC sensor
+ */
+#define ATOMISP_CSS_SUPPORT_YUVPP     0
+
+#define ATOMISP_CSS_OUTPUT_SECOND_INDEX     1
+#define ATOMISP_CSS_OUTPUT_DEFAULT_INDEX    0
+
+#define ATOMISP_USE_YUVPP(asd)  \
+	(asd->isp->inputs[asd->input_curr].type == SOC_CAMERA \
+	&& asd->isp->inputs[asd->input_curr].camera_caps-> \
+	   sensor[asd->sensor_curr].stream_num == 1   \
+	&& ATOMISP_CSS_SUPPORT_YUVPP)
+
+#define ATOMISP_DEPTH_SENSOR_STREAMON_COUNT 2
+
+#define DIV_NEAREST_STEP(n, d, step) \
+	round_down((2 * (n) + (d) * (step))/(2 * (d)), (step))
+
 struct atomisp_input_subdev {
 	unsigned int type;
 	enum atomisp_camera_port port;
 	struct v4l2_subdev *camera;
 	struct v4l2_subdev *motor;
-	struct atomisp_css_morph_table *morph_table;
-	struct atomisp_css_shading_table *shading_table;
 	struct v4l2_frmsizeenum frame_size;
 
 	/*
@@ -150,6 +189,7 @@ struct atomisp_input_subdev {
 	struct atomisp_sub_device *asd;
 
 	const struct atomisp_camera_caps *camera_caps;
+	int sensor_index;
 };
 
 enum atomisp_dfs_mode {
@@ -187,8 +227,6 @@ struct atomisp_sw_contex {
 	bool file_input;
 	int  invalid_frame;
 	int  invalid_vf_frame;
-	int  invalid_s3a;
-	int  invalid_dis;
 
 	int power_state;
 	int running_freq;
@@ -255,20 +293,17 @@ struct atomisp_device {
 	struct atomisp_sub_device *asd;
 	/*
 	 * this will be assiged dyanamically.
-	 * For CTP(ISP2300), only 1 stream is supported.
 	 * For Merr/BTY(ISP2400), 2 streams are supported.
 	 */
 	unsigned int num_of_streams;
-	/*
-	 * MRFLD has 3 CSI ports, while MFLD has only 2.
-	 */
+
 	struct atomisp_mipi_csi2_device csi2_port[ATOMISP_CAMERA_NR_PORTS];
 	struct atomisp_tpg_device tpg;
 	struct atomisp_file_device file_dev;
 
 	/* Purpose of mutex is to protect and serialize use of isp data
 	 * structures and css API calls. */
-	struct mutex mutex;
+	struct rt_mutex mutex;
 	/*
 	 * Serialise streamoff: mutex is dropped during streamoff to
 	 * cancel the watchdog queue. MUST be acquired BEFORE
@@ -293,7 +328,7 @@ struct atomisp_device {
 	struct timer_list wdt;
 	atomic_t wdt_count;
 	unsigned int wdt_duration;	/* in jiffies */
-	atomic_t fast_reset;
+	unsigned long wdt_expires;
 
 	spinlock_t lock; /* Just for streaming below */
 
@@ -301,6 +336,8 @@ struct atomisp_device {
 
 	unsigned int mipi_frame_size;
 	const struct atomisp_dfs_config *dfs;
+
+	bool css_initialized;
 };
 
 #define v4l2_dev_to_atomisp_device(dev) \
@@ -311,5 +348,10 @@ extern struct device *atomisp_dev;
 extern void *atomisp_kernel_malloc(size_t bytes);
 
 extern void atomisp_kernel_free(void *ptr);
+
+#define atomisp_is_wdt_running(a) timer_pending(&(a)->wdt)
+extern void atomisp_wdt_refresh(struct atomisp_device *isp, unsigned int delay);
+extern void atomisp_wdt_start(struct atomisp_device *isp);
+extern void atomisp_wdt_stop(struct atomisp_device *isp, bool sync);
 
 #endif /* __ATOMISP_INTERNAL_H__ */

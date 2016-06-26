@@ -130,7 +130,7 @@ static inline int wait_for_gen_fifo_empty(struct mdfld_dsi_pkg_sender *sender,
 	}
 
 	DRM_ERROR("fifo is NOT empty 0x%08x\n", REG_READ(gen_fifo_stat_reg));
-	if (!IS_ANN_A0(dev))
+	if (!IS_ANN(dev))
 		debug_dbi_hang(sender);
 
 	sender->status = MDFLD_DSI_CONTROL_ABNORMAL;
@@ -801,7 +801,7 @@ static int mdfld_dbi_cb_init(struct mdfld_dsi_pkg_sender *sender,
 		return -ENOMEM;
 	}
 
-	if (IS_ANN_A0(dev))
+	if (IS_ANN(dev))
 		memset(virt_addr, 0x0, 0x800);
 
 	sender->dbi_cb_phy = phy;
@@ -1320,7 +1320,6 @@ int mdfld_dsi_send_dcs(struct mdfld_dsi_pkg_sender *sender,
 	u8 *dst = NULL;
 	u8 *pSendparam = NULL;
 	int err = 0;
-	u32 fifo_sr;
 	int i;
 	int loop_num = 1;
 	int offset = 0;
@@ -1354,11 +1353,34 @@ int mdfld_dsi_send_dcs(struct mdfld_dsi_pkg_sender *sender,
 		if (is_dual_dsi(dev))
 			loop_num = 2;
 		mutex_lock(&sender->lock);
+
+		/*handle DSI error*/
+		if (dsi_error_handler(sender)) {
+			mutex_unlock(&sender->lock);
+			DRM_ERROR("Error handling failed\n");
+			return  -EAGAIN;
+		}
+		/**
+		 * check the whether is there any write_mem_start already being
+		 * sent in this between current te_seq and next te.
+		 * if yes, simply reject the rest of write_mem_start because it
+		 * is unnecessary. otherwise, go ahead and kick of a
+		 * write_mem_start.
+		 */
+		if (atomic64_read(&sender->last_screen_update) ==
+			atomic64_read(&sender->te_seq)) {
+			mutex_unlock(&sender->lock);
+			if (dev_priv->b_async_flip_enable)
+				DRM_INFO("reject write_mem_start last_screen_update[%ld], te_seq[%ld]\n",
+						atomic64_read(&sender->last_screen_update), atomic64_read(&sender->te_seq));
+			return -EAGAIN;
+		}
+
 		for(i = 0; i < loop_num; i++) {
 			if (i != 0)
-				offset = 0x800;
+				offset = MIPIC_REG_OFFSET;
 
-			if (IS_TNG_B0(dev)) {
+			if (!IS_TNG_A0(dev)) {
 				retry = wait_event_interruptible_timeout(dev_priv->eof_wait,
 				  (REG_READ(sender->mipi_gen_fifo_stat_reg) & BIT27),
 				    msecs_to_jiffies(MDFLD_DSI_DBI_FIFO_TIMEOUT));
@@ -1374,7 +1396,7 @@ int mdfld_dsi_send_dcs(struct mdfld_dsi_pkg_sender *sender,
 			if (!retry) {
 				DRM_ERROR("DBI FIFO timeout, drop frame\n");
 				mutex_unlock(&sender->lock);
-				if (!IS_ANN_A0(dev)) {
+				if (!IS_ANN(dev)) {
 					debug_dbi_hang(sender);
 					panic("DBI FIFO timeout, drop frame\n");
 				}
@@ -1390,22 +1412,33 @@ int mdfld_dsi_send_dcs(struct mdfld_dsi_pkg_sender *sender,
 			else
 				wait_for_hs_fifos_empty(sender);
 			sender->work_for_slave_panel = false;
+		}
 
-			/*record the last screen update timestamp*/
-			if (i == 0) {
-				atomic64_set(&sender->last_screen_update,
-					atomic64_read(&sender->te_seq));
-				*(cb + (index++)) = write_mem_start;
-			}
+		/*record the last screen update timestamp*/
+		atomic64_set(&sender->last_screen_update,
+			atomic64_read(&sender->te_seq));
+		*(cb + (index++)) = write_mem_start;
 
-			REG_WRITE(sender->mipi_cmd_len_reg + offset, 1);
-			REG_WRITE(sender->mipi_cmd_addr_reg + offset, cb_phy | BIT0 | BIT1);
+		/* Set write_mem_start to mipi C first */
+		if (is_dual_dsi(dev))
+			REG_WRITE(sender->mipi_cmd_len_reg + MIPIC_REG_OFFSET, 1);
+		REG_WRITE(sender->mipi_cmd_len_reg, 1);
+		if (is_dual_dsi(dev))
+			REG_WRITE(sender->mipi_cmd_addr_reg + MIPIC_REG_OFFSET, cb_phy | BIT0 | BIT1);
+		REG_WRITE(sender->mipi_cmd_addr_reg, cb_phy | BIT0 | BIT1);
 
+		if (is_dual_dsi(dev)) {
 			retry = MDFLD_DSI_DBI_FIFO_TIMEOUT;
-			while (retry && (REG_READ(sender->mipi_cmd_addr_reg + offset) & BIT0)) {
+			while (retry && (REG_READ(sender->mipi_cmd_addr_reg + MIPIC_REG_OFFSET) & BIT0)) {
 				udelay(1);
 				retry--;
 			}
+		}
+
+		retry = MDFLD_DSI_DBI_FIFO_TIMEOUT;
+		while (retry && (REG_READ(sender->mipi_cmd_addr_reg) & BIT0)) {
+			usleep_range(990, 1010);
+			retry--;
 		}
 		mutex_unlock(&sender->lock);
 		return 0;
@@ -1591,6 +1624,7 @@ int mdfld_dsi_read_mcs_hs(struct mdfld_dsi_pkg_sender *sender,
 	return mdfld_dsi_read_mcs(sender, cmd, data, len,
 				MDFLD_DSI_HS_TRANSMISSION);
 }
+EXPORT_SYMBOL(mdfld_dsi_read_mcs_hs);
 
 int mdfld_dsi_read_mcs_lp(struct mdfld_dsi_pkg_sender *sender,
 			u8 cmd,
@@ -1648,16 +1682,19 @@ int mdfld_dsi_pkg_sender_init(struct mdfld_dsi_connector *dsi_connector,
 	struct mdfld_dsi_pkg_sender *pkg_sender;
 	struct mdfld_dsi_config *dsi_config =
 		mdfld_dsi_get_config(dsi_connector);
+	struct drm_device *dev;
+	struct drm_psb_private *dev_priv;
+	struct psb_gtt *pg;
+	int i;
+	struct mdfld_dsi_pkg *pkg, *tmp;
+
 	if (!dsi_config) {
 		DRM_ERROR("dsi_config is NULL\n");
 		return -EINVAL;
 	}
-
-	struct drm_device *dev = dsi_config->dev;
-	struct drm_psb_private *dev_priv = dev->dev_private;
-	struct psb_gtt *pg = dev_priv->pg;
-	int i;
-	struct mdfld_dsi_pkg *pkg, *tmp;
+	dev = dsi_config->dev;
+	dev_priv = dev->dev_private;
+	pg = dev_priv->pg;
 
 	PSB_DEBUG_ENTRY("\n");
 

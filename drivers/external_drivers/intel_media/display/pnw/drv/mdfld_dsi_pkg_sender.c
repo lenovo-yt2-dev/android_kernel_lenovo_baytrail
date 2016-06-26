@@ -71,6 +71,11 @@ const char * dsi_errors[] = {
 	"[31:Tearing Effect]",
 };
 
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+#if defined(CONFIG_EEPROM_PADSTATION)
+extern void reportPadStationI2CFail(char *devname);
+#endif
+#endif
 static inline int wait_for_gen_fifo_empty(struct mdfld_dsi_pkg_sender * sender,
 						u32 mask)
 {
@@ -142,18 +147,39 @@ static int dsi_error_handler(struct mdfld_dsi_pkg_sender * sender)
 		case BIT3:
 		case BIT4:
 		case BIT5:
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+		case BIT6:
+		case BIT8:
+		case BIT9:
+		case BIT10:
+#else
 		case BIT6:
 		case BIT7:
 		case BIT8:
 		case BIT9:
 		case BIT10:
 		case BIT11:
+#endif
 		case BIT12:
 		case BIT13:
 			/*No Action required.*/
 			DRM_INFO("dsi status %s\n", dsi_errors[i]);
 			REG_WRITE(intr_stat_reg, mask);
 			break;
+#ifdef CONFIG_SUPPORT_DDS_MIPI_SWITCH
+		case BIT7:
+		case BIT11:
+			/*No Action required.*/
+			DRM_INFO("dsi status %s\n", dsi_errors[i]);
+			REG_WRITE(intr_stat_reg, mask);
+			if (panel_id == DDS_PAD) {
+				#if defined(CONFIG_EEPROM_PADSTATION)
+				reportPadStationI2CFail("DISPLAY");
+				DRM_INFO("[DISPLAY] [DDS] %s: detect error, do reportPadStationI2CFail().\n", __func__, panel_id);
+				#endif
+			}
+			break;
+#endif
 		case BIT14:
 			DRM_INFO("dsi status %s\n", dsi_errors[i]);
 			break;

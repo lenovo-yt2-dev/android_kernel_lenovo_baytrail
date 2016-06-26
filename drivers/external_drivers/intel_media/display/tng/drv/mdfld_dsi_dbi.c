@@ -95,6 +95,9 @@ void intel_dsi_dbi_update_fb(struct mdfld_dsi_dbi_output *dbi_output)
 	struct drm_crtc *crtc = dbi_output->base.base.crtc;
 	struct psb_intel_crtc *psb_crtc =
 		(crtc) ? to_psb_intel_crtc(crtc) : NULL;
+	struct drm_psb_private *dev_priv = psb_priv(dev);
+	struct mdfld_dsi_config *dsi_config;
+	struct mdfld_dsi_dsr *dsr = NULL;
 	int pipe = dbi_output->channel_num ? 2 : 0;
 	u32 dpll_reg = MRST_DPLL_A;
 	u32 dspcntr_reg = DSPACNTR;
@@ -108,9 +111,13 @@ void intel_dsi_dbi_update_fb(struct mdfld_dsi_dbi_output *dbi_output)
 		return;
 	}
 
+	dsi_config = pipe ? dev_priv->dsi_configs[1] : dev_priv->dsi_configs[0];
+	if (dsi_config)
+		dsr = dsi_config->dsr;
+
 	/* if mode setting on-going, back off */
 
-	if (!IS_ANN_A0(dev)) {
+	if (!IS_ANN(dev)) {
 		if ((dbi_output->mode_flags & MODE_SETTING_ON_GOING) ||
 				(psb_crtc && (psb_crtc->mode_flags & MODE_SETTING_ON_GOING)) ||
 				!(dbi_output->mode_flags & MODE_SETTING_ENCODER_DONE))
@@ -134,7 +141,7 @@ void intel_dsi_dbi_update_fb(struct mdfld_dsi_dbi_output *dbi_output)
 	   !(REG_READ(pipeconf_reg) & DISPLAY_PLANE_ENABLE))
 		return;
 
-	if (!IS_ANN_A0(dev)) {
+	if (!IS_ANN(dev)) {
 		/* refresh plane changes */
 
 		REG_WRITE(dsplinoff_reg, REG_READ(dsplinoff_reg));
@@ -150,6 +157,15 @@ void intel_dsi_dbi_update_fb(struct mdfld_dsi_dbi_output *dbi_output)
 			   MDFLD_DSI_SEND_PACKAGE);
 	dbi_output->dsr_fb_update_done = true;
 	mdfld_dsi_cmds_kick_out(sender);
+
+	/**
+	 * reset dsr free count, otherwise enter_dsr may happen
+	 * right after resume, but dc will fetch data however dc
+	 * is swithed off. This will cause fifo not empty.
+	 * reset dsr free count to avoid this case.
+	 */
+	if (dsr)
+		dsr->free_count = 0;
 }
 
 /* Perodically update dbi panel */
@@ -332,17 +348,61 @@ static void __dbi_set_properties(struct mdfld_dsi_config *dsi_config,
 
 }
 
+static void ann_dc_setup(struct mdfld_dsi_config *dsi_config)
+{
+	struct drm_device *dev = dsi_config->dev;
+	struct mdfld_dsi_hw_registers *regs = &dsi_config->regs;
+	struct mdfld_dsi_hw_context *ctx = &dsi_config->dsi_hw_context;
+
+	power_island_get(OSPM_DISPLAY_B | OSPM_DISPLAY_C);
+
+	REG_WRITE(DSPCLK_GATE_D, 0x0);
+	REG_WRITE(RAMCLK_GATE_D, 0xc0000 | (1 << 11)); // FIXME: delay 1us for RDB done signal
+	REG_WRITE(PFIT_CONTROL, 0x20000000);
+	REG_WRITE(DSPIEDCFGSHDW, 0x0);
+	REG_WRITE(DSPARB2, 0x000A0200);
+	REG_WRITE(DSPARB, 0x18040080);
+	REG_WRITE(DSPFW1, 0x0F0F3F3F);
+	REG_WRITE(DSPFW2, 0x5F2F0F3F);
+	REG_WRITE(DSPFW3, 0x0);
+	REG_WRITE(DSPFW4, 0x07071F1F);
+	REG_WRITE(DSPFW5, 0x2F17071F);
+	REG_WRITE(DSPFW6, 0x00001F3F);
+	REG_WRITE(DSPFW7, 0x1F3F1F3F);
+	REG_WRITE(DSPSRCTRL, 0x00080100);
+	REG_WRITE(DSPCHICKENBIT, 0x20);
+	REG_WRITE(FBDC_CHICKEN, 0x0C0C0C0C);
+	REG_WRITE(CURACNTR, 0x0);
+	REG_WRITE(CURBCNTR, 0x0);
+	REG_WRITE(CURCCNTR, 0x0);
+	REG_WRITE(IEP_OVA_CTRL, 0x0);
+	REG_WRITE(IEP_OVA_CTRL, 0x0);
+	REG_WRITE(DSPBCNTR, 0x0);
+	REG_WRITE(DSPCCNTR, 0x0);
+	REG_WRITE(DSPDCNTR, 0x0);
+	REG_WRITE(DSPECNTR, 0x0);
+	REG_WRITE(DSPFCNTR, 0x0);
+	REG_WRITE(GCI_CTRL, REG_READ(GCI_CTRL) | 1);
+
+	power_island_put(OSPM_DISPLAY_B | OSPM_DISPLAY_C);
+
+	REG_WRITE(regs->ddl1_reg, ctx->ddl1);
+	REG_WRITE(regs->ddl2_reg, ctx->ddl2);
+	REG_WRITE(regs->ddl3_reg, ctx->ddl3);
+	REG_WRITE(regs->ddl4_reg, ctx->ddl4);
+}
+
 /* dbi interface power on*/
-int __dbi_power_on(struct mdfld_dsi_config *dsi_config)
+int __dbi_power_on(struct mdfld_dsi_config *dsi_config, bool from_dsr)
 {
 	u32 val = 0;
 	struct mdfld_dsi_hw_registers *regs;
 	struct mdfld_dsi_hw_context *ctx;
 	struct drm_psb_private *dev_priv;
 	struct drm_device *dev;
+	struct panel_funcs *p_funcs;
 	int retry;
 	int err = 0;
-	u32 guit_val = 0;
 	u32 power_island = 0;
 	u32 sprite_reg_offset = 0;
 	int i = 0;
@@ -357,11 +417,13 @@ int __dbi_power_on(struct mdfld_dsi_config *dsi_config)
 	ctx = &dsi_config->dsi_hw_context;
 	dev = dsi_config->dev;
 	dev_priv = dev->dev_private;
+	p_funcs = dev_priv->dbi_output->p_funcs;
 
 	power_island = pipe_to_island(dsi_config->pipe);
 
-	if (power_island & (OSPM_DISPLAY_A | OSPM_DISPLAY_C))
-		power_island |= OSPM_DISPLAY_MIO;
+	if ( (!from_dsr) || (get_panel_type(dev, 0) != SDC_25x16_CMD))
+		if (power_island & (OSPM_DISPLAY_A | OSPM_DISPLAY_C))
+			power_island |= OSPM_DISPLAY_MIO;
 
 	if (is_dual_dsi(dev))
 	power_island |= OSPM_DISPLAY_C;
@@ -385,39 +447,9 @@ int __dbi_power_on(struct mdfld_dsi_config *dsi_config)
 		}
 	}
 
-	if (IS_ANN_A0(dev)) {
+	if (IS_ANN(dev)) {
 		/* FIXME: reset the DC registers for ANN A0 */
-		power_island_get(OSPM_DISPLAY_B | OSPM_DISPLAY_C);
-
-		REG_WRITE(DSPCLK_GATE_D, 0xFFFFFFFF); /* 0x10000000 */
-		REG_WRITE(RAMCLK_GATE_D, 0xFFFFFFFF); /* 0x0 */
-		REG_WRITE(PFIT_CONTROL, 0x20000000);
-		REG_WRITE(DSPIEDCFGSHDW, 0x0);
-		REG_WRITE(DSPARB2, 0x000A0200);
-		REG_WRITE(DSPARB, 0x18040080);
-		REG_WRITE(DSPFW1, 0x0F0F3F3F);
-		REG_WRITE(DSPFW2, 0x5F2F0F3F);
-		REG_WRITE(DSPFW3, 0x0);
-		REG_WRITE(DSPFW4, 0x07071F1F);
-		REG_WRITE(DSPFW5, 0x2F17071F);
-		REG_WRITE(DSPFW6, 0x00001F3F);
-		REG_WRITE(DSPFW7, 0x1F3F1F3F);
-		REG_WRITE(DSPSRCTRL, 0x00080100);
-		REG_WRITE(DSPCHICKENBIT, 0x0);
-		REG_WRITE(FBDC_CHICKEN, 0x0C0C0C0C);
-		REG_WRITE(CURACNTR, 0x0);
-		REG_WRITE(CURBCNTR, 0x0);
-		REG_WRITE(CURCCNTR, 0x0);
-		REG_WRITE(IEP_OVA_CTRL, 0x0);
-		REG_WRITE(IEP_OVA_CTRL, 0x0);
-		REG_WRITE(DSPACNTR, 0x0);
-		REG_WRITE(DSPBCNTR, 0x0);
-		REG_WRITE(DSPCCNTR, 0x0);
-		REG_WRITE(DSPDCNTR, 0x0);
-		REG_WRITE(DSPECNTR, 0x0);
-		REG_WRITE(DSPFCNTR, 0x0);
-
-		power_island_put(OSPM_DISPLAY_B | OSPM_DISPLAY_C);
+		ann_dc_setup(dsi_config);
 	}
 
 	/*exit ULPS*/
@@ -457,6 +489,14 @@ int __dbi_power_on(struct mdfld_dsi_config *dsi_config)
 
 	__dbi_set_properties(dsi_config, PORT_A);
 
+	/* update 0x650c[0] = 1 to fixed arbitration pattern
+	 * it is found display TLB request be blocked by display plane
+	 * memory requests, never goes out. This causes display controller
+	 * uses stale TLB data to do memory translation, getting wrong
+	 * memory address for data, and causing the flickering issue.
+	 */
+	REG_WRITE(GCI_CTRL, REG_READ(GCI_CTRL) | 1);
+
 	/*Setup pipe timing*/
 	REG_WRITE(regs->htotal_reg, ctx->htotal);
 	REG_WRITE(regs->hblank_reg, ctx->hblank);
@@ -468,21 +508,16 @@ int __dbi_power_on(struct mdfld_dsi_config *dsi_config)
 	REG_WRITE(regs->dsppos_reg, ctx->dsppos);
 	REG_WRITE(regs->dspstride_reg, ctx->dspstride);
 
-	if (!IS_ANN_A0(dev)) {
-		/*restore color_coef (chrome) */
-		for (i = 0; i < 6; i++)
-			REG_WRITE(regs->color_coef_reg + (i<<2), ctx->color_coef[i]);
+	if (p_funcs && p_funcs->set_legacy_coefficient)
+		p_funcs->set_legacy_coefficient(dsi_config);
 
+	if (p_funcs && p_funcs->set_legacy_gamma_table)
+		p_funcs->set_legacy_gamma_table(dsi_config);
 
-		/* restore palette (gamma) */
-		for (i = 0; i < 256; i++)
-			REG_WRITE(regs->palette_reg + (i<<2), ctx->palette[i]);
-
-		/* restore dpst setting */
-		if (dev_priv->psb_dpst_state) {
-			dpstmgr_reg_restore_locked(dev, dsi_config);
-			psb_enable_pipestat(dev_priv, 0, PIPE_DPST_EVENT_ENABLE);
-		}
+	/* restore dpst setting */
+	if (dev_priv->psb_dpst_state) {
+		dpstmgr_reg_restore_locked(dev, dsi_config);
+		psb_enable_pipestat(dev_priv, 0, PIPE_DPST_EVENT_ENABLE);
 	}
 
 	/*Setup plane*/
@@ -537,17 +572,17 @@ int __dbi_power_on(struct mdfld_dsi_config *dsi_config)
 			REG_READ(regs->device_ready_reg + offset) | DSI_DEVICE_READY);
 	}
 
-	if (IS_ANN_A0(dev)) {
-		REG_WRITE(regs->ddl1_reg, ctx->ddl1);
-		REG_WRITE(regs->ddl2_reg, ctx->ddl2);
-		REG_WRITE(regs->ddl3_reg, ctx->ddl3);
-		REG_WRITE(regs->ddl4_reg, ctx->ddl4);
+	if (IS_ANN(dev)) {
+		REG_WRITE(DSPARB2, ctx->dsparb2);
+		REG_WRITE(DSPARB, ctx->dsparb);
 	}
 
 	/*Enable pipe*/
 	val = ctx->pipeconf;
 	val &= ~0x000c0000;
 	val |= BIT31 | PIPEACONF_DSR;
+	if (dev_priv->legacy_csc_enable)
+		val |= BIT20;
 	REG_WRITE(regs->pipeconf_reg, val);
 
 	/*Wait for pipe enabling,when timing generator is working */
@@ -615,7 +650,7 @@ reset_recovery:
 	if (p_funcs && p_funcs->exit_deep_standby)
 		p_funcs->exit_deep_standby(dsi_config);
 
-	if (__dbi_power_on(dsi_config)) {
+	if (__dbi_power_on(dsi_config, false)) {
 		DRM_ERROR("Failed to init display controller!\n");
 		err = -EAGAIN;
 		goto power_on_err;
@@ -636,8 +671,11 @@ reset_recovery:
 	dsr_info = dev_priv->dbi_dsr_info;
 	dbi_outputs = dsr_info->dbi_outputs;
 	dbi_output = dsi_config->pipe ? dbi_outputs[1] : dbi_outputs[0];
+	/* init te_seq and last_screen_update */
+	atomic64_set(&sender->last_screen_update, 0);
+	atomic64_set(&sender->te_seq, 1);
 
-	if (!IS_ANN_A0(dev))
+	if (!IS_ANN(dev))
 		intel_dsi_dbi_update_fb(dbi_output);
 
 	/**
@@ -655,6 +693,9 @@ reset_recovery:
 					ctx->lastbrightnesslevel))
 			DRM_ERROR("Failed to set panel brightness\n");
 
+	if (p_funcs && p_funcs->drv_set_panel_mode)
+		p_funcs->drv_set_panel_mode(dsi_config);
+
 	/*wait for all FIFOs empty*/
 	mdfld_dsi_wait_for_fifos_empty(sender);
 	if (is_dual_dsi(dev)) {
@@ -663,7 +704,7 @@ reset_recovery:
 		sender->work_for_slave_panel = false;
 	}
 
-	if (IS_ANN_A0(dev))
+	if (IS_ANN(dev))
 		intel_dsi_dbi_update_fb(dbi_output);
 
 power_on_err:
@@ -677,19 +718,17 @@ power_on_err:
 /**
  * Power off sequence for DBI interface
 */
-int __dbi_power_off(struct mdfld_dsi_config *dsi_config)
+int __dbi_power_off(struct mdfld_dsi_config *dsi_config, bool from_dsr)
 {
 	struct mdfld_dsi_hw_registers *regs;
 	struct mdfld_dsi_hw_context *ctx;
 	struct drm_device *dev;
 	struct drm_psb_private *dev_priv;
-	int pipe0_enabled;
-	int pipe2_enabled;
 	int err = 0;
-	u32 guit_val = 0;
 	u32 power_island = 0;
-	int retry;
+	int retry,i;
 	int offset = 0;
+        u32 val;
 
 	if (!dsi_config)
 		return -EINVAL;
@@ -700,8 +739,28 @@ int __dbi_power_off(struct mdfld_dsi_config *dsi_config)
 	ctx = &dsi_config->dsi_hw_context;
 	dev = dsi_config->dev;
 	dev_priv = dev->dev_private;
-	/*Disable plane*/
-	REG_WRITE(regs->dspcntr_reg, 0);
+
+        ctx->dspcntr    = REG_READ(regs->dspcntr_reg);
+        ctx->pipeconf   = REG_READ(regs->pipeconf_reg);
+
+	ctx->dsparb = REG_READ(DSPARB);
+	ctx->dsparb2 = REG_READ(DSPARB2);
+
+        //if (!IS_ANN_A0(dev)) 
+	//ANN gamma setting use old path
+        {
+                /*save color_coef (chrome) */
+                for (i = 0; i < 6; i++)
+                        ctx->color_coef[i] = REG_READ(regs->color_coef_reg + (i<<2));
+
+                /* save palette (gamma) */
+                for (i = 0; i < 256; i++)
+                        ctx->palette[i] = REG_READ(regs->palette_reg + (i<<2));
+        }
+
+        /*Disable plane*/
+        val = ctx->dspcntr;
+        REG_WRITE(regs->dspcntr_reg, (val & ~BIT31));
 
 	/*Disable pipe*/
 	/* Don't disable DSR mode. */
@@ -716,7 +775,14 @@ int __dbi_power_off(struct mdfld_dsi_config *dsi_config)
 
 		if (!retry) {
 			DRM_ERROR("Failed to disable pipe\n");
-			err = -EAGAIN;
+			if (IS_MOFD(dev)) {
+				/*
+				 * FIXME: turn off the power island directly
+				 * although failed to disable pipe.
+				 */
+				err = 0;
+			} else
+				err = -EAGAIN;
 			goto power_off_err;
 		}
 	}
@@ -752,9 +818,9 @@ int __dbi_power_off(struct mdfld_dsi_config *dsi_config)
 power_off_err:
 
 	power_island = pipe_to_island(dsi_config->pipe);
-
-	if (power_island & (OSPM_DISPLAY_A | OSPM_DISPLAY_C))
-		power_island |= OSPM_DISPLAY_MIO;
+	if ( (!from_dsr) || (get_panel_type(dev, 0) != SDC_25x16_CMD))
+		if (power_island & (OSPM_DISPLAY_A | OSPM_DISPLAY_C))
+			power_island |= OSPM_DISPLAY_MIO;
 	if (is_dual_dsi(dev))
 		power_island |= OSPM_DISPLAY_C;
 
@@ -809,7 +875,7 @@ static int __dbi_panel_power_off(struct mdfld_dsi_config *dsi_config,
 	}
 
 	/*power off dbi interface*/
-	__dbi_power_off(dsi_config);
+	__dbi_power_off(dsi_config, false);
 
 power_off_err:
 	mdfld_dsi_dsr_allow_locked(dsi_config);
@@ -855,17 +921,29 @@ int mdfld_generic_dsi_dbi_set_power(struct drm_encoder *encoder, bool on)
 	if (dsi_connector->status != connector_status_connected)
 		goto set_power_err;
 
-	if (dbi_output->first_boot &&
-	    dsi_config->dsi_hw_context.panel_on) {
-		if (on) {
+	if (dbi_output->first_boot && on) {
+		if (dsi_config->dsi_hw_context.panel_on) {
+			if (IS_ANN(dev))
+				ann_dc_setup(dsi_config);
+
+			mdfld_enable_te(dev, dsi_config->pipe);
+
+			/* don't need ISLAND c for non dual-dsi panel */
+			if (!is_dual_dsi(dev))
+				power_island_put(OSPM_DISPLAY_C);
+
 			/* When using smooth transition,
 			 * wake up ESD detection thread.
 			 */
 			mdfld_dsi_error_detector_wakeup(dsi_connector);
+
+			DRM_INFO("skip panle power setting for first boot!");
+			goto fun_exit;
 		}
-		DRM_INFO("skip panle power setting for first boot! " \
-			 "panel is already powered on\n");
-		goto fun_exit;
+
+		/* power down islands turned on by firmware */
+		power_island_put(OSPM_DISPLAY_A |
+				 OSPM_DISPLAY_C | OSPM_DISPLAY_MIO);
 	}
 
 	switch (on) {
@@ -965,6 +1043,11 @@ void mdfld_generic_dsi_dbi_dpms(struct drm_encoder *encoder, int mode)
 	struct drm_device *dev;
 	struct mdfld_dsi_config *dsi_config;
 	struct drm_psb_private *dev_priv;
+	struct panel_funcs *p_funcs;
+#ifdef CONFIG_BACKLIGHT_CLASS_DEVICE
+	struct mdfld_dsi_hw_context *ctx;
+	struct backlight_device bd;
+#endif
 
 	dsi_encoder = MDFLD_DSI_ENCODER(encoder);
 	dsi_config = mdfld_dsi_encoder_get_config(dsi_encoder);
@@ -976,18 +1059,38 @@ void mdfld_generic_dsi_dbi_dpms(struct drm_encoder *encoder, int mode)
 	dev = dsi_config->dev;
 	dev_priv = dev->dev_private;
 
-	PSB_DEBUG_ENTRY("%s\n", (mode == DRM_MODE_DPMS_ON ? "on" : "off"));
+	PSB_DEBUG_ENTRY("%s\n", (mode == DRM_MODE_DPMS_ON ? "on" :
+		DRM_MODE_DPMS_STANDBY == mode ? "standby" : "off"));
 
 	mutex_lock(&dev_priv->dpms_mutex);
 	DCLockMutex();
 
+	p_funcs = dbi_output->p_funcs;
 	if (mode == DRM_MODE_DPMS_ON) {
 		mdfld_generic_dsi_dbi_set_power(encoder, true);
+
+		drm_vblank_on(dev, dsi_config->pipe);
+
 		DCAttachPipe(dsi_config->pipe);
 		DC_MRFLD_onPowerOn(dsi_config->pipe);
-	} else {
-		mdfld_generic_dsi_dbi_set_power(encoder, false);
 
+#ifdef CONFIG_BACKLIGHT_CLASS_DEVICE
+		ctx = &dsi_config->dsi_hw_context;
+		bd.props.brightness = ctx->lastbrightnesslevel;
+		psb_set_brightness(&bd);
+#endif
+	} else if (mode == DRM_MODE_DPMS_STANDBY) {
+#ifdef CONFIG_BACKLIGHT_CLASS_DEVICE
+		ctx = &dsi_config->dsi_hw_context;
+		ctx->lastbrightnesslevel = psb_get_brightness(&bd);
+		bd.props.brightness = 0;
+		psb_set_brightness(&bd);
+#endif
+
+		/* Make the pending flip request as completed. */
+		DCUnAttachPipe(dsi_config->pipe);
+		DC_MRFLD_onPowerOff(dsi_config->pipe);
+	} else {
 		drm_handle_vblank(dev, dsi_config->pipe);
 
 		/* Turn off TE interrupt. */
@@ -996,6 +1099,7 @@ void mdfld_generic_dsi_dbi_dpms(struct drm_encoder *encoder, int mode)
 		/* Make the pending flip request as completed. */
 		DCUnAttachPipe(dsi_config->pipe);
 		DC_MRFLD_onPowerOff(dsi_config->pipe);
+		mdfld_generic_dsi_dbi_set_power(encoder, false);
 	}
 
 	DCUnLockMutex();
@@ -1021,7 +1125,8 @@ void mdfld_generic_dsi_dbi_save(struct drm_encoder *encoder)
 	pipe = mdfld_dsi_encoder_get_pipe(dsi_encoder);
 
 	DCLockMutex();
-	mdfld_generic_dsi_dbi_set_power(encoder, false);
+	DC_MRFLD_onPowerOff(pipe);
+
 
 	drm_handle_vblank(dev, pipe);
 
@@ -1030,7 +1135,8 @@ void mdfld_generic_dsi_dbi_save(struct drm_encoder *encoder)
 
 	/* Make the pending flip request as completed. */
 	DCUnAttachPipe(pipe);
-	DC_MRFLD_onPowerOff(pipe);
+	mdfld_generic_dsi_dbi_set_power(encoder, false);
+
 	DCUnLockMutex();
 }
 
@@ -1054,6 +1160,8 @@ void mdfld_generic_dsi_dbi_restore(struct drm_encoder *encoder)
 
 	DCLockMutex();
 	mdfld_generic_dsi_dbi_set_power(encoder, true);
+
+	drm_vblank_on(dev, pipe);
 
 	DCAttachPipe(pipe);
 	DC_MRFLD_onPowerOn(pipe);
@@ -1340,4 +1448,13 @@ void mdfld_reset_panel_handler_work(struct work_struct *work)
 	} else {
 		DRM_INFO("%s invalid panel init\n", __func__);
 	}
+}
+
+/*
+ * SV's suggestion, dbi_bw_ctrl is calculated by following formular:
+ * (16*252+8)/lane_count in spec, and sv uses (16*256)/lane_count
+ */
+uint32_t calculate_dbi_bw_ctrl(const uint32_t lane_count)
+{
+	return (16*256)/lane_count;
 }

@@ -285,6 +285,41 @@ IMG_VOID _SCPInsert(SCP_CONTEXT *psContext,
 					  ui32Size,
 					  psContext->ui32CCBSize);
 }
+
+#if defined(PVR_ANDROID_NATIVE_WINDOW_HAS_SYNC)
+static void _SCPDumpFence(const char *psczName, struct sync_fence *psFence)
+{
+	struct list_head *psEntry;
+	char szTime[16]  = { '\0' };
+	char szVal1[64]  = { '\0' };
+	char szVal2[64]  = { '\0' };
+	char szVal3[132] = { '\0' };
+
+	PVR_LOG(("\t  %s: [%p] %s: %s", psczName, psFence, psFence->name,
+			 (psFence->status >  0 ? "signaled" :
+			  psFence->status == 0 ? "active" : "error")));
+	list_for_each(psEntry, &psFence->pt_list_head)
+	{
+		struct sync_pt *psPt = container_of(psEntry, struct sync_pt, pt_list);
+		struct timeval tv = ktime_to_timeval(psPt->timestamp);
+		snprintf(szTime, sizeof(szTime), "@%ld.%06ld", tv.tv_sec, tv.tv_usec);
+		if (psPt->parent->ops->pt_value_str &&
+			psPt->parent->ops->timeline_value_str)
+		{
+			psPt->parent->ops->pt_value_str(psPt, szVal1, sizeof(szVal1));
+			psPt->parent->ops->timeline_value_str(psPt->parent, szVal2, sizeof(szVal2));
+			snprintf(szVal3, sizeof(szVal3), ": %s / %s", szVal1, szVal2);
+		}
+		PVR_LOG(("\t    %s %s%s%s", psPt->parent->name,
+				 (psPt->status >  0 ? "signaled" :
+				  psPt->status == 0 ? "active" : "error"),
+				 (psPt->status >  0 ? szTime : ""),
+				 szVal3));
+	}
+
+}
+#endif /* defined(PVR_ANDROID_NATIVE_WINDOW_HAS_SYNC) */
+
 /*************************************************************************/ /*!
 @Function       _SCPCommandReady
 
@@ -317,7 +352,7 @@ PVRSRV_ERROR _SCPCommandReady(SCP_COMMAND *psCommand)
 		*/
 		if (psSCPSyncData->ui32Flags & SCP_SYNC_DATA_FENCE)
 		{
-			if (!ServerSyncFenceIsMeet(psSCPSyncData->psSync, psSCPSyncData->ui32Fence))
+			if (!ServerSyncFenceIsMet(psSCPSyncData->psSync, psSCPSyncData->ui32Fence))
 			{
 				return PVRSRV_ERROR_FAILED_DEPENDENCIES;
 			}
@@ -328,18 +363,25 @@ PVRSRV_ERROR _SCPCommandReady(SCP_COMMAND *psCommand)
 	/* Check for the provided acquire fence */
 	if (psCommand->psAcquireFence != IMG_NULL)
 	{
-/*			int err = sync_fence_wait(psCommand->psAcquireFence, 0);*/
-/*			if (!err)*/
-		smp_rmb();
-		if (psCommand->psAcquireFence->status > 0)
+		int err = sync_fence_wait(psCommand->psAcquireFence, 0);
+		/* -ETIME means active. In this case we will retry later again. If the
+		 * return value is an error or zero we will close this fence and
+		 * proceed. This makes sure that we are not getting stuck here when a
+		 * fence changes into an error state for whatever reason. */
+		if (err == -ETIME)
 		{
-			/* Put the fence on success. */
-			sync_fence_put(psCommand->psAcquireFence);
-			psCommand->psAcquireFence = IMG_NULL;
+			return PVRSRV_ERROR_FAILED_DEPENDENCIES;
 		}
 		else
 		{
-			return PVRSRV_ERROR_FAILED_DEPENDENCIES;
+			if (err)
+			{
+				PVR_LOG(("SCP: Fence wait failed with %d", err));
+				_SCPDumpFence("Acquire Fence", psCommand->psAcquireFence);
+			}
+			/* Put the fence. */
+			sync_fence_put(psCommand->psAcquireFence);
+			psCommand->psAcquireFence = IMG_NULL;
 		}
 	}
 #endif /* defined(PVR_ANDROID_NATIVE_WINDOW_HAS_SYNC) */
@@ -376,40 +418,6 @@ IMG_VOID _SCPCommandDo(SCP_COMMAND *psCommand)
 	}
 }
 
-#if defined(PVR_ANDROID_NATIVE_WINDOW_HAS_SYNC)
-static void _SCPDumpFence(const char *psczName, struct sync_fence *psFence)
-{
-	struct list_head *psEntry;
-	char szTime[16] = { '\0' };
-	char szVal1[20] = { '\0' };
-	char szVal2[20] = { '\0' };
-	char szVal3[44] = { '\0' };
-
-	PVR_LOG(("\t  %s: [%p] %s: %s", psczName, psFence, psFence->name,
-			 (psFence->status >  0 ? "signaled" :
-			  psFence->status == 0 ? "active" : "error")));
-	list_for_each(psEntry, &psFence->pt_list_head)
-	{
-		struct sync_pt *psPt = container_of(psEntry, struct sync_pt, pt_list);
-		struct timeval tv = ktime_to_timeval(psPt->timestamp);
-		snprintf(szTime, sizeof(szTime), "@%ld.%06ld", tv.tv_sec, tv.tv_usec);
-		if (psPt->parent->ops->pt_value_str &&
-			psPt->parent->ops->timeline_value_str)
-		{
-			psPt->parent->ops->pt_value_str(psPt, szVal1, sizeof(szVal1));
-			psPt->parent->ops->timeline_value_str(psPt->parent, szVal2, sizeof(szVal2));
-			snprintf(szVal3, sizeof(szVal3), ": %s / %s", szVal1, szVal2);
-		}
-		PVR_LOG(("\t    %s %s%s%s", psPt->parent->name,
-				 (psPt->status >  0 ? "signaled" :
-				  psPt->status == 0 ? "active" : "error"),
-				 (psPt->status >  0 ? szTime : ""),
-				 szVal3));
-	}
-
-}
-#endif /* defined(PVR_ANDROID_NATIVE_WINDOW_HAS_SYNC) */
-
 /*************************************************************************/ /*!
 @Function       _SCPDumpCommand
 
@@ -431,7 +439,7 @@ static IMG_VOID _SCPDumpCommand(SCP_COMMAND *psCommand)
 		for (i = 0; i < psCommand->ui32SyncCount; i++)
 		{
 			if (!psCommand->pasSCPSyncData)
-				continue;
+			        continue;
 
 			SCP_SYNC_DATA *psSCPSyncData = &psCommand->pasSCPSyncData[i];
 		   
@@ -439,8 +447,8 @@ static IMG_VOID _SCPDumpCommand(SCP_COMMAND *psCommand)
 				Only dump this sync if there is a fence operation on it
 			*/
 			if (psSCPSyncData &&
-					(psSCPSyncData->ui32Flags & SCP_SYNC_DATA_FENCE) &&
-					(psSCPSyncData->psSync))
+			                (psSCPSyncData->ui32Flags & SCP_SYNC_DATA_FENCE) &&
+			                (psSCPSyncData->psSync))
 			{
 				PVR_LOG(("\t\tFenced on 0x%08x = 0x%08x (?= 0x%08x)",
 						ServerSyncGetFWAddr(psSCPSyncData->psSync),
@@ -712,6 +720,8 @@ IMG_EXPORT
 PVRSRV_ERROR SCPRun(SCP_CONTEXT *psContext)
 {
 	SCP_COMMAND *psCommand;
+	PVRSRV_ERROR eError = PVRSRV_OK;
+
 
 	if (psContext == IMG_NULL)
 	{
@@ -721,8 +731,6 @@ PVRSRV_ERROR SCPRun(SCP_CONTEXT *psContext)
 	OSLockAcquire(psContext->hLock);
 	while (psContext->ui32DepOffset != psContext->ui32WriteOffset)
 	{
-		PVRSRV_ERROR eError;
-
 		psCommand = (SCP_COMMAND *)((IMG_UINT8 *)psContext->pvCCB +
 		            psContext->ui32DepOffset);
 
@@ -750,7 +758,7 @@ PVRSRV_ERROR SCPRun(SCP_CONTEXT *psContext)
 	}
 	OSLockRelease(psContext->hLock);
 
-	return PVRSRV_OK;
+	return eError;
 }
 
 IMG_EXPORT
@@ -831,11 +839,16 @@ IMG_VOID SCPCommandComplete(SCP_CONTEXT *psContext)
 	}
 }
 
+IMG_EXPORT IMG_BOOL SCPHasPendingCommand(SCP_CONTEXT *psContext)
+{
+	return psContext && (psContext->ui32DepOffset != psContext->ui32WriteOffset);
+}
+
 IMG_EXPORT
 IMG_VOID IMG_CALLCONV SCPDumpStatus(SCP_CONTEXT *psContext)
 {
 	if (psContext == IMG_NULL)
-		return;
+	        return;
 
 	/*
 		Acquire the lock to ensure that the SCP isn't run while
@@ -844,18 +857,29 @@ IMG_VOID IMG_CALLCONV SCPDumpStatus(SCP_CONTEXT *psContext)
 	OSLockAcquire(psContext->hLock);
 
 	PVR_LOG(("Pending command:"));
-	if (psContext->ui32DepOffset == psContext->ui32ReadOffset)
+	if (psContext->ui32DepOffset == psContext->ui32WriteOffset)
 	{
 		PVR_LOG(("\tNone"));
 	}
 	else
 	{
 		SCP_COMMAND *psCommand;
+		IMG_UINT32 ui32DepOffset = psContext->ui32DepOffset;
 
-		/* Dump the command we're pending on */
-		psCommand = (SCP_COMMAND *)((IMG_UINT8 *)psContext->pvCCB +
-		            psContext->ui32DepOffset);
-		_SCPDumpCommand(psCommand);
+		while (ui32DepOffset != psContext->ui32WriteOffset)
+		{
+		        /* Dump the command we're pending on */
+		        psCommand = (SCP_COMMAND *)((IMG_UINT8 *)psContext->pvCCB +
+		                ui32DepOffset);
+
+		        _SCPDumpCommand(psCommand);
+
+		        /* processed cmd so update queue */
+		        UPDATE_CCB_OFFSET(ui32DepOffset,
+		                                          psCommand->ui32CmdSize,
+		                                          psContext->ui32CCBSize);
+
+		}
 	}
 	
 	PVR_LOG(("Active command(s):"));

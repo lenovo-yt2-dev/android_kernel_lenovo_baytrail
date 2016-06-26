@@ -88,8 +88,10 @@ void ia_css_rmgr_refcount_retain_vbuf(struct ia_css_rmgr_vbuf_handle **handle)
 {
 	int i;
 	struct ia_css_rmgr_vbuf_handle *h;
-	assert(handle != NULL);
-	assert(*handle != NULL);
+	if ((handle == NULL) || (*handle == NULL)) {
+		IA_CSS_LOG("Invalid inputs");
+		return;
+	}
 	/* new vbuf to count on */
 	if ((*handle)->count == 0) {
 		h = *handle;
@@ -121,9 +123,11 @@ void ia_css_rmgr_refcount_retain_vbuf(struct ia_css_rmgr_vbuf_handle **handle)
  */
 void ia_css_rmgr_refcount_release_vbuf(struct ia_css_rmgr_vbuf_handle **handle)
 {
-	assert(handle != NULL);
-	assert(*handle != NULL);
-	assert((*handle)->count != 0);
+	if ((handle == NULL) || ((*handle) == NULL) || (((*handle)->count) == 0)) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_ERROR,
+				    "ia_css_rmgr_refcount_release_vbuf() invalid arguments!\n");
+		return;
+	}
 	/* decrease reference count */
 	(*handle)->count--;
 	/* remove from admin */
@@ -175,7 +179,10 @@ void ia_css_rmgr_uninit_vbuf(struct ia_css_rmgr_vbuf_pool *pool)
 {
 	uint32_t i;
 	ia_css_debug_dtrace(IA_CSS_DEBUG_TRACE, "ia_css_rmgr_uninit_vbuf()\n");
-	assert(pool != NULL);
+	if (pool == NULL) {
+		ia_css_debug_dtrace(IA_CSS_DEBUG_ERROR, "ia_css_rmgr_uninit_vbuf(): NULL argument\n");
+		 return;
+	}
 	if (pool->handles != NULL) {
 		/* free the hmm buffers */
 		for (i = 0; i < pool->size; i++) {
@@ -279,9 +286,10 @@ void ia_css_rmgr_acq_vbuf(struct ia_css_rmgr_vbuf_pool *pool,
 	struct ia_css_rmgr_vbuf_handle h;
 #endif /* __KLOCWORK__ */
 
-	assert(pool != NULL);
-	assert(handle != NULL);
-	assert(*handle != NULL);
+	if ((pool == NULL) || (handle == NULL) || (*handle == NULL)) {
+		IA_CSS_LOG("Invalid inputs");
+		return;
+	}
 
 	if (pool->copy_on_write) {
 		/* only one reference, reuse (no new retain) */
@@ -324,9 +332,10 @@ void ia_css_rmgr_acq_vbuf(struct ia_css_rmgr_vbuf_pool *pool,
 void ia_css_rmgr_rel_vbuf(struct ia_css_rmgr_vbuf_pool *pool,
 			  struct ia_css_rmgr_vbuf_handle **handle)
 {
-	assert(pool != NULL);
-	assert(handle != NULL);
-	assert(*handle != NULL);
+	if ((pool == NULL) || (handle == NULL) || (*handle == NULL)) {
+		IA_CSS_LOG("Invalid inputs");
+		return;
+	}
 	/* release the handle */
 	if ((*handle)->count == 1) {
 		if (!pool->recycle) {

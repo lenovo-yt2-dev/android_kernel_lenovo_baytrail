@@ -40,8 +40,8 @@ void psb_irq_uninstall_islands(struct drm_device *dev, int hw_islands);
 
 int psb_irq_enable_dpst(struct drm_device *dev);
 int psb_irq_disable_dpst(struct drm_device *dev);
-void psb_irq_turn_on_dpst(struct drm_device *dev);
-void psb_irq_turn_off_dpst(struct drm_device *dev);
+void psb_irq_turn_on_dpst_no_lock(struct drm_device *dev);
+void psb_irq_turn_off_dpst_no_lock(struct drm_device *dev);
 int psb_enable_vblank(struct drm_device *dev, int pipe);
 void psb_disable_vblank(struct drm_device *dev, int pipe);
 u32 psb_get_vblank_counter(struct drm_device *dev, int pipe);
