@@ -22,7 +22,7 @@
 #define SYNAPTICS_DS4 (1 << 0)
 #define SYNAPTICS_DS5 (1 << 1)
 #define SYNAPTICS_DSX_DRIVER_PRODUCT (SYNAPTICS_DS4 | SYNAPTICS_DS5)
-#define SYNAPTICS_DSX_DRIVER_VERSION 0x1016
+#define SYNAPTICS_DSX_DRIVER_VERSION 0x1017
 
 #include <linux/version.h>
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -238,8 +238,7 @@ struct synaptics_rmi4_data {
 	int (*i2c_write)(struct synaptics_rmi4_data *pdata, unsigned short addr,
 			unsigned char *data, unsigned short length);
 	int (*irq_enable)(struct synaptics_rmi4_data *rmi4_data, bool enable);
-	int (*reset_device)(struct synaptics_rmi4_data *rmi4_data,
-			unsigned short f01_cmd_base_addr);
+	int (*reset_device)(struct synaptics_rmi4_data *rmi4_data);
 };
 
 enum exp_fn {

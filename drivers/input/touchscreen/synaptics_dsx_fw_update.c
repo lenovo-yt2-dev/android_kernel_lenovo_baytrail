@@ -27,7 +27,6 @@
 #include <linux/input/synaptics_dsx.h>
 #include "synaptics_dsx_i2c.h"
 
-//#define FW_IMAGE_NAME "synaptics/startup_fw_update.img"
 #define FW_IMAGE_NAME "startup_fw_update.img"
 #define FW_IMAGE_GIS_NAME "Lenovo_Spark_PVT_064A000D_20140707.img"  //wqf add for GIS tp   // change firmware path to /system/etc/firmware/startup_fw_update.img
 #define FW_IMAGE_LAIBAO_NAME "Lenovo_Laibao_Mental_054A0008_0918.img" //wqf add for laibao tp
@@ -280,7 +279,6 @@ struct synaptics_rmi4_fwu_handle {
 	const unsigned char *lockdown_data;
 	struct workqueue_struct *fwu_workqueue;
 	struct delayed_work fwu_work;
-	struct synaptics_rmi4_fn_desc f01_fd;
 	struct synaptics_rmi4_fn_desc f34_fd;
 	struct synaptics_rmi4_exp_fn_ptr *fn_ptr;
 	struct synaptics_rmi4_data *rmi4_data;
@@ -378,15 +376,15 @@ static void parse_header(struct image_header_data *header,
 	if (header->contains_firmware_id)
 		header->firmware_id = extract_uint_le(data->firmware_id);
 
-        printk("checksum=0x%x\n", header->checksum);	
-        printk("bl_version=0x%x\n", header->bootloader_version);	
-        printk("fw_size=0x%x\n", header->firmware_size);	
-        printk("config_size=0x%x\n", header->config_size);	
-        printk("product_info=0x%x\n", header->product_info);	
-        printk("product_id=0x%x\n", header->product_id);	
-        printk("constains_fw_id=0x%x\n", header->contains_firmware_id);	
+        printk("checksum=0x%x\n", header->checksum);
+        printk("bl_version=0x%x\n", header->bootloader_version);
+        printk("fw_size=0x%x\n", header->firmware_size);
+        printk("config_size=0x%x\n", header->config_size);
+        printk("product_info=0x%x\n", header->product_info);
+        printk("product_id=0x%x\n", header->product_id);
+        printk("constains_fw_id=0x%x\n", header->contains_firmware_id);
 	if (header->contains_firmware_id)
-            printk("fw_id=0x%x\n", header->firmware_id);	
+            printk("fw_id=0x%x\n", header->firmware_id);
 
 
 	return;
@@ -395,9 +393,10 @@ static void parse_header(struct image_header_data *header,
 static int fwu_read_f01_device_status(struct f01_device_status *status)
 {
 	int retval;
+	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
 	retval = fwu->fn_ptr->read(fwu->rmi4_data,
-			fwu->f01_fd.data_base_addr,
+			rmi4_data->f01_data_base_addr,
 			status->data,
 			sizeof(status->data));
 	if (retval < 0) {
@@ -758,6 +757,7 @@ static int fwu_scan_pdt(void)
 	bool f01found = false;
 	bool f34found = false;
 	struct synaptics_rmi4_fn_desc rmi_fd;
+	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
 	for (addr = PDT_START; addr > PDT_END; addr -= PDT_ENTRY_SIZE) {
 		retval = fwu->fn_ptr->read(fwu->rmi4_data,
@@ -774,13 +774,14 @@ static int fwu_scan_pdt(void)
 			switch (rmi_fd.fn_number) {
 			case SYNAPTICS_RMI4_F01:
 				f01found = true;
-				fwu->f01_fd.query_base_addr =
+
+				rmi4_data->f01_query_base_addr =
 						rmi_fd.query_base_addr;
-				fwu->f01_fd.ctrl_base_addr =
+				rmi4_data->f01_ctrl_base_addr =
 						rmi_fd.ctrl_base_addr;
-				fwu->f01_fd.data_base_addr =
+				rmi4_data->f01_data_base_addr =
 						rmi_fd.data_base_addr;
-				fwu->f01_fd.cmd_base_addr =
+				rmi4_data->f01_cmd_base_addr =
 						rmi_fd.cmd_base_addr;
 				break;
 			case SYNAPTICS_RMI4_F34:
@@ -915,6 +916,7 @@ static int fwu_enter_flash_prog(void)
 	int retval;
 	struct f01_device_status f01_device_status;
 	struct f01_device_control f01_device_control;
+	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
 
 	retval = fwu_write_bootloader_id();
 	if (retval < 0)
@@ -955,7 +957,7 @@ static int fwu_enter_flash_prog(void)
 		return retval;
 
 	retval = fwu->fn_ptr->read(fwu->rmi4_data,
-			fwu->f01_fd.ctrl_base_addr,
+			rmi4_data->f01_ctrl_base_addr,
 			f01_device_control.data,
 			sizeof(f01_device_control.data));
 	if (retval < 0) {
@@ -969,7 +971,7 @@ static int fwu_enter_flash_prog(void)
 	f01_device_control.sleep_mode = SLEEP_MODE_NORMAL;
 
 	retval = fwu->fn_ptr->write(fwu->rmi4_data,
-			fwu->f01_fd.ctrl_base_addr,
+			rmi4_data->f01_ctrl_base_addr,
 			f01_device_control.data,
 			sizeof(f01_device_control.data));
 	if (retval < 0) {
@@ -1102,7 +1104,6 @@ static int fwu_start_write_config(void)
 {
 	int retval;
 	unsigned short block_count;
-	unsigned short f01_cmd_base_addr;
 	struct image_header_data header;
 
 	switch (fwu->config_area) {
@@ -1158,9 +1159,7 @@ static int fwu_start_write_config(void)
 				__func__);
 	}
 
-	f01_cmd_base_addr = fwu->f01_fd.cmd_base_addr;	
-	
-	fwu->rmi4_data->reset_device(fwu->rmi4_data, f01_cmd_base_addr);
+	fwu->rmi4_data->reset_device(fwu->rmi4_data);
 
 	pr_notice("%s: End of write config process\n", __func__);
 
@@ -1174,7 +1173,6 @@ static int fwu_do_read_config(void)
 	unsigned short block_num;
 	unsigned short block_count;
 	unsigned short index = 0;
-	unsigned short f01_cmd_base_addr;
 
 	retval = fwu_enter_flash_prog();
 	if (retval < 0)
@@ -1264,9 +1262,7 @@ static int fwu_do_read_config(void)
 	}
 
 exit:
-
-	f01_cmd_base_addr = fwu->f01_fd.cmd_base_addr;
-	fwu->rmi4_data->reset_device(fwu->rmi4_data, f01_cmd_base_addr);
+	fwu->rmi4_data->reset_device(fwu->rmi4_data);
 
 	return retval;
 }
@@ -1309,14 +1305,13 @@ static int fwu_do_lockdown(void)
 static int fwu_start_reflash(void)
 {
 	int retval = 0;
-	int ret=0;
-	unsigned char moduleid[2];
 	enum flash_area flash_area;
-	unsigned short f01_cmd_base_addr;
 	struct image_header_data header;
 	struct f01_device_status f01_device_status;
 	const unsigned char *fw_image;
 	const struct firmware *fw_entry = NULL;
+	int ret;
+	unsigned char moduleid[2];
 
 	if (fwu->rmi4_data->sensor_sleep) {
 		dev_err(&fwu->rmi4_data->i2c_client->dev,
@@ -1332,12 +1327,9 @@ static int fwu_start_reflash(void)
 	if (fwu->ext_data_source) {
 		fw_image = fwu->ext_data_source;
 	} else {
-		ret = fwu->fn_ptr->read(fwu->rmi4_data,
-		0x00A4,
-		&moduleid,
-		2);
-		if (ret<0){
-			printk("wqf read module id error\n");
+		ret = fwu->fn_ptr->read(fwu->rmi4_data, 0x00A4, &moduleid, 2);
+		if (ret < 0) {
+			dev_err(&fwu->rmi4_data->i2c_client->dev, "%s: Failed to read module id\n", __func__);
 			return ret;
 		}
 		printk("wqf moduleid=0x%02x;bridge_type=0x%x\n",moduleid[0],moduleid[1]);
@@ -1357,7 +1349,7 @@ static int fwu_start_reflash(void)
 			strncpy(fwu->image_name, FW_IMAGE_NAME, MAX_IMAGE_NAME_LEN);
 		}
 
-			
+
 		dev_dbg(&fwu->rmi4_data->i2c_client->dev,
 				"%s: Requesting firmware image %s\n",
 				__func__, fwu->image_name);
@@ -1448,10 +1440,7 @@ static int fwu_start_reflash(void)
 	}
 
 exit:
-
-	f01_cmd_base_addr = fwu->f01_fd.cmd_base_addr;
-
-	fwu->rmi4_data->reset_device(fwu->rmi4_data, f01_cmd_base_addr);
+	fwu->rmi4_data->reset_device(fwu->rmi4_data);
 
 	if (fw_entry)
 		release_firmware(fw_entry);
