@@ -39,7 +39,6 @@
 #include <linux/switch.h>
 #include <linux/interrupt.h>
 
-#include <linux/wakelock.h>
 #include <linux/power/bq27x00_battery_x8.h>
 
 #if 1
@@ -372,9 +371,6 @@ struct bq27x00_device_info {
 	int df_ver;
 
 	struct switch_dev sdev;
-	struct wake_lock wake_lock;
-	struct wake_lock low_power_lock;
-
 };
 
 static enum power_supply_property bq27x00_battery_props[] = {
@@ -864,8 +860,6 @@ static void bq27x00_update(struct bq27x00_device_info *di)
 		power_supply_changed(&di->bat);
 	}
 
-	if (wake_lock_active(&di->wake_lock))
-		wake_unlock(&di->wake_lock);
 	di->last_update = jiffies;
 
 }
@@ -922,8 +916,6 @@ static void bq27x00_low_shutdown(struct work_struct *work)
 		}
 	}else{
 		low_soc_count = 0;
-		if (wake_lock_active(&di->low_power_lock))
-			wake_unlock(&di->low_power_lock);
 	}
 }
 
@@ -1929,7 +1921,6 @@ static irqreturn_t soc_int_irq_threaded_handler(int irq, void *arg)
 		chrgState2FuelGauge = 0;
 
 	if(chrgState2FuelGauge  == 0 && rsoc <= shutdown_soc ){
-		wake_lock(&di->low_power_lock);
 		schedule_delayed_work(&di->soc_low_work, 0);
 	}
 /*
@@ -2270,9 +2261,6 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 
 	bq27x00_reset_registers(di);
 
-	wake_lock_init(&di->wake_lock, WAKE_LOCK_SUSPEND, "battery_wake_lock");
-	wake_lock_init(&di->low_power_lock, WAKE_LOCK_SUSPEND, "batt_low_power_wake_lock");
-
 	/* use switch dev reporting to tell userspace to poweroff gracefully */
 	di->sdev.name = "poweroff";
 	retval = switch_dev_register(&di->sdev);
@@ -2315,7 +2303,6 @@ static int bq27x00_battery_probe(struct i2c_client *client,
 	return 0;
 
 batt_failed_3:
-	wake_lock_destroy(&di->wake_lock);
 	kfree(di);
 batt_failed_2:
 	kfree(name);
@@ -2340,7 +2327,6 @@ static int bq27x00_battery_remove(struct i2c_client *client)
 	mutex_unlock(&battery_mutex);
 
 	switch_dev_unregister(&di->sdev);
-	wake_lock_destroy(&di->wake_lock);
 
 	kfree(di);
 
@@ -2400,7 +2386,6 @@ static int bq27x00_battery_suspend_resume(struct i2c_client *client, const char 
 		return -EIO;
 	}
 	if (suspend_resume == RESUME_STR){
-		wake_lock(&di->wake_lock);
 		schedule_delayed_work(&di->work, 0);
 	}
 
